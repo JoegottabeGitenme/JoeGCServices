@@ -170,6 +170,28 @@ def actual_vapor_pressure_from_wetbulb_kpa(
     return es_wet - gamma_psy * (dry_bulb_c - wet_bulb_c)
 
 
+def actual_vapor_pressure_from_rh_kpa(
+    tmax_c: np.ndarray,
+    tmin_c: np.ndarray,
+    rh_max_pct: np.ndarray,
+    rh_min_pct: np.ndarray,
+) -> np.ndarray:
+    """FAO-56 Eq. 17: actual vapor pressure from daily max/min relative
+    humidity -- for stations (like Shale Hills' flux tower, Session 10)
+    that report RH directly rather than a wet/dry-bulb pair (Tarrawarra,
+    `actual_vapor_pressure_from_wetbulb_kpa`) or dewpoint. FAO-56's own
+    text states this form (using BOTH RHmax and RHmin) is preferred over
+    the RHmean-only form (Eq. 19): "Equation 19 is less desirable than are
+    Equations 17 or 18."
+
+    Verified against FAO-56's own worked Example 5 (Tmin=18C, RHmax=82%,
+    Tmax=25C, RHmin=54% -> ea=1.70 kPa) -- see test_pet.py.
+    """
+    es_tmin = saturation_vapor_pressure_kpa(tmin_c + 273.15)
+    es_tmax = saturation_vapor_pressure_kpa(tmax_c + 273.15)
+    return (es_tmin * (rh_max_pct / 100.0) + es_tmax * (rh_min_pct / 100.0)) / 2.0
+
+
 def extraterrestrial_radiation_mj_m2_day(lat_deg: float, day_of_year: int) -> float:
     """FAO-56 Eq. 21/23/24/25: daily extraterrestrial radiation Ra. Positive
     latitude = northern hemisphere; Tarrawarra (37.65 S) must be passed as

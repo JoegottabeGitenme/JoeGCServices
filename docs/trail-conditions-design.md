@@ -911,6 +911,90 @@ user's own sequencing decision).
 
 ---
 
+## Session 10 summary — Shale Hills PASSES: the fix generalizes to a fully independent catchment
+
+The last planned validation check. Shale Hills (`geowatch.pdf` Section
+4.2.2) is a forested, V-shaped, shale-derived-soil watershed in central
+Pennsylvania — different continent, terrain, soil, climate, and land
+cover from Tarrawarra's grazed-pasture Australian catchment. Ran the
+IDENTICAL frozen Session 8 configuration (equation form, TWI engine,
+capping, Stage 2 settings, `k=13`) — nothing re-tuned, no CLI flags exist
+to change it, same discipline as the NMM holdout.
+
+**Data acquisition**: the paper's own citation is dead (CZO program
+succeeded by CZ Net in Dec 2020); the archived listing pointed to a live,
+CC-BY HydroShare resource, fetched directly via HydroShare's own REST API
+(no WAF, unlike Tarrawarra). DEM, SSURGO soil survey, and flux-tower
+meteorology similarly located via HydroShare's public "CZO Shale Hills"
+group.
+
+**A real, load-bearing coordinate-system discrepancy, found and resolved
+before writing any interpolation code**: the TDR data's own metadata
+claims "State Plane PA"; decisively proven wrong (bbox comparison against
+HydroShare's own independently-stated WGS84 coverage matches NAD83 UTM
+Zone 18N to 4 decimal degrees exactly, NAD27 is off by ~200m). Separately,
+the DEM's own `prj.adf` genuinely is NAD27 UTM 18N — a real datum
+mismatch from the TDR/SSURGO data (NAD27→NAD83 shift at this location:
++32m E, +212m N, more than half the catchment's own extent). Resolved by
+reprojecting the DEM to NAD83 UTM 18N (`rasterio` warp) before any
+interpolation; the parser now raises loudly if ever pointed at the
+original NAD27 file.
+
+**SSURGO schema extracted from the real bundled template database**
+(`soildb_US_2002.mdb`, via the pure-Python `access_parser` package, no
+`mdbtools` available) — not recalled from memory. Independently verified
+via an internal-consistency checksum (sand%+silt%+clay% = 100.0 exactly on
+the first real row checked). Real map units found: Berks and Weikert —
+the canonical, extensively-studied soil series at this exact site in the
+Critical Zone literature, itself a strong correctness signal.
+
+**Real data-quality bug found, same discipline as Sessions 4/9**: 8 of
+4141 TDR readings are a literal impossible 0.0 (a probe-fault code,
+confirmed by a clean discontinuity in the value distribution). Excluded
+with a loud count; fixing it changed the result by <1%.
+
+**New physics added**: `physics/pet.py::actual_vapor_pressure_from_rh_kpa`
+(FAO-56 Eq. 17, for stations reporting RH directly rather than a wet/dry-
+bulb pair) — verified against FAO-56's own worked Example 5 (ea=1.70 kPa).
+FAO-56's own documented default (2 m/s) used for this site's missing wind
+speed sensor — verified against the live primary source before use, not
+recalled from memory.
+
+**Results**:
+
+```
+Overall baseline (site-mean) RMSE: 0.0649   (paper's own context figure: 0.060)
+Overall model RMSE:                0.0575   (paper's own context figure: 0.054)
+Dates improved: 67/76                        (paper's own context figure: 55/74, 74%)
+```
+
+**SHALE HILLS HOLDOUT: PASS** — decisively (67/76 = 88%, well past the
+prespecified plain-majority gate of 38). Robustness checked before
+trusting a result this strong: TWI grid statistics non-degenerate (std
+1.09, comparable to Tarrawarra's own capped TWI), real texture variation
+across sites is modest (not driving the result), per-date RMSE reductions
+are plausible in magnitude (not suspiciously perfect), and the 0.0-reading
+bug fix moved the result by <1%.
+
+**What this settles**: the Session 8 discovery now has positive evidence
+from 3 independent measurement records (Tarrawarra TDR, Tarrawarra NMM,
+Shale Hills TDR) across 2 independent, structurally different catchments
+on 2 continents, with zero constants ever adjusted. Per the user's own
+sequencing decision, this was the last check gating the Colorado
+static-terrain-stack build — that work (`pipelines/static/`) is no longer
+blocked by anything in the validation ladder.
+
+### What this session did NOT do
+
+- **Did not touch the frozen configuration** — no CLI flags exist to
+  change it, by design, same as the NMM harness.
+- **Did not begin the Colorado static-terrain-stack build** — the very
+  next planned work, now unblocked.
+- **Did not contact the paper's authors or the CZO data managers** —
+  the HydroShare resources and their own documentation were sufficient.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design

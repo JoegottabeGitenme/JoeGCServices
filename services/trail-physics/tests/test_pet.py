@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from physics.pet import (
+    actual_vapor_pressure_from_rh_kpa,
     actual_vapor_pressure_from_wetbulb_kpa,
     atmospheric_pressure_kpa,
     clear_sky_radiation_mj_m2_day,
@@ -172,6 +173,19 @@ def test_actual_vapor_pressure_from_wetbulb_matches_fao56_example_4():
         dry_bulb_c=np.array([25.6]), wet_bulb_c=np.array([19.5]), pressure_kpa=pressure_kpa
     )
     assert ea[0] == pytest.approx(1.91, abs=0.01)
+
+
+def test_actual_vapor_pressure_from_rh_matches_fao56_example_5():
+    """FAO-56 Example 5: Tmin=18C & RHmax=82%, Tmax=25C & RHmin=54% ->
+    ea=1.70 kPa (Session 10, added for Shale Hills' flux tower, which
+    reports RH directly rather than a wet/dry-bulb pair)."""
+    ea = actual_vapor_pressure_from_rh_kpa(
+        tmax_c=np.array([25.0]),
+        tmin_c=np.array([18.0]),
+        rh_max_pct=np.array([82.0]),
+        rh_min_pct=np.array([54.0]),
+    )
+    assert ea[0] == pytest.approx(1.70, abs=0.01)
 
 
 def test_extraterrestrial_radiation_matches_fao56_example_8_southern_hemisphere():

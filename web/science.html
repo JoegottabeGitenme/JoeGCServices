@@ -223,7 +223,7 @@
         <div class="status-box">
             <div class="status-title">&#9888; Advisory, Not Yet Validated</div>
             <p><strong>Nothing on this page describes a shipped, validated product.</strong> As of today, FolkWeather's trail pages show raw HRRR/NLDAS weather model output — soil moisture, soil temperature, snow depth — at native 3km resolution, honestly labeled as such. This page documents the physics pipeline we're building to turn that into something better, and exactly how far along it is.</p>
-            <p>The first validation gate (Rung 1, described below) has now <strong>passed</strong> against real ground-truth data — but only after we discovered that the published paper's own printed equation doesn't match its own published reference code (see below for the full story). A second, independent check — a different measurement instrument, at the same site, across 59 dates never used to find or fix anything — has since <strong>passed too</strong>, decisively. That's real, accumulating evidence, not a finished product: one more check, on a completely different research site, is still outstanding before we'd trust this enough to build a live deployment on top of it. Until that's done, no condition or rideability judgment is computed or displayed. This is a deliberate, non-negotiable sequencing choice, not an oversight.</p>
+            <p>The first validation gate (Rung 1, described below) has now <strong>passed</strong> against real ground-truth data — but only after we discovered that the published paper's own printed equation doesn't match its own published reference code (see below for the full story). We then ran two further, independent checks before trusting that result: a different measurement instrument at the same site, and — the one that actually matters most — a second research catchment on a different continent, with different terrain, soil, and vegetation, that this project's physics had never seen in any form. <strong>Both passed</strong>, decisively, with the exact same numbers untouched throughout. That's real, accumulating evidence the underlying physics is genuine and transferable — not a finished product: this validates the physics core, not a live Colorado deployment, which still needs its own real terrain data built before anything is shown to a rider. Until that's done, no condition or rideability judgment is computed or displayed. This is a deliberate, non-negotiable sequencing choice, not an oversight.</p>
         </div>
 
         <section id="problem">
@@ -340,8 +340,8 @@
                 <tbody>
                     <tr>
                         <td>Topographic redistribution (equation above)</td>
-                        <td><span class="badge badge-high">Verified against real ground-truth data, generalization checks in progress</span></td>
-                        <td>The equation shown above is the developers' own published reference implementation (discovered by reading their linked code directly, since it differs from the paper's own printed text — see above), not our transcription of the paper alone. Run against real measurements with the published constant untouched, it reproduces the published accuracy target and holds up against an independent instrument and 59 dates it had never seen, both at the same site — see Rung&nbsp;1 below. Not yet checked against a different research site entirely</td>
+                        <td><span class="badge badge-high">Verified against real ground-truth data at two independent sites</span></td>
+                        <td>The equation shown above is the developers' own published reference implementation (discovered by reading their linked code directly, since it differs from the paper's own printed text — see above), not our transcription of the paper alone. Run against real measurements with the published constant untouched throughout, it reproduces the published accuracy target, holds up against an independent instrument and 59 unseen dates at the same site, and — the strongest check — holds up at a second, fully independent research catchment on a different continent with different terrain, soil, and vegetation. See Rung&nbsp;1 below for all three results</td>
                     </tr>
                     <tr>
                         <td>Vegetation transpiration &amp; direct soil evaporation</td>
@@ -485,9 +485,38 @@
             </p>
             <p>
                 This is real, meaningful evidence — a different instrument and 59 dates the fix has never seen
-                both agree with it. It is still evidence from one catchment, though. The remaining, final check
-                — an entirely separate research site on a different continent, with different terrain, soil,
-                and climate — is still outstanding, and nothing past this gate gets built until it's done.
+                both agree with it. It is still evidence from one catchment, though.
+            </p>
+            <h4 style="margin-top: 1.5rem;">Second generalization check: a fully independent research site, different continent — passed</h4>
+            <p>
+                The real test wasn't the instrument change above — it was whether this holds up somewhere the
+                model has never seen terrain, soil, or vegetation like it before. We found a second published
+                research catchment: a forested, steep, V-shaped watershed in Pennsylvania built on shale bedrock
+                — about as different from the first site's grazed Australian pastureland as two small research
+                watersheds get. Same rule as before: identical configuration, nothing re-tuned, pass/fail
+                criteria written down before running it even once.
+            </p>
+            <p>
+                It passed — not narrowly, but by a wide margin: improving on 67 of 76 dates (88%), against a bar
+                we'd set at just over half. Along the way we found (and fixed, the same transparent way as
+                before) two real, unrelated data problems worth mentioning because a less careful process could
+                have missed them entirely: the new site's own published location data used the wrong coordinate
+                system in its own documentation — confirmed and corrected before doing anything with it, since
+                getting this wrong at this site's small scale would have silently misaligned everything by more
+                than half the watershed's own size — and a handful of impossible zero-moisture readings in the
+                raw measurements themselves, a data-entry artifact rather than real dry soil. Neither fix
+                meaningfully changed the result (fixing the second moved the final number by less than 1%),
+                which is exactly the reassurance we want: the result isn't hanging on getting one detail right,
+                it's a durable, structural finding.
+            </p>
+            <p>
+                Put together: this physics now has real, positive evidence from three independent measurement
+                records, across two structurally different research catchments on two different continents,
+                with the exact same numbers never adjusted once across any of it. That is a meaningfully
+                stronger claim than "we reproduced one published result" — it's evidence of genuinely
+                transferable science, which is exactly the foundation a real product needs. The next step is no
+                longer another validation check — it's building the real, 10-meter terrain data for Colorado
+                that this whole pipeline has been waiting to run against.
             </p>
             <h3>Rung 2 — Do Rider Reports Separate on Our Features?</h3>
             <p>
@@ -535,7 +564,12 @@
                     <a class="ref-link" href="https://doi.org/10.1029/98WR01833" target="_blank">doi.org/10.1029/98WR01833 &#8599;</a>
                     &middot;
                     <a class="ref-link" href="https://people.eng.unimelb.edu.au/aww/tarrawarra/" target="_blank">Data (unrestricted, research use) &#8599;</a>
-                    <div class="ref-note">Our Rung 1 validation target — see above.</div>
+                    <div class="ref-note">Our first Rung 1 validation target — see above.</div>
+                </li>
+                <li class="ref-item">
+                    <div class="ref-citation">Naithani, K., &amp; Baldwin, D. (2019). SSHCZO — Soil Moisture, Hydropedologic Properties — Shale Hills — (2006–2015). HydroShare.</div>
+                    <a class="ref-link" href="https://www.hydroshare.org/resource/83efb5317d284ba996ddaeb2b74b6a42" target="_blank">hydroshare.org/resource/83efb5317d284ba996ddaeb2b74b6a42 &#8599;</a>
+                    <div class="ref-note">Our second validation target — a fully independent research catchment, part of the NSF-supported Susquehanna Shale Hills Critical Zone Observatory. The original paper's own citation for this dataset is defunct (the CZO program ended in 2020); this is its live, CC-BY-licensed successor.</div>
                 </li>
                 <li class="ref-item">
                     <div class="ref-citation">Beven, K. J., &amp; Kirkby, M. J. (1979). A physically based, variable contributing area model of basin hydrology. <em>Hydrological Sciences Bulletin</em>, 24(1), 43–69.</div>

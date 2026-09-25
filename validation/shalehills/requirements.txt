@@ -1,0 +1,18 @@
+# Shale Hills validation-specific dependencies, on top of
+# services/trail-physics/requirements.txt (numpy, scipy, pyproj, etc. --
+# this script imports directly from that package, see sys.path.insert in
+# each script here).
+#
+# Unlike Tarrawarra (plain-text .dem/.dat/.tdr files), Shale Hills' real
+# primary-source files are a mix of formats that need real, tested parsers
+# rather than hand-rolled ones -- each one specifically needed because a
+# from-scratch implementation would be either infeasible (ArcInfo Binary
+# Grid, a proprietary binary DEM format) or a real correctness risk
+# (Shapefile point-in-polygon with holes/multi-part geometries).
+openpyxl>=3.1        # real TDR soil moisture data ships as .xlsx (SSHCZO_2010TDRSoilMoisture.xlsx)
+pyshp>=3.0           # SSURGO map unit polygons ship as an Esri Shapefile
+shapely>=2.0         # robust point-in-polygon (map unit lookup), not hand-rolled ray-casting
+rasterio>=1.3        # DEM ships as ArcInfo Binary Grid (AIG driver, read-only) -- already an
+                      # effectively-required dependency via trail-physics' optional pydem extra,
+                      # which itself depends on rasterio; listed explicitly here since this
+                      # validation's DEM reading does not go through pydem at all
