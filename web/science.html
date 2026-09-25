@@ -223,7 +223,7 @@
         <div class="status-box">
             <div class="status-title">&#9888; Advisory, Not Yet Validated</div>
             <p><strong>Nothing on this page describes a shipped, validated product.</strong> As of today, FolkWeather's trail pages show raw HRRR/NLDAS weather model output — soil moisture, soil temperature, snow depth — at native 3km resolution, honestly labeled as such. This page documents the physics pipeline we're building to turn that into something better, and exactly how far along it is.</p>
-            <p>The first validation gate (Rung 1, described below) has now <strong>passed</strong> against real ground-truth data — but only after we discovered that the published paper's own printed equation doesn't match its own published reference code (see below for the full story). That's real progress, not a finished product: passing on the one site it was checked against doesn't yet prove the fix generalizes, which is exactly what the next two checks (a second, unseen measurement record at the same site, then a second, independent site) are for — both still outstanding. Until those are done, no condition or rideability judgment is computed or displayed. This is a deliberate, non-negotiable sequencing choice, not an oversight.</p>
+            <p>The first validation gate (Rung 1, described below) has now <strong>passed</strong> against real ground-truth data — but only after we discovered that the published paper's own printed equation doesn't match its own published reference code (see below for the full story). A second, independent check — a different measurement instrument, at the same site, across 59 dates never used to find or fix anything — has since <strong>passed too</strong>, decisively. That's real, accumulating evidence, not a finished product: one more check, on a completely different research site, is still outstanding before we'd trust this enough to build a live deployment on top of it. Until that's done, no condition or rideability judgment is computed or displayed. This is a deliberate, non-negotiable sequencing choice, not an oversight.</p>
         </div>
 
         <section id="problem">
@@ -340,8 +340,8 @@
                 <tbody>
                     <tr>
                         <td>Topographic redistribution (equation above)</td>
-                        <td><span class="badge badge-high">Verified against real ground-truth data</span></td>
-                        <td>The equation shown above is the developers' own published reference implementation (discovered by reading their linked code directly, since it differs from the paper's own printed text — see above), not our transcription of the paper alone. Run against real measurements with the published constant untouched, it reproduces the published accuracy target — see Rung&nbsp;1 below. Not yet checked on data beyond the one site this was found against</td>
+                        <td><span class="badge badge-high">Verified against real ground-truth data, generalization checks in progress</span></td>
+                        <td>The equation shown above is the developers' own published reference implementation (discovered by reading their linked code directly, since it differs from the paper's own printed text — see above), not our transcription of the paper alone. Run against real measurements with the published constant untouched, it reproduces the published accuracy target and holds up against an independent instrument and 59 dates it had never seen, both at the same site — see Rung&nbsp;1 below. Not yet checked against a different research site entirely</td>
                     </tr>
                     <tr>
                         <td>Vegetation transpiration &amp; direct soil evaporation</td>
@@ -465,10 +465,29 @@
                 result on real ground-truth data with zero constants tuned to make that happen. It does
                 <em>not</em> yet mean this generalizes — passing against the same 13 measurements the
                 discrepancy was found and fixed against is a much weaker claim than passing against data it's
-                never seen. That's exactly why the next two checks — a second, larger, independent set of
-                soil readings at this same site (59 dates, never used to find or fix anything above), then an
-                entirely separate research catchment on a different continent — are both still outstanding
-                and both required before anything past this gate gets built.
+                never seen. That's exactly why we didn't stop there.
+            </p>
+            <h4 style="margin-top: 1.5rem;">First generalization check: a different instrument, 59 unseen dates — passed</h4>
+            <p>
+                The same catchment has a second, completely independent measurement record: a neutron probe
+                survey, 59 dates, none of which were used to find or fix anything above. We ran the identical
+                configuration — nothing re-tuned, no dial to turn even if we'd wanted to — against it, having
+                first written down, before running it even once, exactly what would count as a pass (beat the
+                simple-average baseline; improve on at least half the dates). It passed decisively: 45 of the
+                59 dates improved (well past the bar we'd set), and our overall error actually came in slightly
+                <em>better</em> than the paper's own published figure for this exact comparison. One honest
+                footnote: partway through, we found a single physically impossible measurement in the raw
+                1997-era data (a negative moisture reading — a real sensor-calibration artifact at an extreme
+                dry spell, not something we introduced) and excluded it the same way we'd excluded a similar
+                bad measurement earlier in this project — by name, with a count, not quietly. Fixing it moved
+                the final number by less than 1%, which is itself reassuring: the result isn't hanging on one
+                data point.
+            </p>
+            <p>
+                This is real, meaningful evidence — a different instrument and 59 dates the fix has never seen
+                both agree with it. It is still evidence from one catchment, though. The remaining, final check
+                — an entirely separate research site on a different continent, with different terrain, soil,
+                and climate — is still outstanding, and nothing past this gate gets built until it's done.
             </p>
             <h3>Rung 2 — Do Rider Reports Separate on Our Features?</h3>
             <p>

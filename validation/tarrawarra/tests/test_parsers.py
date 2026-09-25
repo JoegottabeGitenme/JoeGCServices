@@ -14,6 +14,7 @@ from parsers import (
     parse_dem,
     parse_ksat_file,
     parse_layer_file,
+    parse_neutron_pos_file,
     parse_nmm_file,
     parse_particle_file,
     parse_tdr_file,
@@ -346,6 +347,50 @@ def test_parse_nmm_file_against_real_downloaded_data():
     profiles = parse_nmm_file(str(real_path))
     assert len(profiles) == 59  # per geowatch.pdf Section 4.2.1
     assert profiles[0].site == 1
+
+
+def test_parse_neutron_pos_file_synthetic(tmp_path):
+    content = (
+        "Copyright notice line\n"
+        "\n"
+        "Site: Tarrawarra\n"
+        "Record Format: x y site_number\n"
+        "\n"
+        "1049.84   828.49   1\n"
+        "1077.05   906.48   2\n"
+    )
+    path = tmp_path / "neutron.pos"
+    path.write_text(content)
+    sites = parse_neutron_pos_file(str(path))
+    assert len(sites) == 2
+    assert sites[0].site == 1
+    assert sites[0].x == pytest.approx(1049.84)
+    assert sites[0].y == pytest.approx(828.49)
+    assert sites[1].site == 2
+
+
+def test_parse_neutron_pos_file_raises_if_no_records(tmp_path):
+    path = tmp_path / "neutron.pos"
+    path.write_text("just a header\nwith no data lines\n")
+    with pytest.raises(ValueError, match="No neutron site locations"):
+        parse_neutron_pos_file(str(path))
+
+
+def test_parse_neutron_pos_file_against_real_downloaded_data():
+    """If the real neutron.pos (Session 4) is present: 20 sites, per the
+    paper's own documented 20 NMM access tube locations."""
+    real_path = Path(__file__).parent.parent / "data" / "neutron.pos"
+    if not real_path.exists():
+        pytest.skip("real data/neutron.pos not present (see README.md)")
+    sites = parse_neutron_pos_file(str(real_path))
+    assert len(sites) == 20
+    assert {s.site for s in sites} == set(range(1, 21))
+    # Coordinates must fall within the same local coordinate system as the
+    # DEM/TDR/ksat data (x: ~730-1465, y: ~750-1135, per README.md) -- a
+    # sanity check that this isn't accidentally UTM or some other system.
+    for s in sites:
+        assert 700 < s.x < 1500
+        assert 700 < s.y < 1200
 
 
 def test_parse_layer_file_with_and_without_b2(tmp_path):

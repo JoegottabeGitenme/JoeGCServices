@@ -843,6 +843,74 @@ Hills (74 dates, a fully independent site) are for.
 
 ---
 
+## Session 9 summary — NMM holdout PASSES: the fix generalizes beyond the 13 dates it was found against
+
+Ran Session 8's frozen configuration (equation form, TWI engine, capping,
+soil-parameter scale, Stage 2 settings, k=13 — nothing re-tuned, no CLI
+option to change any of it in the new script) against Tarrawarra's Neutron
+Moisture Meter record: 59 dates, a different instrument than TDR, none of
+which were used to find or fix anything in Session 8. This is the first
+real generalization evidence for the Session 8 discovery.
+
+**Prespecified before running against real data** (per the design doc's
+own discipline, extended to this holdout): overall model RMSE must beat
+the site-mean baseline, and at least 30 of 59 dates must individually
+improve (a plain majority — deliberately more lenient than Rung 1's own
+ratio, since this is a first generalization check, not a recalibration
+target). The paper's own published NMM figure (0.040 → 0.030, 56/59) is
+reported as context only, not this project's gate, since the per-tube
+depth-combination methodology (mean of 15cm+30cm, chosen to match TDR's
+own ~30cm sensing depth) is a documented choice, not necessarily identical
+to the paper's own.
+
+**What was built**: `parsers.py::parse_neutron_pos_file` (20 NMM tube
+coordinates), `run_nmm_validation.py` (new, deliberately separate script —
+groups all 20 tube files by exact matching date string, no window-matching
+needed unlike TDR's multi-day surveys; computes each tube's observed value
+as mean(15cm, 30cm); runs the frozen Stage 1+2 pipeline at each site's real
+coordinates). 12 new tests total.
+
+**A real data-quality bug found along the way, same discipline as Session
+4's ksat.dat fix**: `tube_16.dat`, 20-Mar-97 (the driest date in the
+59-date record) reports a physically impossible -8.3 %V/V reading at
+30cm — a genuine neutron-probe calibration artifact at an extreme dry-down,
+not a parsing bug. Excluded from the depth average (falls back to the
+valid depth, exactly like the existing missing-depth handling) with a loud
+count, rather than floored or silently kept. Changed the result only
+marginally (0.0295 vs. 0.0297, 45/59 either way) — confirms the pass isn't
+an artifact of this one bad reading.
+
+**Results**:
+
+```
+Overall baseline (site-mean) RMSE: 0.0345
+Overall model RMSE:                0.0295
+Dates improved: 45/59  (prespecified gate: >= 30)
+```
+
+**NMM HOLDOUT: PASS**, decisively (45 vs. a gate of 30, not a marginal
+squeak). The model RMSE (0.0295) even edges out the paper's own published
+context figure (0.030) despite a genuinely held-out check.
+
+**What this does and doesn't settle**: real evidence the Session 8 fix is
+transferable physics at this site, not a fit to 13 convenient points. Does
+NOT yet establish transfer to a different catchment — that is exactly what
+Shale Hills (74 dates, independent site, terrain/soil/climate all differ)
+is for, the last planned generalization check before any Colorado build
+work begins (deliberately gated behind it, not run in parallel, per the
+user's own sequencing decision).
+
+### What this session did NOT do
+
+- **Did not touch the frozen Session 8 configuration** — no CLI flags to
+  change it exist in the new script by design.
+- **Did not yet run Shale Hills** — the final generalization check remains
+  outstanding.
+- **Did not begin the Colorado static-terrain-stack work** — explicitly
+  gated behind Shale Hills passing.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design

@@ -478,6 +478,43 @@ def parse_nmm_file(path: str, site: int | None = None) -> list[NmmProfile]:
     return profiles
 
 
+@dataclass
+class NeutronSiteLocation:
+    site: int
+    x: float
+    y: float
+
+
+def parse_neutron_pos_file(path: str) -> list[NeutronSiteLocation]:
+    """Parse neutron.pos -- the NMM access tube site coordinates. Per its
+    own header: 'Record Format: x y site_number', whitespace-delimited,
+    Tarrawarra local coordinates (same system as tarrawar.dem/ksat.dat/TDR
+    -- NOT UTM, consistent with every other real Tarrawarra file). Confirmed
+    against the real downloaded file (Session 9): 20 sites, header is a
+    handful of free-text lines (copyright/site/collection-date/etc.) with
+    no fixed length, so -- same pattern as parse_nmm_file -- lines are
+    skipped until one parses as exactly 3 whitespace-delimited fields with
+    the first two numeric and the third an integer."""
+    sites: list[NeutronSiteLocation] = []
+    with open(path, "r") as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) != 3:
+                continue
+            try:
+                x, y = float(parts[0]), float(parts[1])
+                site = int(parts[2])
+            except ValueError:
+                continue  # header/comment line
+            sites.append(NeutronSiteLocation(site=site, x=x, y=y))
+    if not sites:
+        raise ValueError(
+            f"No neutron site locations parsed from {path} -- check the file's "
+            f"actual layout against its own documented 'x y site_number' format."
+        )
+    return sites
+
+
 def parse_layer_file(path: str) -> list[LayerRecord]:
     """Per Readme.soil: 'coordinate coordinate, depth to bottom of A
     horizon, depth to bottom of B1 horizon, texture category of B1, depth

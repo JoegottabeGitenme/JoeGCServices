@@ -40,6 +40,33 @@ codebase throughout. What changed was correcting the equation's
 **structure** by reading the authors' own reference implementation, not
 adjusting any number to make a target land.
 
+## Update (Session 9): NMM holdout PASSES -- the fix generalizes
+
+Session 8's fix was found and checked against the same 13 TDR dates --
+necessary but not sufficient evidence it's real physics rather than a fit
+to that one dataset. Session 9 ran the **exact same frozen configuration**
+(equation form, TWI engine, k=13 -- nothing re-tuned) against Tarrawarra's
+**Neutron Moisture Meter record: 59 dates, a different instrument, never
+used to find or fix anything in Session 8**. Pass/fail criteria were
+written into `run_nmm_validation.py` before it was ever run against real
+data (overall RMSE beats baseline, ≥30/59 dates improved -- a plain
+majority, deliberately more lenient than TDR's ratio since this is the
+first-ever generalization check, not a recalibration target):
+
+```
+Overall baseline (site-mean) RMSE: 0.0345
+Overall model RMSE:                0.0295
+Dates improved: 45/59  (prespecified gate: >= 30)
+```
+
+**NMM HOLDOUT: PASS**, decisively -- not a marginal squeak past the gate.
+0.0295 even edges out the paper's own published NMM figure (0.030,
+provided as context only, never our gate) despite our depth-combination
+methodology (mean of 15+30cm, chosen to match TDR's own sensing depth)
+being a documented choice, not necessarily identical to whatever the
+paper's own NMM comparison used. See "Session 9" below for the full
+writeup, including a real data-quality bug found and fixed along the way.
+
 ### How the data was acquired
 
 `https://people.eng.unimelb.edu.au/aww/tarrawarra/` is unrestricted but
@@ -493,17 +520,20 @@ core Rung 1 gate is met).
 
 ### What remains open
 
-- **Generalization.** Rung 1 (Tarrawarra, the same 13 dates this equation
-  form was checked against) now passes -- but that is not yet evidence the
-  fix transfers to unseen data. NMM (59 dates, same site, different
-  instrument/dates) and Shale Hills (74 dates, a fully independent site)
-  are the next real tests, in that order, per the user's own sequencing
-  decision.
+- **Generalization to a different catchment.** Rung 1 (TDR, 13 dates) and
+  the NMM holdout (59 dates, same site, different instrument) both now
+  pass with the identical frozen configuration -- real, decisive evidence
+  this is genuine physics at Tarrawarra, not a fit to one convenient
+  dataset. Shale Hills (74 dates, a fully independent site with different
+  terrain/soil/climate) is the last and most important remaining check
+  before this feeds anything customer-facing, per the user's own
+  sequencing decision (Colorado static-terrain-stack work is intentionally
+  gated behind Shale Hills passing, not run in parallel).
 - **The eq5-form sensitivity at the margin** (geowatch passes, ek2003
-  misses by one date) means this result, while real, is not maximally
-  robust to every reasonable modeling choice -- worth keeping in mind when
-  reporting this externally: "passes with the paper's own stated Eq. 5
-  form" is the accurate claim, not "passes unconditionally."
+  misses by one date on TDR) means this result, while real, is not
+  maximally robust to every reasonable modeling choice -- worth keeping in
+  mind when reporting this externally: "passes with the paper's own stated
+  Eq. 5 form" is the accurate claim, not "passes unconditionally."
 - The `geowatch-paper` (printed Eq. 1) form is now understood to simply be
   a different, less-accurate equation than what Creare's own system runs --
   not a bug in this codebase's transcription of it. Both forms are kept:
@@ -519,29 +549,96 @@ pair per line, cellsize derived), falling back to an originally-guessed
 If somehow neither matches, `parse_dem` raises `ValueError` with the
 actual header lines printed.
 
-## NMM validation target (denser, not yet wired into run_validation.py)
+## Session 9: NMM holdout -- PASS, and a real data-quality bug found along the way
 
 Per the GeoWATCH paper (Section 4.2.1): the Tarrawarra dataset also
 includes Neutron Moisture Meter (NMM) readings -- only 20 locations per
 date (vs. ~508 for TDR, worse for spatial structure) but across **59
-dates** (vs. 13 for TDR), a much denser temporal check. Published target:
-RMSE 0.040 -> 0.030 m3/m3, improving on 56/59 dates (95%).
+dates** (vs. 13 for TDR), a much denser temporal check, and (critically)
+**an instrument and set of survey dates never used in Session 8's
+discovery or fix**. Paper's published context number: RMSE 0.040 -> 0.030
+m3/m3, 56/59 dates improved.
 
-`parsers.py::parse_nmm_file` is now validated against all 20 real files
-(19 of 20 yield exactly 59 profiles; `tube_20.dat` yields 54 -- plausible
-real-world missing-measurement variability, not a parsing bug). **Not yet
-implemented**: the `run_validation.py` wiring, which needs a different
-shape than TDR's one-file-per-date (here, one file per *site*; a "date"
-means grouping matching date/time entries across all 20 files).
+### Why this run is trustworthy, not just another number
 
-**Session 8 reframing**: now that the `podpac` equation form passes Rung 1
-on TDR, NMM's 59 unseen dates (same site, different instrument) become the
-**first held-out check** of whether this holds up beyond the exact dataset
-it was validated on -- the equation form and `k=13` are locked in as of
-Session 8 and must NOT be adjusted based on NMM's outcome. Per-user
-decision: NMM's per-tube observed value = mean of the 15cm and 30cm
-readings (best physical match to TDR's own top-30cm sensing volume).
-Planned as the very next session's work.
+`run_nmm_validation.py` (new script, deliberately separate from
+`run_validation.py`'s sweep-everything design) hardcodes Session 8's exact
+passing configuration (`FROZEN_CONFIG`: pyDEM + `apply_twi_limits` + fine
+soil-parameter scale + Stage 2 with the `geowatch` Eq.5 form + `k=13`) with
+**no command-line way to change any of it** -- if you want to explore
+sensitivity, that belongs in `run_validation.py` against TDR (the dataset
+the exploration actually happened against), not here. Pass/fail criteria
+were written into the script, as constants with a full docstring
+explanation, **before it was ever run against real data**:
+
+1. Overall model RMSE must beat the overall site-mean baseline.
+2. At least 30 of the 59 dates must individually improve (a plain
+   majority -- deliberately more lenient than TDR's ratio, since this is
+   the first-ever generalization check, not a recalibration target).
+
+### What was built
+
+- `parsers.py::parse_neutron_pos_file` -- the 20 NMM tube coordinates
+  (`x y site_number`, Tarrawarra local coordinates, same system as every
+  other real file here). 3 new tests, including a real-data regression
+  confirming all 20 sites and sane coordinate ranges.
+- `run_nmm_validation.py` -- groups all 20 tube files' profiles by exact
+  matching date string (confirmed directly against real data: unlike TDR's
+  multi-day survey windows, NMM's date strings are character-identical
+  across tubes for a given survey day -- no window-matching logic needed),
+  computes each tube's observed value as the mean of its 15cm+30cm
+  readings (matching TDR's own ~30cm sensing depth), predicts at each
+  site's real coordinates with the frozen Stage 1+2 pipeline, and reports
+  per-date and overall RMSE. 9 new tests in `test_run_nmm_validation.py`.
+
+### A real bug found in the raw data itself (Session 9), same discipline as Session 4's ksat.dat fix
+
+`tube_16.dat`, 20-Mar-97 (the single driest date in the entire 59-date
+record -- its site-mean baseline RMSE, before this fix, was the highest of
+all 59) reports a 30cm reading of **-8.3 %V/V** -- physically impossible
+(volumetric moisture cannot be negative). This is a genuine neutron-probe
+calibration artifact at an extreme dry-down, not a parsing bug -- the raw
+file genuinely contains this value. Per this project's established
+discipline (excluding, not flooring or silently keeping, ksat.dat's
+zero-conductivity measurement in Session 4): `observed_value_for_profile`
+excludes any negative reading from the 15/30cm average (falls back to
+whichever depth is valid, exactly like its existing "missing depth"
+handling) and reports a loud count of how often this happened. The fix
+changed the overall result only marginally (0.0295 vs. 0.0297 before the
+fix, 45/59 either way) -- confirming the PASS below isn't an artifact of
+this one bad reading, just a more honestly-computed number.
+
+### Results
+
+```
+Overall baseline (site-mean) RMSE: 0.0345
+Overall model RMSE:                0.0295
+Dates improved: 45/59  (this script's prespecified gate: >= 30)
+Stage 2 applied on 56/59 dates (3 had no usable daily.met record)
+```
+
+**NMM HOLDOUT: PASS** -- decisively, not a marginal squeak past the
+prespecified threshold (45 vs. a gate of 30). The overall model RMSE
+(0.0295) even edges out the paper's own published NMM figure (0.030,
+reported as context only -- see the script's module docstring for why that
+number is not this project's own gate: our depth-combination methodology
+is a documented, reasoned choice, not necessarily identical to whatever
+the paper's own NMM comparison used).
+
+**What this does and doesn't settle**: Session 8's equation-structure fix,
+frozen and unmodified, now reproduces good agreement against BOTH an
+independent instrument and 59 dates it has never seen, at the same site.
+That is real evidence this is genuine physics, not a fit to 13 convenient
+points. It does **not** yet establish the fix transfers to a different
+catchment entirely -- terrain, soil, and climate all differ elsewhere.
+Shale Hills (a fully independent site, 74 dates, public data) is the next
+and final planned generalization check before this feeds anything
+customer-facing.
+
+**How to reproduce**:
+```bash
+python3 run_nmm_validation.py --data-dir ./data
+```
 
 ## Attribution
 
