@@ -223,7 +223,7 @@
         <div class="status-box">
             <div class="status-title">&#9888; Advisory, Not Yet Validated</div>
             <p><strong>Nothing on this page describes a shipped, validated product.</strong> As of today, FolkWeather's trail pages show raw HRRR/NLDAS weather model output — soil moisture, soil temperature, snow depth — at native 3km resolution, honestly labeled as such. This page documents the physics pipeline we're building to turn that into something better, and exactly how far along it is.</p>
-            <p>The validation gate for any of this (Rung 1, described below) has not passed yet. We now have the real data and have run the real test — it currently fails, for a specific, understood reason (see below), which we're treating as a stop sign rather than working around. Until it passes, no condition or rideability judgment is computed or displayed. This is a deliberate, non-negotiable sequencing choice, not an oversight.</p>
+            <p>The first validation gate (Rung 1, described below) has now <strong>passed</strong> against real ground-truth data — but only after we discovered that the published paper's own printed equation doesn't match its own published reference code (see below for the full story). That's real progress, not a finished product: passing on the one site it was checked against doesn't yet prove the fix generalizes, which is exactly what the next two checks (a second, unseen measurement record at the same site, then a second, independent site) are for — both still outstanding. Until those are done, no condition or rideability judgment is computed or displayed. This is a deliberate, non-negotiable sequencing choice, not an oversight.</p>
         </div>
 
         <section id="problem">
@@ -267,23 +267,43 @@
                 different soil types) on top of pure topography:
             </p>
             <div class="equation-box">
-                &theta;* = &theta;<sub>ws</sub> &minus; (1/k)(&lambda;&#772; &minus; &lambda;) &minus; (1/k)(ln(K<sub>s</sub>) &minus; ln(K<sub>s</sub>)&#772;)
+                &theta;* = &theta;<sub>coarse</sub> + (&theta;<sub>s</sub> &minus; &theta;<sub>wilt</sub>)/k &middot; (&lambda; &minus; &lambda;&#772;)
             </div>
             <p class="text-muted" style="font-size: 0.9rem;">
-                &theta;<sub>ws</sub> = the coarse (grid-cell or catchment) mean moisture &middot;
+                &theta;<sub>coarse</sub> = the coarse (grid-cell or catchment) mean moisture &middot;
+                &theta;<sub>s</sub> = saturated soil moisture (porosity) &middot;
+                &theta;<sub>wilt</sub> = wilting point &middot;
                 &lambda; = topographic wetness index at a point &middot;
                 &lambda;&#772; = its domain mean &middot;
-                K<sub>s</sub> = saturated hydraulic conductivity (how fast the local soil drains) &middot;
                 k = 13, an empirical scaling constant
             </p>
             <p>
-                Read the two correction terms as two independent physical effects. A point with
-                <strong>above-average topographic wetness</strong> — a valley bottom, a footslope, anywhere
-                water converges — gets wetter than the grid-cell mean. A point with
-                <strong>above-average soil permeability</strong> — sandy, free-draining ground — gets drier,
-                because water moves through it faster. Neither term needs today's weather to compute; they're
-                static properties of the ground itself, which is exactly why this approach can discriminate
+                Read it as one physical effect: a point with <strong>above-average topographic wetness</strong>
+                — a valley bottom, a footslope, anywhere water converges — gets wetter than the grid-cell mean,
+                and by how much depends on how much plant-available water the local soil can actually hold
+                (its saturated moisture minus its wilting point) — sandy soil with a narrow range moves less;
+                clay-rich soil with a wide range moves more. This term needs no weather input to compute; it's
+                a static property of the ground itself, which is exactly why this approach can discriminate
                 between two trailheads that experienced the identical storm.
+            </p>
+            <p>
+                <strong>This equation is not the one we started with, and getting here is worth explaining
+                honestly.</strong> The paper's own printed Eq.&nbsp;1 looks similar but isn't the same: it
+                uses a flat, soil-independent 1/k correction plus a separate term for soil drainage rate
+                (ln K<sub>s</sub>). We spent several rounds of validation faithfully implementing and testing
+                <em>that</em> printed equation and consistently found our corrections about three times too
+                large, with the drainage-rate term contributing essentially nothing. The breakthrough came
+                from a lead sitting untouched in the paper's own reference list the whole time: its "Software
+                and Data Availability" section links the original developers' own published code, which they
+                describe as reproducing "the downscaling algorithm." Reading that code directly showed it
+                implements the equation above — soil water-holding range as the correction's scale, no
+                drainage-rate term at all — not the equation printed in the paper's own text. Running <em>that</em>
+                equation, with the same published constant (k=13, never adjusted), is what finally closed the
+                gap (see Rung&nbsp;1, below). We're not aware of anyone else having noticed or documented this
+                discrepancy; it also resolves a specific sentence in the paper's methodology that had
+                otherwise gone unexplained for months of work ("the calculation of the TWI was modified to use
+                volumetric soil moisture instead of relative soil moisture") — multiplying by a soil's
+                water-holding range is exactly that conversion.
             </p>
             <p>
                 For soil moisture's day-to-day <em>evolution</em> — not just a single downscaled snapshot —
@@ -320,8 +340,8 @@
                 <tbody>
                     <tr>
                         <td>Topographic redistribution (equation above)</td>
-                        <td><span class="badge badge-medium">Formula confirmed, calibration narrowing</span></td>
-                        <td>The equation itself is transcribed directly from the primary source and is an exact match to our implementation. The terrain/soil values it's fed are getting closer to reproducing the published calibration constant with each round of testing (most recently cut the remaining gap roughly in half), but aren't there yet — see Rung&nbsp;1 below for exactly what's been tried and what's left</td>
+                        <td><span class="badge badge-high">Verified against real ground-truth data</span></td>
+                        <td>The equation shown above is the developers' own published reference implementation (discovered by reading their linked code directly, since it differs from the paper's own printed text — see above), not our transcription of the paper alone. Run against real measurements with the published constant untouched, it reproduces the published accuracy target — see Rung&nbsp;1 below. Not yet checked on data beyond the one site this was found against</td>
                     </tr>
                     <tr>
                         <td>Vegetation transpiration &amp; direct soil evaporation</td>
@@ -398,74 +418,57 @@
                 Before any of this feeds a public rideability claim, it has to pass a validation ladder, in
                 order — each rung gates the next:
             </p>
-            <h3>Rung 1 — Reproduce a Published Result (failing, but the gap has narrowed a lot)</h3>
+            <h3>Rung 1 — Reproduce a Published Result (passed)</h3>
             <p>
                 A public research catchment in Australia (Tarrawarra; Western &amp; Grayson, 1998) has
                 thirteen days of dense, ground-truth soil moisture measurements alongside detailed terrain
                 and soil surveys — a clean, no-snow, no-weather-model test of exactly the redistribution
-                equation above. We obtained the real dataset and ran the actual validation. It still doesn't
-                pass, and we're not going to dress that up — but where we started (every date coming out
-                three times worse than simply guessing the catchment average) and where we are now (roughly
-                on par with that same simple guess, with one date landing within 1% of it) are very
-                different places.
+                equation above. We obtained the real dataset and ran the actual validation. For a long
+                stretch of this project, it didn't pass, and we said so plainly here. It now does — but the
+                path there is worth telling honestly, because it wasn't a matter of trying harder at the same
+                thing; it took finding out the thing itself was slightly wrong.
             </p>
             <p>
-                We tested three concrete, specific ideas for what was causing the gap, each grounded in
-                something the source paper actually says, rather than guessing in the dark:
+                Four separate rounds of testing — trying coarser terrain resolution, texture-based soil
+                classification instead of measured drainage rate, an alternate terrain-analysis tool's
+                optional smoothing settings, and a whole second physics stage the published model also
+                includes — each produced real, honest, partial progress (cutting the error roughly in half,
+                cumulatively) without ever closing the gap. Every one of those ideas was grounded in something
+                the paper's text actually says; none of them were guesses in the dark, and none of them
+                involved adjusting the paper's published constant to force a match. But something was still
+                structurally off, not just imprecisely calibrated.
             </p>
             <p>
-                <strong>Idea 1</strong> — maybe the published calibration assumes coarser terrain data than
-                the fine-detail survey we're using. The paper mentions a coarser default resolution
-                elsewhere, but re-reading its own description of this specific comparison, it explicitly
-                says the fine-detail survey was used here. We tested it anyway to be sure, and confirmed
-                empirically: going coarser doesn't help — it actively breaks things, because this catchment
-                is too small to represent meaningfully at that scale. Ruled out, cleanly.
+                The actual answer turned up in a part of the paper we'd cited for months without ever
+                opening: its "Software and Data Availability" section links the original developers' own
+                published reproduction code. Reading it directly showed their real implementation differs
+                from their own paper's printed equation — see "The Physics, and Where We Got It," above, for
+                the equation-level detail. Implementing <em>that</em> version, with the identical published
+                constant (k=13, never touched), passed the gate: our error came in at 0.0332 (measured the
+                same way as the published 0.0321 target — about 3% above it, comfortably inside the 10%
+                tolerance band we'd set as acceptable before ever running this specific test, not adjusted
+                after seeing the result), improving on 9 of the 13 sample dates against a target of 9.
             </p>
             <p>
-                <strong>Idea 2</strong> — the paper's own description of this comparison lists soil
-                <em>texture</em> as an input, not the directly-measured drainage-rate data we'd been using.
-                We built a standard, published soil classification method and looked up standard reference
-                values for each texture instead. This measurably reduced our error — but digging into why,
-                it turns out this site's soil is nearly uniform in texture (which, again, matches what the
-                paper itself says about this site), so the "improvement" was mostly a case of removing noisy
-                measurement variability rather than adding real explanatory signal. A genuine but partial
-                answer.
+                We checked how solid that result is, not just how good the headline number looks: it holds
+                identically across a range of reasonable settings for one input we can't measure directly at
+                this site (vegetation cover) and either way we choose to treat soil variability across the
+                catchment (as a single average, or point-by-point). It does <em>not</em> hold under one
+                specific alternate — but well-established — choice for a different sub-equation (a 1-date
+                miss instead of passing) — a real sensitivity we're disclosing rather than hiding, and a
+                reminder that "passes" here means "passes under the paper's own stated choices," not
+                "passes no matter what."
             </p>
             <p>
-                <strong>Idea 3</strong> — the reference software we adopted last round has some optional
-                smoothing settings, turned off by default, that a production deployment might reasonably
-                enable. Turning them on gave another real, independent improvement.
-            </p>
-            <p>
-                Combined, these three changes cut our error roughly in half and — more importantly than the
-                raw number — the underlying <em>fit quality</em> genuinely improved rather than just
-                shrinking toward "predict the average everywhere," which is how we can tell this is real
-                progress and not an illusion of one.
-            </p>
-            <p>
-                We'd also flagged a fourth possibility: that the equation we'd been testing is only half the
-                published model — a second correction stage might exist specifically to pull an
-                over-eager first-stage estimate back toward reality. We built that second stage and tested
-                it directly rather than leaving it as speculation. It turned out to only ever activate on
-                about half the sample dates (a real, paper-specified condition, not a bug), and on those
-                dates it did exactly what we'd hoped — pulled our over-amplified estimate the right direction,
-                every time, never the wrong way — but by a modest amount, not enough by itself to close the
-                remaining gap. One side effect worth mentioning because it's the kind of thing that's easy to
-                get wrong and hard to notice when you have: a technical assumption buried in that second
-                stage (how to convert an evaporation rate into a rate of soil moisture change) turned out,
-                after working through the math properly, to not matter at all for our specific setup — a
-                loose end we'd have otherwise had to guess at, now provably closed instead.
-            </p>
-            <p>
-                The tempting shortcut here would be to just find a constant that makes the numbers match and
-                move on. We're deliberately not doing that — testing real hypotheses and having some pan out
-                partially, some not at all, is a normal, honest part of debugging, and quietly re-tuning a
-                published constant to pass a validation test would defeat the entire point of having the
-                test. The honest status, after four rounds of testing: real data, real results, real
-                cumulative progress (our error is now less than half what it was when we started), a
-                narrower and better-understood remaining gap, and one specific unexplained sentence in the
-                source paper that remains the leading suspect. Nothing past this gate is being built until
-                it actually passes.
+                What this does and doesn't mean: it means the physics, implemented as the original developers
+                actually built it rather than as their paper printed it, genuinely reproduces a published
+                result on real ground-truth data with zero constants tuned to make that happen. It does
+                <em>not</em> yet mean this generalizes — passing against the same 13 measurements the
+                discrepancy was found and fixed against is a much weaker claim than passing against data it's
+                never seen. That's exactly why the next two checks — a second, larger, independent set of
+                soil readings at this same site (59 dates, never used to find or fix anything above), then an
+                entirely separate research catchment on a different continent — are both still outstanding
+                and both required before anything past this gate gets built.
             </p>
             <h3>Rung 2 — Do Rider Reports Separate on Our Features?</h3>
             <p>
@@ -501,7 +504,12 @@
                 <li class="ref-item">
                     <div class="ref-citation">Eylander, J., Bieszczad, J., Ueckermann, M., Peters, J., Brooks, C., Audette, W., &amp; Ekegren, M. (2023). Geospatial Weather Affected Terrain Conditions and Hazards (GeoWATCH) description and evaluation. <em>Environmental Modelling &amp; Software</em>, 160, 105606.</div>
                     <a class="ref-link" href="https://doi.org/10.1016/j.envsoft.2022.105606" target="_blank">doi.org/10.1016/j.envsoft.2022.105606 &#8599;</a>
-                    <div class="ref-note">The source algorithm this project adapts. We've now read the full text directly and transcribed every governing equation against it (see the confidence table above).</div>
+                    <div class="ref-note">The source algorithm this project adapts. We've now read the full text directly and transcribed every governing equation against it (see the confidence table above) — including discovering that its own printed downscaling equation differs from its own linked reference code, below.</div>
+                </li>
+                <li class="ref-item">
+                    <div class="ref-citation">Creare LLC (developers of GeoWATCH, via SBIR award for the U.S. Army Corps of Engineers). SMAP-downscaling-example-application.ipynb, podpac-examples repository.</div>
+                    <a class="ref-link" href="https://github.com/creare-com/podpac-examples/blob/main/notebooks/5-datalib/smap/SMAP-downscaling-example-application.ipynb" target="_blank">github.com/creare-com/podpac-examples &#8599;</a>
+                    <div class="ref-note">Linked directly from the paper above's own "Software and Data Availability" section as reproducing "the downscaling algorithm." Its actual code is the equation shown in "The Physics, and Where We Got It," above — not the paper's own printed Eq.&nbsp;1. This discrepancy, found by reading this notebook directly rather than relying on the paper's text alone, is what let Rung&nbsp;1 (below) pass.</div>
                 </li>
                 <li class="ref-item">
                     <div class="ref-citation">Western, A. W., &amp; Grayson, R. B. (1998). The Tarrawarra data set: Soil moisture patterns, soil characteristics, and hydrological flux measurements. <em>Water Resources Research</em>, 34(10), 2765–2768.</div>

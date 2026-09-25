@@ -66,11 +66,21 @@ validation/tarrawarra/README.md for the full comparison. Kept as an option
 since it's still the more paper-faithful method and rules out one concrete
 hypothesis, even though it isn't sufficient by itself.
 
+**Session 8: `--redistribution-form podpac`**. The paper's own Software and
+Data Availability section links a Creare/PODPAC notebook the authors
+describe as reproducing "the downscaling algorithm" -- and its actual code
+is NOT the paper's printed Eq. 1. See physics/redistribution.py's module
+docstring (redistribute_podpac) for the full discovery writeup. This is
+now the RECOMMENDED form to validate against; `geowatch-paper` (the
+default, for backward compatibility with Sessions 4-7's documented
+reproduction-attempt history) remains available.
+
 Usage:
     python3 run_validation.py --data-dir ./data
     python3 run_validation.py --data-dir ./data --twi-engine pydem
     python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-scaled  # pyDEM's stored (x10) TWI
-    python3 run_validation.py --data-dir ./data --with-flux-correction  # not yet implemented, see --help
+    python3 run_validation.py --data-dir ./data --with-flux-correction  # Eq. 2/7 on top of Stage 1
+    python3 run_validation.py --data-dir ./data --redistribution-form podpac  # Session 8: the REAL production equation
 """
 
 from __future__ import annotations
@@ -85,7 +95,7 @@ from scipy.interpolate import griddata
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "services" / "trail-physics"))
 
 from parsers import parse_dem, parse_ksat_file, parse_particle_file, parse_tdr_file  # noqa: E402
-from physics.redistribution import redistribute  # noqa: E402
+from physics.redistribution import redistribute, redistribute_podpac  # noqa: E402
 from physics.soil_texture import soil_hydraulic_properties  # noqa: E402
 from physics.terrain import coarsen_dem, compute_twi, compute_twi_pydem  # noqa: E402
 
@@ -286,12 +296,87 @@ def build_terrain_predictors(
     return predictors_at, twi_grid, log_ks_mean
 
 
+def build_podpac_predictors(
+    dem_path: Path,
+    particle_path: Path,
+    twi_engine: str = "builtin",
+    twi_scaled: bool = False,
+    dem_coarsen_factor: int = 1,
+    twi_apply_limits: bool = False,
+    soil_params_scale: str = "fine",
+):
+    """Session 8: TWI + theta_s/theta_wilt predictor builder for the REAL
+    Creare/GeoWATCH production equation (physics.redistribution.
+    redistribute_podpac), discovered in the paper's own linked notebook --
+    see that function's docstring. Structurally parallel to
+    build_terrain_predictors, but supplies (theta_s, theta_wilt) instead of
+    ln(Ks) -- the podpac equation has no conductivity term.
+
+    soil_params_scale: "fine" (nearest-neighbor per-point theta_s/theta_wilt
+        from particle.dat's texture sample sites -- matches the notebook's
+        porosity/wilt nodes being evaluated at each output coordinate) or
+        "coarse" (a single site-wide mean, the alternative reading of what
+        a coarse global soil-constants layer would look like at Tarrawarra's
+        10.8 ha scale, where it would be effectively uniform regardless).
+        Both are legitimate interpretations of the notebook's construction
+        (see redistribute_podpac's docstring) -- kept as an explicit,
+        documented choice rather than picking one silently.
+    """
+    from stage2 import (
+        coarse_averaged_soil_params,
+        interpolate_soil_params_to_points,
+        load_texture_derived_soil_params,
+    )
+
+    grid = parse_dem(str(dem_path))
+    elevation, cellsize = coarsen_dem(grid.elevation, grid.cellsize, dem_coarsen_factor)
+    if twi_engine == "builtin":
+        twi_grid = compute_twi(elevation, cellsize)
+    elif twi_engine == "pydem":
+        twi_grid = compute_twi_pydem(
+            elevation, cellsize, scaled=twi_scaled, apply_twi_limits=twi_apply_limits
+        )
+    else:
+        raise ValueError(f"Unknown twi_engine {twi_engine!r} -- must be 'builtin' or 'pydem'")
+
+    nrows, ncols = elevation.shape
+    xs = grid.xllcorner + (np.arange(ncols) + 0.5) * cellsize
+    ys_from_north = grid.yllcorner + cellsize * nrows - (np.arange(nrows) + 0.5) * cellsize
+    xx, yy = np.meshgrid(xs, ys_from_north)
+
+    site_params = load_texture_derived_soil_params(particle_path)
+    if soil_params_scale == "coarse":
+        coarse = coarse_averaged_soil_params(site_params)
+        coarse_theta_s = coarse.maxsmc
+        coarse_theta_wilt = coarse.wltsmc
+    elif soil_params_scale != "fine":
+        raise ValueError(
+            f"Unknown soil_params_scale {soil_params_scale!r} -- must be 'fine' or 'coarse'"
+        )
+
+    def predictors_at(points_xy: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        twi_at_points = griddata(
+            (xx.ravel(), yy.ravel()), twi_grid.ravel(), points_xy, method="linear"
+        )
+        if soil_params_scale == "coarse":
+            theta_s_at_points = np.full(len(points_xy), coarse_theta_s)
+            theta_wilt_at_points = np.full(len(points_xy), coarse_theta_wilt)
+        else:
+            theta_wilt_at_points, _theta_ref, theta_s_at_points = interpolate_soil_params_to_points(
+                site_params, points_xy
+            )
+        return twi_at_points, theta_s_at_points, theta_wilt_at_points
+
+    return predictors_at, twi_grid
+
+
 def validate_one_date(
     tdr_path: Path,
     predictors_at,
     twi_mean: float,
-    log_ks_mean: float,
+    log_ks_mean: float | None = None,
     stage2_config=None,
+    redistribution_form: str = "geowatch-paper",
 ):
     """stage2_config: a stage2.Stage2Config, or None (default) for
     Stage 1 (Eq. 1) only. When provided, Stage 2 (Eq. 2/7) is applied on
@@ -301,6 +386,12 @@ def validate_one_date(
     ONLY (falls back to Stage 1's own prediction) with a loud warning,
     rather than silently applying Stage 1-only for every date without
     saying so.
+
+    redistribution_form: "geowatch-paper" (Eq. 1 as printed, TWI + ln(Ks)
+        terms, `predictors_at` returns (twi, log_ks)) or "podpac" (the
+        REAL Creare production equation discovered in Session 8 --
+        physics.redistribution.redistribute_podpac's docstring --
+        `predictors_at` returns (twi, theta_s, theta_wilt) instead).
     """
     records = parse_tdr_file(str(tdr_path))
     xy = np.array([(r.x, r.y) for r in records])
@@ -314,8 +405,17 @@ def validate_one_date(
     # relative magnitude, not just report a wrongly-scaled final number.
     observed = np.array([r.moisture_pct / 100.0 for r in records])
 
-    twi_at_points, log_ks_at_points = predictors_at(xy)
-    valid = ~(np.isnan(twi_at_points) | np.isnan(log_ks_at_points))
+    if redistribution_form == "podpac":
+        twi_at_points, theta_s_at_points, theta_wilt_at_points = predictors_at(xy)
+        valid = ~(
+            np.isnan(twi_at_points)
+            | np.isnan(theta_s_at_points)
+            | np.isnan(theta_wilt_at_points)
+        )
+    else:
+        twi_at_points, log_ks_at_points = predictors_at(xy)
+        valid = ~(np.isnan(twi_at_points) | np.isnan(log_ks_at_points))
+
     if valid.sum() < len(records) * 0.5:
         print(
             f"  WARNING: only {valid.sum()}/{len(records)} points had valid "
@@ -326,17 +426,29 @@ def validate_one_date(
 
     observed = observed[valid]
     twi_at_points = twi_at_points[valid]
-    log_ks_at_points = log_ks_at_points[valid]
     xy = xy[valid]
 
     theta_coarse = float(observed.mean())
-    predicted = redistribute(
-        theta_coarse=theta_coarse,
-        twi=twi_at_points,
-        log_ks=log_ks_at_points,
-        twi_mean=twi_mean,
-        log_ks_mean=log_ks_mean,
-    )
+
+    if redistribution_form == "podpac":
+        theta_s_at_points = theta_s_at_points[valid]
+        theta_wilt_at_points = theta_wilt_at_points[valid]
+        predicted = redistribute_podpac(
+            theta_coarse=theta_coarse,
+            twi=twi_at_points,
+            theta_s=theta_s_at_points,
+            theta_wilt=theta_wilt_at_points,
+            twi_mean=twi_mean,
+        )
+    else:
+        log_ks_at_points = log_ks_at_points[valid]
+        predicted = redistribute(
+            theta_coarse=theta_coarse,
+            twi=twi_at_points,
+            log_ks=log_ks_at_points,
+            twi_mean=twi_mean,
+            log_ks_mean=log_ks_mean,
+        )
 
     if stage2_config is not None:
         from stage2 import TDR_DATE_WINDOWS, apply_stage2_for_date
@@ -461,10 +573,43 @@ def main():
         "SOILPARM.TBL lookup). Session 6: the paper's own Tarrawarra "
         "methodology (Section 4.2.1) lists 'soil texture data' as an "
         "input, not measured conductivity -- see "
-        "load_texture_derived_ksat's docstring.",
+        "load_texture_derived_ksat's docstring. Ignored when "
+        "--redistribution-form=podpac (that equation has no ln(Ks) term).",
+    )
+    parser.add_argument(
+        "--redistribution-form",
+        choices=["geowatch-paper", "podpac"],
+        default="geowatch-paper",
+        help="Which Eq. 1 form to use. 'geowatch-paper' (default) is the "
+        "form as printed in the paper (TWI + ln(Ks) terms, flat 1/k "
+        "amplitude) -- what Sessions 4-7 validated against. 'podpac' is "
+        "the REAL Creare production equation, discovered in Session 8 by "
+        "reading the paper's own linked reproduction notebook (Software "
+        "and Data Availability section): theta = theta_coarse + "
+        "(theta_s - theta_wilt)/k * (twi - twi_bar) -- a soil-water-"
+        "holding-range-scaled amplitude and NO ln(Ks) term at all. See "
+        "physics/redistribution.py's module docstring for the full "
+        "discovery writeup and why it also resolves the paper's own "
+        "unexplained 'volumetric vs relative soil moisture' sentence "
+        "(Section 2.2.1).",
+    )
+    parser.add_argument(
+        "--soil-params-scale",
+        choices=["fine", "coarse"],
+        default="fine",
+        help="Only meaningful with --redistribution-form=podpac: whether "
+        "theta_s/theta_wilt are per-point (nearest texture sample site) or "
+        "a single site-wide mean. See build_podpac_predictors's docstring.",
     )
     args = parser.parse_args()
     data_dir = Path(args.data_dir)
+
+    if args.redistribution_form == "podpac" and args.ks_source == "texture":
+        print(
+            "NOTE: --ks-source is ignored with --redistribution-form=podpac "
+            "(that equation has no ln(Ks) term).",
+            file=sys.stderr,
+        )
 
     check_data_available(data_dir, require_stage2=args.with_flux_correction)
 
@@ -506,23 +651,37 @@ def main():
         )
         sys.exit(1)
 
-    predictors_at, twi_grid, log_ks_mean = build_terrain_predictors(
-        data_dir / "tarrawar.dem",
-        data_dir / "ksat.dat",
-        twi_engine=args.twi_engine,
-        twi_scaled=args.twi_scaled,
-        dem_coarsen_factor=dem_coarsen_factor,
-        ks_source=args.ks_source,
-        particle_path=data_dir / "particle.dat",
-        twi_apply_limits=args.twi_apply_limits,
-    )
+    log_ks_mean = None
+    if args.redistribution_form == "podpac":
+        predictors_at, twi_grid = build_podpac_predictors(
+            data_dir / "tarrawar.dem",
+            data_dir / "particle.dat",
+            twi_engine=args.twi_engine,
+            twi_scaled=args.twi_scaled,
+            dem_coarsen_factor=dem_coarsen_factor,
+            twi_apply_limits=args.twi_apply_limits,
+            soil_params_scale=args.soil_params_scale,
+        )
+        ks_source_note = f"soil params scale: {args.soil_params_scale} (no ln(Ks) term)"
+    else:
+        predictors_at, twi_grid, log_ks_mean = build_terrain_predictors(
+            data_dir / "tarrawar.dem",
+            data_dir / "ksat.dat",
+            twi_engine=args.twi_engine,
+            twi_scaled=args.twi_scaled,
+            dem_coarsen_factor=dem_coarsen_factor,
+            ks_source=args.ks_source,
+            particle_path=data_dir / "particle.dat",
+            twi_apply_limits=args.twi_apply_limits,
+        )
+        ks_source_note = f"Ks source: {args.ks_source}"
     twi_mean = float(np.nanmean(twi_grid))
     twi_valid_count = int(np.sum(~np.isnan(twi_grid)))
     print(
-        f"TWI engine: {args.twi_engine}"
+        f"Redistribution form: {args.redistribution_form}, TWI engine: {args.twi_engine}"
         + (" (scaled x10)" if args.twi_scaled else "")
         + f", DEM resolution: {args.dem_resolution}m (factor {dem_coarsen_factor}x), "
-        f"{twi_valid_count} valid TWI cells, Ks source: {args.ks_source}",
+        f"{twi_valid_count} valid TWI cells, {ks_source_note}",
         file=sys.stderr,
     )
 
@@ -534,7 +693,12 @@ def main():
     for filename in TDR_FILENAMES:
         tdr_path = data_dir / "tdr" / filename
         baseline_rmse, model_rmse, n = validate_one_date(
-            tdr_path, predictors_at, twi_mean, log_ks_mean, stage2_config=stage2_config
+            tdr_path,
+            predictors_at,
+            twi_mean,
+            log_ks_mean,
+            stage2_config=stage2_config,
+            redistribution_form=args.redistribution_form,
         )
         baseline_rmses.append(baseline_rmse)
         model_rmses.append(model_rmse)

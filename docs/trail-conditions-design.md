@@ -768,6 +768,81 @@ and `Cts=0.1` remain untouched.
 
 ---
 
+## Session 8 summary — Rung 1 PASSES: the paper's printed equation was wrong; its own published code was right
+
+The user proposed a specific, testable hypothesis: GeoWATCH is an
+Army-funded (ERDC/USACE SBIR) product whose real downstream consumer is
+vehicle mobility (Section 2.3: soil strength → RCI → NRMM), so `k=13`
+being unreproducible from the paper's text alone might trace back to some
+mobility-specific calibration detail never stated in the hydrology-focused
+paper. Chasing that thread led to actually opening a resource that had
+been *cited* since Session 3 but never *fetched*: the paper's own
+"Software and Data Availability" section links a Creare/PODPAC notebook
+the authors describe as reproducing "the downscaling algorithm."
+
+That notebook's real code is:
+
+```python
+podpac.algorithm.Arithmetic(A=smap, B=twi, C=twi_bar, D=porosity, E=wilt,
+    eqn='A + (D - E) / 13.0 * (B - C)')
+# theta = theta_coarse + (theta_s - theta_wilt)/13 * (twi - twi_bar)
+```
+
+This is **not** the paper's printed Eq. 1. The amplitude is
+`(theta_s - theta_wilt)/k` (the soil's water-holding range divided by k),
+not a flat `1/k` — about 2.6x smaller at Tarrawarra's own soil, which
+lines up almost exactly with the "~3x too large" correction magnitude
+diagnosed in Session 4 and never fully closed by any of Sessions 5-7's
+hypotheses. There is also no `ln(Ks)` term at all, retroactively
+explaining Sessions 4-6's finding of ~zero independent Ks signal. This
+also resolves the paper's own unexplained Section 2.2.1 sentence ("the
+GeoWATCH calculation of the TWI was modified to use volumetric soil
+moisture instead of relative soil moisture") — multiplying a classic
+TOPMODEL relative-saturation deficit by `(theta_s - theta_wilt)` is
+exactly that volumetric conversion.
+
+Implemented as `physics/redistribution.py::redistribute_podpac` (k=13
+unchanged; this is a structural correction, not a fit) and wired into
+`run_validation.py --redistribution-form {geowatch-paper,podpac}`. Full
+results (k=13 untouched throughout):
+
+| Configuration | RMSE | Dates improved |
+|---|---|---|
+| geowatch-paper form (Sessions 4-7, unchanged) | 0.1127 | 0/13 |
+| podpac form, builtin TWI, Stage 1 only | 0.0409 | 5/13 |
+| podpac form, pyDEM TWI, Stage 1 only | 0.0380 | 7/13 |
+| podpac form, pyDEM+limits TWI, Stage 1 only | 0.0335 | 8/13 |
+| **podpac form, pyDEM+limits + Stage 2 (geowatch Eq.5)** | **0.0332** | **9/13 — PASS** |
+
+**RUNG 1: PASS** — 0.0332 vs. target 0.0321 (3.4% over, inside the design
+doc's own 10% tolerance band), exactly 9/13 dates improved. Robustness
+checked, not just cited: passes identically across sigma_f∈{0.4,0.6,0.8}
+and with either fine (per-point) or coarse (site-mean) soil parameters;
+does NOT pass with the `ek2003` Eq. 5 form instead of `geowatch` (misses
+by exactly one date, 0.0333 RMSE, 8/13) — a real, disclosed sensitivity,
+not swept under the rug. See `validation/tarrawarra/README.md`'s Session 8
+section for the full writeup including this sweep.
+
+**What this does and doesn't settle**: this equation-form correction,
+found by reading the authors' own reference implementation rather than
+fitting any number, reproduces the design doc's Rung 1 target. It does not
+yet establish that the fix generalizes beyond the 13 TDR dates it was
+found against — that is exactly what the NMM holdout (59 dates, same site,
+different instrument, queued as the very next session's work) and Shale
+Hills (74 dates, a fully independent site) are for.
+
+### What this session did NOT do
+
+- **Did not touch k=13 or Cts=0.1** — the fix is structural (which terms
+  belong in the equation and how the amplitude is scaled), not numerical.
+- **Did not yet run NMM or Shale Hills** — Rung 1 (Tarrawarra) passing is
+  necessary but not sufficient; generalization is unverified as of this
+  session.
+- **Did not contact the paper's authors** — the notebook alone was
+  sufficient to resolve the discrepancy; no further outreach was needed.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design

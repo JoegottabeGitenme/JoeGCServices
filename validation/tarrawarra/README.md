@@ -10,31 +10,35 @@ Per the design doc: **"If you don't land near this, stop and debug. Do this
 before anything else."** `run_validation.py` enforces exactly that --
 non-zero exit if the target isn't met.
 
-## Status (as of Session 7): FAIL, but closing in -- real, substantial, honestly-earned progress
+## Status (as of Session 8): PASS
 
-The full dataset was obtained in Session 4 (see "How the data was acquired"
-below) and `run_validation.py` has been run against it for real across
-four sessions now (4, 5, 6, 7), testing one concrete, paper-grounded
-hypothesis at a time -- Session 7 built and wired the paper's full
-two-stage pipeline (Eq. 1 + Eq. 2/7), not just Stage 1. **The gate still
-does not pass.** Per the design doc's own instruction, this remains the
-right point to report honestly rather than push forward or fabricate a
-passing number -- but the gap has narrowed substantially:
+Sessions 4-7 spent four sessions validating the GeoWATCH paper's own
+**printed** Eq. 1 and never got closer than 0.0579 RMSE (target 0.0321).
+Session 8 followed a lead that had been sitting untouched since Session 3:
+the paper's own Software and Data Availability section links a Creare/
+PODPAC notebook the authors themselves describe as reproducing "the
+downscaling algorithm." Reading that notebook's actual code (not just
+citing its existence) revealed it is **not the same equation** as the
+paper's printed Eq. 1 -- see "Session 8" below for the full discovery and
+`services/trail-physics/physics/redistribution.py`'s module docstring for
+the equation-level detail. Running the REAL equation, with `k=13` left
+completely untouched, passes the gate:
 
 ```
-                                 Session 4    Session 6      Session 7
-                                 (builtin)   (best Stage 1)  (+ Stage 2)
-Overall baseline RMSE:            0.0370       0.0370          0.0370       (doc target: 0.0352)
-Overall Eq. 1[+2] RMSE:           0.1127       0.0597          0.0579       (doc target: 0.0321)
-Dates improved:                    0/13         0/13            0/13        (doc target: >= 9)
+                                 Session 4    Session 6      Session 7      Session 8
+                                 (builtin)   (best Stage 1)  (+ Stage 2)    (real equation)
+Overall baseline RMSE:            0.0370       0.0370          0.0370         0.0370       (doc target: 0.0352)
+Overall Eq. 1[+2] RMSE:           0.1127       0.0597          0.0579         0.0332       (doc target: 0.0321)
+Dates improved:                    0/13         0/13            0/13          9/13         (doc target: >= 9)
 ```
 
-That's a 48.6% reduction in RMSE from where Session 4 started, and one
-date (`sm270995`, the wettest/most topographically-driven) now lands
-within 0.6% of its own baseline -- the closest any single date has come to
-"improved" across all four sessions. Still FAIL, not a pass -- see
-"Session 7" below for exactly what Stage 2 added, and why its effect was
-smaller than hoped.
+**RUNG 1: PASS.** 0.0332 vs. a target of 0.0321 (3.4% over, well inside the
+design doc's own 10% tolerance band) and exactly 9/13 dates improved. No
+constant was fit to reach this -- `k=13` is the same literal number in the
+paper's own printed equation, the paper's own linked code, and this
+codebase throughout. What changed was correcting the equation's
+**structure** by reading the authors' own reference implementation, not
+adjusting any number to make a target land.
 
 ### How the data was acquired
 
@@ -382,24 +386,129 @@ python3 run_validation.py --data-dir ./data --twi-engine pydem --twi-apply-limit
     --ks-source texture --with-flux-correction --eq5-form geowatch
 ```
 
+**Superseded by Session 8, below**: this was the best result obtainable
+while still validating the paper's *printed* Eq. 1. Session 8 found that
+equation itself was the wrong target -- see the next section for the
+result that actually passes the gate.
+
+### Session 8: the paper's printed equation was wrong; its own published code was right
+
+**How this was found.** The user raised a specific, testable hypothesis:
+GeoWATCH is an Army-funded (ERDC/USACE SBIR, award numbers W913E5-13-C-0005
+and W913E5-14-C-0001) product whose real downstream consumer is *vehicle
+mobility* (Section 2.3 of the paper: soil strength -> RCI -> NRMM, the NATO
+Reference Mobility Model) -- so if `k=13` seemed impossible to reproduce
+from the text alone, the actual calibration might trace back to a
+mobility-specific concern never stated in the hydrology-focused paper.
+Chasing that thread led to actually opening the paper's own "Software and
+Data Availability" section (present since Session 3, never actually
+fetched):
+
+> "an example Python-based script is available that enables users to
+> reproduce the downscaling algorithm ... through Github at
+> https://github.com/creare-com/podpac-examples/blob/main/notebooks/5-datalib/smap/SMAP-downscaling-example-application.ipynb"
+
+That notebook's actual `podpac.algorithm.Arithmetic` node is:
+
+```python
+downscaled_sm = podpac.algorithm.Arithmetic(
+    A=smap, B=twi, C=twi_bar, D=porosity, E=wilt,
+    eqn='A + (D - E) / 13.0 * (B - C)')
+# theta = theta_SMAP + (theta_s - theta_wilt)/13 * (twi - twi_bar)
+```
+
+This is **not** the paper's printed Eq. 1. Two differences, both
+consequential:
+
+1. **The amplitude is `(theta_s - theta_wilt)/k`, not a flat `1/k`.** At
+   Tarrawarra (theta_s~0.47, theta_wilt~0.09 from texture), that's ~0.029
+   per unit TWI -- about **2.6x smaller** than the paper's flat
+   `1/13~0.077`. This lines up almost exactly with the "~3x too large"
+   correction magnitude Session 4 diagnosed and no hypothesis in Sessions
+   5-7 (pyDEM, resolution, texture-Ks, capping, Stage 2) ever fully closed.
+2. **There is no `ln(Ks)` term at all.** This also retroactively explains
+   why Sessions 4-6 found essentially zero independent signal from
+   `ln(Ks)` at this site (implied k for that term alone was ~260, i.e. "no
+   effect") -- the real production system never had that term.
+
+It also resolves a specific sentence flagged as unexplained since Session
+4 (paper Section 2.2.1): "the GeoWATCH calculation of the TWI was modified
+to use volumetric soil moisture instead of relative soil moisture."
+Classic TOPMODEL/STOPMODEL redistributes a dimensionless relative-
+saturation deficit; multiplying by `(theta_s - theta_wilt)` is exactly the
+conversion from that relative index into volumetric (m3/m3) units. The
+sentence was describing this amplitude term the entire time.
+
+**What was built**: `physics/redistribution.py::redistribute_podpac`
+(the real equation, `k=13` unchanged, full docstring with the discovery
+writeup), `run_validation.py --redistribution-form {geowatch-paper,podpac}`
+(`geowatch-paper` stays the default, preserving Sessions 4-7's documented
+reproduction-attempt history exactly as it ran), `build_podpac_predictors`
+(TWI + theta_s/theta_wilt instead of TWI + ln(Ks)),
+`--soil-params-scale {fine,coarse}` (per-point nearest-texture-site vs. a
+single site-wide mean -- both legitimate readings of how the notebook's
+own porosity/wilt nodes could be evaluated; tested both, see below). 13 new
+tests in `test_redistribution.py`, 5 new in `test_run_validation.py`.
+
+**Results** (k=13 untouched in every row; TDR %V/V -> fractional conversion
+applied before redistribution, as established since Session 4):
+
+| Configuration | RMSE | Dates improved |
+|---|---|---|
+| geowatch-paper form (Sessions 4-7 baseline, unchanged) | 0.1127 | 0/13 |
+| podpac form, builtin TWI, fine soil params, Stage 1 only | 0.0409 | 5/13 |
+| podpac form, pyDEM TWI, fine soil, Stage 1 only | 0.0380 | 7/13 |
+| podpac form, pyDEM+limits TWI, fine soil, Stage 1 only | 0.0335 | 8/13 |
+| **podpac form, pyDEM+limits TWI, fine soil, + Stage 2 (geowatch Eq.5)** | **0.0332** | **9/13 -- PASS** |
+| same, + Stage 2 (ek2003 Eq.5 form instead) | 0.0333 | 8/13 -- fail (by 1 date) |
+| same passing config, coarse soil params instead of fine | 0.0333 | 9/13 -- also PASS |
+| sigma_f in {0.4, 0.6, 0.8} at the passing config | 0.0332 (identical to 4dp) | 9/13 -- PASS at all three |
+
+Takeaways from the robustness sweep, reported honestly rather than just
+citing the single best number:
+- The pass is **robust** to the fine-vs-coarse soil-parameter-scale choice
+  and completely insensitive to sigma_f (consistent with Session 7's own
+  finding that sigma_f only matters in the 5th decimal place here).
+- The pass **requires** pyDEM (the paper's own stated TWI tool, Section
+  2.2) with its `apply_twi_limits` option enabled (a real, documented
+  pyDEM feature, off by default; the paper doesn't explicitly confirm this
+  setting either way) **and** Stage 2 with the paper's own printed Eq. 5
+  form (`geowatch`, not the more-established `ek2003` alternative used as
+  this codebase's default since Session 3). Swap the Eq. 5 form and it
+  misses by exactly one date (8/13 instead of 9/13, RMSE 0.0333 --
+  practically identical, but the discrete "9/13" gate is unforgiving at
+  the margin). This is disclosed, not hidden: the full recipe is four
+  ingredients (real equation + pyDEM + capping + Stage 2 w/ geowatch Eq.5),
+  each independently justified by the paper's own text or the paper's own
+  code, not tuned to pass.
+- Best Stage-1-ONLY result (no Stage 2 at all): 0.0335 RMSE, 8/13 dates --
+  one date away from passing on Stage 1 alone. Stage 2 is a real,
+  necessary contributor here, not a rounding nicety.
+
+**What this does and doesn't settle**: k=13 reproduces the design doc's
+target using the paper's OWN reference implementation. It does not (yet)
+confirm this generalizes -- that's exactly what the NMM holdout and Shale
+Hills are for next (see "What remains open" below, now reframed since the
+core Rung 1 gate is met).
+
 ### What remains open
 
-- **Whether the remaining gap needs a different TWI calibration, a
-  different Stage 2 detail, or both.** Stage 2's real-but-modest effect
-  means it's a genuine contributor, not the single missing piece -- the
-  bulk of the gap (which Session 4-6 already traced to the TWI term
-  specifically) is still unexplained.
-- **The "modified TWI" sentence** (Section 2.2.1: "the GeoWATCH calculation
-  of the TWI was modified to use volumetric soil moisture instead of
-  relative soil moisture") remains the single most suspicious unexplained
-  detail in the paper's own text -- still not resolved by anything tested
-  across 4 sessions.
-- **Whether 0.0321 is Stage-1-only or the full pipeline** -- Session 7's
-  result doesn't resolve this either way: Stage 2 helped, but not enough
-  to flip the conclusion.
-- Shale Hills (the paper's second validation site, 74 dates, public data)
-  remains the next planned arbiter, per the user's own decision to pursue
-  it after Stage 2 rather than in parallel.
+- **Generalization.** Rung 1 (Tarrawarra, the same 13 dates this equation
+  form was checked against) now passes -- but that is not yet evidence the
+  fix transfers to unseen data. NMM (59 dates, same site, different
+  instrument/dates) and Shale Hills (74 dates, a fully independent site)
+  are the next real tests, in that order, per the user's own sequencing
+  decision.
+- **The eq5-form sensitivity at the margin** (geowatch passes, ek2003
+  misses by one date) means this result, while real, is not maximally
+  robust to every reasonable modeling choice -- worth keeping in mind when
+  reporting this externally: "passes with the paper's own stated Eq. 5
+  form" is the accurate claim, not "passes unconditionally."
+- The `geowatch-paper` (printed Eq. 1) form is now understood to simply be
+  a different, less-accurate equation than what Creare's own system runs --
+  not a bug in this codebase's transcription of it. Both forms are kept:
+  `geowatch-paper` as the documented historical reproduction attempt,
+  `podpac` as the going-forward default recommendation.
 
 ### If the DEM parser fails
 
@@ -423,10 +532,16 @@ RMSE 0.040 -> 0.030 m3/m3, improving on 56/59 dates (95%).
 real-world missing-measurement variability, not a parsing bug). **Not yet
 implemented**: the `run_validation.py` wiring, which needs a different
 shape than TDR's one-file-per-date (here, one file per *site*; a "date"
-means grouping matching date/time entries across all 20 files). Left for a
-future session, and moot until the Eq. 1 / TWI issue above is resolved
-first anyway -- per the design doc, don't build more on top of an
-unresolved Rung 1 failure.
+means grouping matching date/time entries across all 20 files).
+
+**Session 8 reframing**: now that the `podpac` equation form passes Rung 1
+on TDR, NMM's 59 unseen dates (same site, different instrument) become the
+**first held-out check** of whether this holds up beyond the exact dataset
+it was validated on -- the equation form and `k=13` are locked in as of
+Session 8 and must NOT be adjusted based on NMM's outcome. Per-user
+decision: NMM's per-tube observed value = mean of the 15cm and 30cm
+readings (best physical match to TDR's own top-30cm sensing volume).
+Planned as the very next session's work.
 
 ## Attribution
 
