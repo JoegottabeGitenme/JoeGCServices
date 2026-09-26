@@ -1087,6 +1087,96 @@ here now that a real pilot run exists to calibrate against.
 
 ---
 
+## Session 12 summary — Phase B: main.py wired to real physics + the ingest-triggered diagnostic architecture
+
+Answers a direct question from the user: how does this become an
+"automated diagnostic on model ingest," and how big a lift is that? A
+full survey of the ingest pipeline found: no push/event mechanism exists
+anywhere in this codebase (no Redis pub/sub, no Postgres NOTIFY/LISTEN,
+no webhooks — confirmed absent, not just undocumented); the `datasets`
+catalog (one row per model+parameter+level+reference_time+forecast_hour,
+`status='available'` once the Zarr upload succeeds) is *itself* the
+closest thing to an event log; and the two repo-sanctioned patterns are
+either polling that catalog (ChunkWarmer's own proven approach) or a
+synchronous chained call from whatever component knows completion
+(the storm-events `refresh-counties` precedent). Per the user's own
+decision: poll-only (no Rust NOTIFY bridge), incremental per-forecast-hour
+processing, folded into this same session as the main.py rewrite it
+naturally required anyway.
+
+**The trigger, concretely**: `db.py::get_pending_forecast_hours` — a
+self-join on `datasets` for "SOILW and TSOIL both `available` for this
+exact (reference_time, forecast_hour)", filtered by NOT EXISTS against a
+new durable ledger table, `trail_physics_progress`
+(`TRAIL_PHYSICS_PROGRESS_SCHEMA_SQL`, migrated by the ingester exactly
+like `segment_conditions` already is — same "Python writes it, Rust just
+creates the table" cross-language pattern). This directly expresses "once
+these two inputs are both ingested for a given timestep, run the
+diagnostic" as one SQL query against the ingester's own catalog, replacing
+the original design's "reprocess the single latest run, unconditionally,
+every 30 minutes" — which could only ever look at the newest run and had
+no durable record of what it had already done. Poll interval dropped to
+60s (matching ChunkWarmer's own default), so each forecast hour is picked
+up within about a minute of landing — functionally equivalent to "on
+ingest" for data that arrives hourly, without any cross-service coupling
+or Rust changes.
+
+**The real physics wiring** (the other half of Phase B, which this
+trigger rework was folded into rather than done as a separate pass over
+the same loop):
+- `static_stack.py` (new): opens the WS1 Zarr stack, reading the grid spec
+  from the group's own attrs (never re-derived, per `pipelines/static/
+  grid_spec.py`'s own stated intent), samples named layers via **lazy,
+  windowed zarr reads** (a real, deliberate difference from `forcing.
+  open_level0_array`'s whole-array load, which is fine for HRRR's ~2M
+  cells but would not be for a full-Colorado 10m stack).
+- `downscale.py` (new): applies `redistribute_podpac` **per point, using
+  that point's own bilinearly-sampled HRRR reading as `theta_coarse` and
+  its own covering HRRR cell's `lambda_bar`** — not a single shared value
+  per segment, the convention every validation session used because those
+  sites were all smaller than one HRRR cell. At Colorado scale a single
+  trail can span several HRRR cells, so this is the equation's actual
+  per-pixel semantics, confirmed to need no changes to `redistribute_
+  podpac` itself (its arithmetic already broadcasts arrays exactly like
+  scalars — checked by reading the implementation, not assumed). Points
+  outside the stack's current coverage fall back to the raw HRRR value;
+  the fraction of a segment's points that got real downscaling becomes a
+  new, real `confidence` value (repurposing the schema's existing nullable
+  column rather than waiting for the unrelated S1 triple-collocation
+  notion of confidence that column was originally envisioned for).
+- **The `valid_time`/`forecast_hour` bug is fixed**: `valid_time =
+  reference_time + forecast_hour`, previously just `reference_time` alone
+  — every forecast hour was silently colliding on `segment_conditions`'s
+  own `UNIQUE(feature_id, valid_time, model_version)` upsert key.
+- `model_version` bumped to `trail-physics-v1` (from the placeholder-
+  physics era's `trail-physics-v0`) — genuinely different physics deserves
+  its own version key, not a silent overwrite of whatever a prior
+  deployment might have written.
+
+**192 total Python tests now passing in trail-physics** (up from 160,
+plus 1 skipped) — new coverage for the job-ledger SQL (`test_db.py`, via a
+lightweight fake cursor since no live Postgres is reachable here), the
+static-stack sampler (`test_static_stack.py`, a synthetic Zarr store
+matching the real assembly layout), the downscaling combination logic
+including its sign convention (`test_downscale.py`), and the `valid_time`
+fix itself (`test_main.py` — this was the one bug this whole rewrite
+absolutely could not ship without a regression test for).
+
+### What this session did NOT do
+
+- **Did not add a push/NOTIFY mechanism** — poll-only per the user's own
+  decision; the design leaves a clean seam for one later (the "check for
+  new work" function is exactly what a LISTEN callback would invoke), but
+  nothing was built.
+- **Did not run any of this against live infrastructure** — no reachable
+  Postgres or MinIO from this environment, same constraint as every prior
+  session touching this service. The `docker-compose.yml` profile gate
+  stays in place, its comment updated to say precisely what's left: upload
+  the pilot stack (Phase A's own unexecuted step) and run one real cycle.
+- **Did not build Phase C (EDR exposure)** — next.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design

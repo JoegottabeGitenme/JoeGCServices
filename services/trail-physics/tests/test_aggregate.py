@@ -66,3 +66,21 @@ def test_build_segment_condition_row_optional_fields_default_none():
     )
     assert row["frozen_fraction"] is None
     assert row["swe_mm"] is None
+    assert "model_version" not in row  # absent, not None -- lets db.py's own default apply
+
+
+def test_build_segment_condition_row_confidence_and_model_version():
+    """Session 12: confidence (fraction of vertices with real WS1
+    downscaling) and an explicit model_version both flow through into the
+    row dict."""
+    row = build_segment_condition_row(
+        feature_id=1,
+        run_time=datetime(2026, 9, 22, tzinfo=timezone.utc),
+        valid_time=datetime(2026, 9, 22, tzinfo=timezone.utc),
+        forecast_hour=0,
+        soil_moisture_samples=np.array([0.2]),
+        confidence=0.75,
+        model_version="trail-physics-v1",
+    )
+    assert row["confidence"] == pytest.approx(0.75)
+    assert row["model_version"] == "trail-physics-v1"

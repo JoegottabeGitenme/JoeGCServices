@@ -1,52 +1,54 @@
 #!/usr/bin/env python3
 """trail-physics service entrypoint.
 
-Polls the `datasets` catalog for new complete HRRR runs (mirroring
-ChunkWarmer's proven pattern -- no push/event mechanism exists in this
-codebase, see db.py's module docstring), and for each new run: for every
-active trail segment, samples HRRR forcing at the segment's own OSM
-vertices (the vertex-sampling approximation documented in aggregate.py --
-true corridor-mask zonal stats need WS1/WS2, not built this session),
-applies the physics core (redistribution + relaxation + snow-lite + the
-frozen-ground gate), aggregates to one row per segment per valid time, and
-upserts into `segment_conditions`.
+**Session 12: rewritten as an incremental, ingest-keyed job worker** --
+the "automated diagnostic on model ingest" the design doc always intended
+this to become, now that the physics is fully validated (Tarrawarra TDR/
+NMM, Shale Hills TDR -- Sessions 8-10) and a real static terrain/soil
+stack exists (the Boulder-area pilot, Session 11). Polls `datasets` for
+(reference_time, forecast_hour) pairs where BOTH SOILW and TSOIL have
+landed, that a durable ledger (`trail_physics_progress`) shows haven't
+been processed yet under this version -- see db.py's module docstring for
+why this replaced the original "reprocess the single latest run every
+30 minutes" design (no push/event mechanism exists in this codebase; this
+is a much more precise and durable poll, not a push).
+
+For each pending forecast hour, for every active trail segment: samples
+HRRR forcing at the segment's own OSM vertices (the vertex-sampling
+approximation documented in aggregate.py -- true corridor-mask zonal
+stats need WS2, not built yet), downscales via the real Creare/GeoWATCH
+production equation using the WS1 static stack where it has coverage
+(`downscale.py`, falling back to the raw HRRR value with reduced
+confidence elsewhere), applies the S4 frozen-ground gate, aggregates to
+one row per segment per valid time, and upserts into `segment_conditions`
+-- then marks that forecast hour done in the ledger.
 
 **This orchestration has not been run against live infrastructure this
 session** (no reachable Postgres or MinIO S3 endpoint from this
-environment -- see db.py and forcing.py's module docstrings for exactly
-what was and wasn't testable). Every piece it calls (physics core,
-hrrr_grid, forcing's bilinear sampling, aggregate's statistics) is
-independently unit-tested (82 tests passing as of this session); this file
-is the wiring, and the wiring itself is the one-time smoke test to run at
-first deployment.
-
-Deliberately NOT implementing the S1 anchor (HRRR-to-NLDAS/SMAP bias
-correction) or the full S5 downscale-to-10m-grid step this session --
-those need the WS1 static stack (terrain/soil rasters) and WS2 (corridor
-mask), neither built yet. What this DOES implement end-to-end: read HRRR
-forcing at each segment vertex -> Eq. 1 redistribution using a placeholder
-uniform TWI/ln(Ks) (see NOTE in `run_cycle`) -> Eq. 2/7 relaxation -> S4
-frozen gate -> S8 aggregation -> write. This produces real, if
-not-yet-terrain-informed, segment_conditions rows -- useful for exercising
-the full pipeline plumbing (including the EDR exposure this feeds, once
-built) ahead of WS1/WS2 landing.
+environment -- see db.py/forcing.py/static_stack.py's module docstrings
+for exactly what was and wasn't testable). Every piece it calls is
+independently unit-tested; this file is the wiring, and the wiring itself
+is the one-time smoke test to run at first deployment (see
+docker-compose.yml's trail-physics profile-gate comment for exactly
+what's still needed before removing that gate).
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import timedelta, timezone
 
 import numpy as np
 
 import db
 from aggregate import build_segment_condition_row
 from config import Config
+from downscale import downscale_soil_moisture
 from forcing import open_level0_array, sample_points, storage_path
 from hrrr_grid import HrrrGrid
-from physics.redistribution import redistribute
 from physics.snow import is_frozen_ground
+from static_stack import StaticStack
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("trail-physics")
@@ -67,88 +69,125 @@ def s3_store(config: Config, path: str):
     return fs.get_mapper(f"{config.s3_bucket}/{path}")
 
 
-def reference_time_to_path_str(reference_time: datetime) -> str:
+def reference_time_to_path_str(reference_time) -> str:
     """Matches the ingester's storage path convention: YYYYMMDD_HHz."""
     return reference_time.strftime("%Y%m%d_%Hz")
 
 
+def open_static_stack(config: Config) -> StaticStack | None:
+    """Opens the WS1 static stack if `config.static_stack_path` is set and
+    reachable. Returns None (not an exception) on any failure to open it
+    -- a missing/unreachable static stack is a real, expected situation
+    (nothing has been uploaded there yet, or a region config points
+    somewhere that hasn't been built), not a reason to crash the whole
+    service; every segment simply falls back to raw HRRR with
+    confidence=0.0 (see downscale.py)."""
+    if not config.static_stack_path:
+        return None
+    try:
+        return StaticStack(s3_store(config, config.static_stack_path))
+    except Exception as e:  # noqa: BLE001 -- log and fall back, don't crash the cycle
+        log.warning("Could not open static stack at %s: %s -- falling back to raw HRRR everywhere", config.static_stack_path, e)
+        return None
+
+
 def run_cycle(config: Config, conn) -> int:
-    """Run one full physics cycle for the latest available HRRR run.
-    Returns the number of segment_conditions rows written."""
-    run = db.get_latest_complete_hrrr_run(
-        conn, max_forecast_hour=config.max_forecast_hour
+    """Process every pending (reference_time, forecast_hour) -- one job
+    per forecast hour, incrementally, as its inputs land (Session 12).
+    Returns the total number of segment_conditions rows written this
+    cycle."""
+    pending = db.get_pending_forecast_hours(
+        conn,
+        max_forecast_hour=config.max_forecast_hour,
+        model_version=config.model_version,
+        lookback_hours=config.lookback_hours,
     )
-    if run is None:
-        log.info("No HRRR run with analysis-hour SOILW available yet, skipping cycle")
+    if not pending:
+        log.info("No new complete forecast hours to process")
         return 0
 
-    log.info(
-        "Running trail-physics cycle for HRRR run %s (%d forecast hours available)",
-        run.reference_time,
-        len(run.forecast_hours_available),
-    )
+    log.info("Found %d pending forecast hour(s) to process", len(pending))
 
     feature_ids = db.get_active_feature_ids(conn, region=config.region)
-    log.info("Processing %d active trail segments", len(feature_ids))
+    log.info("Processing against %d active trail segments", len(feature_ids))
 
-    ref_path_str = reference_time_to_path_str(run.reference_time)
-    rows_written = 0
+    static_stack = open_static_stack(config)
+    if static_stack is None:
+        log.warning(
+            "No static stack available (path=%s) -- every segment this cycle will use raw "
+            "HRRR values with confidence=0.0, not topographically downscaled",
+            config.static_stack_path,
+        )
 
-    for forecast_hour in run.forecast_hours_available:
-        soilw_path = storage_path("hrrr", ref_path_str, "SOILW", "4 cm below ground", forecast_hour)
-        tsoil_path = storage_path("hrrr", ref_path_str, "TSOIL", "4 cm below ground", forecast_hour)
+    rows_written_total = 0
+    for job in pending:
+        rows_written_total += _process_forecast_hour(config, conn, feature_ids, static_stack, job)
 
-        try:
-            soilw_grid = open_level0_array(s3_store(config, soilw_path), "")
-            tsoil_grid = open_level0_array(s3_store(config, tsoil_path), "")
-        except Exception as e:  # noqa: BLE001 -- log and skip this hour, don't crash the whole cycle
-            log.warning("Could not read forcing for forecast hour %d: %s", forecast_hour, e)
+    log.info("Cycle complete: wrote %d segment_conditions rows total", rows_written_total)
+    return rows_written_total
+
+
+def _process_forecast_hour(config: Config, conn, feature_ids, static_stack, job: db.PendingForecastHour) -> int:
+    ref_path_str = reference_time_to_path_str(job.reference_time)
+    soilw_path = storage_path("hrrr", ref_path_str, "SOILW", "4 cm below ground", job.forecast_hour)
+    tsoil_path = storage_path("hrrr", ref_path_str, "TSOIL", "4 cm below ground", job.forecast_hour)
+
+    try:
+        soilw_grid = open_level0_array(s3_store(config, soilw_path), "")
+        tsoil_grid = open_level0_array(s3_store(config, tsoil_path), "")
+    except Exception as e:  # noqa: BLE001 -- log and skip this hour, don't crash the whole cycle
+        log.warning(
+            "Could not read forcing for run %s forecast hour %d: %s",
+            job.reference_time, job.forecast_hour, e,
+        )
+        return 0
+
+    # Session 12 bug fix: valid_time MUST be reference_time + forecast_hour,
+    # not reference_time alone -- otherwise every forecast hour for a run
+    # collides on segment_conditions's own
+    # UNIQUE(feature_id, valid_time, model_version) upsert key, and only
+    # the last-processed hour's values would ever actually persist.
+    reference_time_utc = job.reference_time.replace(tzinfo=timezone.utc)
+    valid_time = reference_time_utc + timedelta(hours=job.forecast_hour)
+
+    rows = []
+    for feature_id in feature_ids:
+        vertices = db.get_feature_geometry(conn, feature_id)
+        if not vertices:
             continue
+        points_lat_lon = [(lat, lon) for lon, lat in vertices]  # geometry is (lon,lat); grid wants (lat,lon)
 
-        valid_time = run.reference_time.replace(tzinfo=timezone.utc)  # caller adjusts by forecast_hour upstream in a real run
-        rows = []
-        for feature_id in feature_ids:
-            vertices = db.get_feature_geometry(conn, feature_id)
-            if not vertices:
-                continue
-            points_lat_lon = [(lat, lon) for lon, lat in vertices]  # geometry is (lon,lat); grid wants (lat,lon)
+        soilw_samples = np.array([s.value for s in sample_points(soilw_grid, HRRR_GRID, points_lat_lon)])
+        tsoil_samples = np.array([s.value for s in sample_points(tsoil_grid, HRRR_GRID, points_lat_lon)])
 
-            soilw_samples = np.array(
-                [s.value for s in sample_points(soilw_grid, HRRR_GRID, points_lat_lon)]
+        result = downscale_soil_moisture(static_stack, HRRR_GRID, points_lat_lon, soilw_samples)
+        frozen_flags = is_frozen_ground(tsoil_samples)
+
+        rows.append(
+            build_segment_condition_row(
+                feature_id=feature_id,
+                run_time=reference_time_utc,
+                valid_time=valid_time,
+                forecast_hour=job.forecast_hour,
+                soil_moisture_samples=result.predicted,
+                frozen_flags=frozen_flags,
+                confidence=result.confidence,
+                model_version=config.model_version,
             )
-            tsoil_samples = np.array(
-                [s.value for s in sample_points(tsoil_grid, HRRR_GRID, points_lat_lon)]
-            )
+        )
 
-            # NOTE: uniform placeholder TWI/ln(Ks) (WS1's static stack isn't
-            # built yet) -- this makes Eq. 1's correction terms zero
-            # (uniform terrain -> every point equals the coarse mean, see
-            # test_uniform_terrain_returns_coarse_value_everywhere), so this
-            # cycle currently outputs the coarse HRRR value at each segment,
-            # NOT yet topographically downscaled. Wiring is real; the
-            # terrain signal isn't plugged in yet.
-            redistributed = redistribute(
-                theta_coarse=float(np.nanmean(soilw_samples)),
-                twi=np.zeros_like(soilw_samples),
-                log_ks=np.zeros_like(soilw_samples),
-            )
-            frozen_flags = is_frozen_ground(tsoil_samples)
-
-            rows.append(
-                build_segment_condition_row(
-                    feature_id=feature_id,
-                    run_time=run.reference_time,
-                    valid_time=valid_time,
-                    forecast_hour=forecast_hour,
-                    soil_moisture_samples=redistributed,
-                    frozen_flags=frozen_flags,
-                )
-            )
-
-        if rows:
-            rows_written += db.upsert_segment_conditions(conn, rows)
-
-    log.info("Cycle complete: wrote %d segment_conditions rows", rows_written)
+    rows_written = db.upsert_segment_conditions(conn, rows) if rows else 0
+    db.mark_forecast_hour_processed(
+        conn,
+        reference_time=job.reference_time,
+        forecast_hour=job.forecast_hour,
+        rows_written=rows_written,
+        model_version=config.model_version,
+    )
+    log.info(
+        "Run %s forecast hour %d: wrote %d segment_conditions rows",
+        job.reference_time, job.forecast_hour, rows_written,
+    )
     return rows_written
 
 

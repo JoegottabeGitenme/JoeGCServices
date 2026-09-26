@@ -121,6 +121,13 @@ async fn main() -> Result<()> {
     catalog.migrate_segment_conditions().await?;
     info!("Segment conditions schema migrated");
 
+    // Migrate trail-physics's own progress ledger (the durable
+    // "what's already been processed" work queue -- see Session 12 in
+    // docs/trail-conditions-design.md and TRAIL_PHYSICS_PROGRESS_SCHEMA_SQL's
+    // own doc comment). Also written by Python, not by this ingester.
+    catalog.migrate_trail_physics_progress().await?;
+    info!("Trail physics progress schema migrated");
+
     // Create observation catalog using the same connection pool
     let observation_catalog = ObservationCatalog::new(catalog.pool_clone());
 

@@ -55,12 +55,26 @@ def build_segment_condition_row(
     soil_moisture_samples: np.ndarray,
     frozen_flags: np.ndarray | None = None,
     swe_samples: np.ndarray | None = None,
+    confidence: float | None = None,
+    model_version: str | None = None,
 ) -> dict:
     """Build one row dict ready for db.upsert_segment_conditions.
 
-    `softness_index` and `confidence` are left as None (schema columns
-    exist for S6/S1-triple-collocation, neither implemented this session --
-    see SEGMENT_CONDITIONS_SCHEMA_SQL's doc comment in catalog.rs).
+    `confidence` (Session 12): the fraction of this segment's sampled
+    vertices that received genuine WS1 terrain/soil downscaling, as
+    opposed to falling back to the raw (undownscaled) HRRR value because
+    they fell outside the static stack's current coverage (see
+    `downscale.py::DownscaleResult.confidence`) -- 1.0 means every vertex
+    was topographically downscaled, 0.0 means none were (raw HRRR
+    everywhere), None means there was no valid HRRR reading at all for
+    this segment/hour. This is NOT the S1 triple-collocation confidence
+    the schema comment in catalog.rs originally envisioned (that remains
+    unimplemented) -- reusing the same nullable column for a real,
+    simpler, and immediately useful notion of confidence rather than
+    leaving it unpopulated until triple-collocation exists.
+
+    `softness_index` is left as None (S6, blocked on restricted Army FASST
+    coefficients -- see design doc).
     """
     return {
         "feature_id": feature_id,
@@ -76,5 +90,11 @@ def build_segment_condition_row(
             aggregate_mean_ignoring_nan(swe_samples) if swe_samples is not None else None
         ),
         "softness_index": None,  # S6, blocked on c1/c2 (see design doc)
-        "confidence": None,  # S1 triple-collocation, not implemented this session
+        "confidence": confidence,
+        # Only included if the caller passed one -- db.upsert_segment_conditions
+        # falls back to its own default ("trail-physics-v0") if this key is
+        # absent from the row dict; main.py always passes config.model_version
+        # explicitly (Session 12) so that fallback is a last-resort safety
+        # net, not the actual mechanism in normal operation.
+        **({"model_version": model_version} if model_version is not None else {}),
     }

@@ -163,6 +163,33 @@ impl Catalog {
         Ok(())
     }
 
+    /// Run database migrations for `trail_physics_progress` -- the durable
+    /// work ledger `services/trail-physics` uses to track which
+    /// (model, reference_time, forecast_hour) combinations it has already
+    /// processed (Session 12: replaces reprocessing every HRRR run on
+    /// every poll cycle with an incremental, ingest-keyed job queue).
+    ///
+    /// Written to by `services/trail-physics` (Python), same as
+    /// `segment_conditions`. Call this after `migrate_segment_conditions()`.
+    pub async fn migrate_trail_physics_progress(&self) -> WmsResult<()> {
+        for statement in TRAIL_PHYSICS_PROGRESS_SCHEMA_SQL.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        WmsError::DatabaseError(format!(
+                            "Trail physics progress migration failed: {}",
+                            e
+                        ))
+                    })?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get a reference to the underlying connection pool.
     ///
     /// This allows creating an `ObservationCatalog` that shares the same pool.
@@ -2316,6 +2343,47 @@ CREATE INDEX IF NOT EXISTS idx_segment_conditions_valid_time
     ON segment_conditions(valid_time);
 CREATE INDEX IF NOT EXISTS idx_segment_conditions_run_time
     ON segment_conditions(run_time)
+"#;
+
+/// Schema for `trail_physics_progress` -- the durable work ledger the
+/// `trail-physics` Python service uses to track which
+/// (model, reference_time, forecast_hour) combinations it has already
+/// turned into `segment_conditions` rows.
+///
+/// **Why this exists** (Session 12): before this, `trail-physics` polled
+/// `datasets` for "the latest run" every cycle and reprocessed it in full
+/// every time (idempotent only via `segment_conditions`'s own upsert) --
+/// simple, but it means (a) there's no durable record of exactly what's
+/// been processed, so a restart can't distinguish "already done" from
+/// "not started yet" without redoing everything, and (b) it can only ever
+/// look at the single latest run, not incrementally pick up forecast
+/// hours as they land across a run that's still ingesting. This table
+/// makes "what's left to do" an explicit SQL query (`datasets` rows that
+/// exist, minus `trail_physics_progress` rows that exist) instead of an
+/// implicit "reprocess everything, every time" policy.
+///
+/// `model_version` is part of the uniqueness key (matching
+/// `segment_conditions`'s own convention) so that bumping the physics
+/// version (e.g. a future equation change) doesn't get silently blocked
+/// by an old version's ledger entries -- old and new versions' progress
+/// coexist, exactly like `segment_conditions`'s own rows do.
+///
+/// Written to by `services/trail-physics` (Python), not by any Rust
+/// service.
+pub const TRAIL_PHYSICS_PROGRESS_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS trail_physics_progress (
+    id BIGSERIAL PRIMARY KEY,
+    model TEXT NOT NULL,
+    reference_time TIMESTAMPTZ NOT NULL,
+    forecast_hour INT NOT NULL,
+    model_version TEXT NOT NULL,
+    rows_written INT NOT NULL DEFAULT 0,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(model, reference_time, forecast_hour, model_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trail_physics_progress_lookup
+    ON trail_physics_progress(model, reference_time, forecast_hour)
 "#;
 
 #[cfg(test)]
