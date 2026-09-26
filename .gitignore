@@ -131,3 +131,16 @@ compile_commands.json
 # redistribution with citation); the zip archives themselves are redundant
 # with those extracted files and not worth tracking.
 /validation/tarrawarra/data/*.zip
+
+# WS1 static-stack pilot outputs (Session 11) -- unlike Tarrawarra/Shale
+# Hills' primary source data (kept in git because it's hard-to-reacquire:
+# a WAF-blocked/manually-downloaded archive, or a dataset whose original
+# host went dark), everything under pipelines/static/data/ is fully and
+# quickly reproducible from stable, live, public sources (USGS 3DEP's own
+# S3 bucket, POLARIS's own HTTP server) by re-running this directory's
+# own scripts (~5 minutes total for the pilot region, see README.md) --
+# not worth the ~470MB of git history for a regenerable intermediate/
+# output artifact. The actual deployed deliverable lives in MinIO
+# (static/colorado-10m/..., via upload_static_stack.sh), the same place
+# every other grid already lives -- not duplicated into git.
+/pipelines/static/data/

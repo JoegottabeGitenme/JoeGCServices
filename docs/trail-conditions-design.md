@@ -995,6 +995,98 @@ blocked by anything in the validation ladder.
 
 ---
 
+## Session 11 summary — WS1 static stack: Boulder-area pilot built and verified, real data throughout (Phase A)
+
+First work on the Colorado deployment side, now that the validation ladder
+is fully passed. Per the user's own decision: prove the full fetch → TWI →
+Zarr chain on a real but smaller pilot region (Boulder-area foothills,
+Golden through Boulder/Lyons/Nederland — Colorado's highest-traffic Front
+Range trail corridor) before committing to a statewide build, using
+**pyDEM + `apply_twi_limits`** (the exact configuration validated three
+times over) rather than the originally-planned WhiteboxTools, which was
+never validated against anything in this project.
+
+**The WS1 grid spec, previously undefined anywhere in the repo**
+(`build_corridor_mask.py`'s own docstring: "that grid's exact origin/
+extent doesn't exist yet") **is now pinned**: EPSG:5070 (NAD83 Conus
+Albers — Colorado straddles UTM zones 12N/13N, so a UTM grid would need
+an arbitrary zone choice), 10m, with a live-verified pilot bbox spanning
+two real 3DEP tiles at the 40°N seam (`n40w106`/`n41w106`, both confirmed
+reachable via HTTP HEAD before being chosen).
+
+**Full pilot chain run for real, ~17M cells**:
+- **DEM**: real USGS 3DEP data, read via `/vsicurl/` HTTP range requests
+  (confirmed live: windowed reads work directly against the public S3
+  bucket, no need to download full ~413MB tiles) — elevation range
+  1506-3729m, matching this region's known relief exactly.
+- **TWI/slope/aspect**: pyDEM's scaling was verified empirically (not
+  assumed) on progressively larger real crops before committing to the
+  full grid — 40K cells (0.4s) up to 9M cells (40.7s) — then the full 17M
+  cells ran in one call, no tiling needed at this scale: 1m56s wall-clock.
+  Two real findings, not assumed from the small validation catchments:
+  (1) ~17% of the grid is nodata at the pilot's edges (a real
+  reprojection-into-a-rotated-rectangle artifact, not a bug); (2) Horn's
+  method's slope/aspect nodata footprint is a strict superset of the DEM's
+  own (kernel contamination at real data-gap borders) — both locked in by
+  regression tests, not just noted.
+- **Coarse lambda_bar** (`derive_coarse_twi.py`, new): the real Creare/
+  GeoWATCH production equation's actual coarse-cell TWI mean (Session 8's
+  discovery) — every validation site was smaller than one HRRR cell, so
+  this distinction was invisible until now; 186 distinct HRRR cells
+  covered by the pilot.
+- **Soil**: POLARIS (Chaney et al. 2019) fetched live via the same
+  `/vsicurl/` pattern — gSSURGO's Box-folder distribution confirmed dead
+  again this session, exactly as before. Only sand%/clay% (0-30cm
+  thickness-weighted) are used, feeding the SAME USDA-texture-triangle →
+  Noah SOILPARM.TBL pipeline every validation site used (POLARIS's own
+  theta_s/theta_r deliberately not used directly — theta_r isn't wilting
+  point, and bypassing the validated pipeline would be a different
+  methodology). A precomputed (sand%,clay%)→(theta_s,theta_wilt) lookup
+  table (5,151 pairs, built in 11ms) makes this tractable at 17M cells
+  without a slow per-pixel Python loop. Result: theta_s 0.404-0.476,
+  theta_wilt 0.028-0.138, physical sanity (theta_s > theta_wilt
+  everywhere) checked and passed, not just asserted.
+- **Assembly**: all layers + the lambda_bar lookup into one Zarr v3 group,
+  grid spec and full provenance in the group's own attrs.
+
+**Upload script written, not executed**: this sandboxed environment has
+no SSH access to the production NUC (confirmed this session) — `upload_
+static_stack.sh` follows the established `mc`-in-a-throwaway-container
+pattern from `scripts/setup_minio_lifecycle.sh`, meant to be run from a
+context with real access.
+
+**A real repo-hygiene decision, documented not just made silently**:
+~470MB of pilot outputs are gitignored, not committed — unlike Tarrawarra/
+Shale Hills' primary source data (kept in git because reacquiring it was
+genuinely hard: a WAF, or a dead original host), everything here is fully
+and quickly reproducible from stable, live, public sources by re-running
+the pipeline (~3 minutes). The deployed deliverable belongs in MinIO, the
+same place every other grid lives, not duplicated into git.
+
+**A real correction to this doc's own prior estimate**: statewide Colorado
+at 10m is ~3 billion cells, not the previously-stated "304M" — that
+earlier estimate was wrong by roughly an order of magnitude. Corrected
+here now that a real pilot run exists to calibrate against.
+
+### What this session did NOT do
+
+- **Did not run a statewide (or even full-Front-Range) build** — the
+  pilot was the explicit, agreed scope; statewide needs real tiling
+  machinery (untested at that scale) that doesn't exist yet.
+- **Did not upload to the real NUC's MinIO** — no SSH access from this
+  environment; the script exists and is ready to run from a context that
+  has it.
+- **Did not touch `main.py`, EDR, or any live wiring** — Phase A
+  (this session) was scoped to the static stack alone; Phase B (main.py
+  wiring, the `valid_time`/`forecast_hour` upsert bug fix, first live
+  smoke test) and Phase C (EDR exposure) remain future sessions' work,
+  per the original plan.
+- **Did not fetch NLCD canopy or build Winstral Sx/sky-view-factor** —
+  both explicitly deferred (snow/wind physics isn't v1 scope), unchanged
+  from the pre-existing plan.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design

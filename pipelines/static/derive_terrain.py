@@ -1,5 +1,27 @@
 #!/usr/bin/env python3
-"""Derive slope, aspect, TWI, sky-view factor, and 16-azimuth Winstral Sx
+"""**Superseded for TWI specifically, as of Session 11 -- see
+`derive_terrain_pydem.py`.** This project's validation ladder (Tarrawarra
+TDR/NMM, Shale Hills TDR) established that the specific configuration
+which generalizes is pyDEM with `apply_twi_limits=True`
+(`services/trail-physics/physics/terrain.py::compute_twi_pydem`), NOT
+WhiteboxTools' `wetness_index` (never validated against anything in this
+project). Verified empirically to scale to the ~17M-cell pilot region in
+under 2 minutes, no tiling needed at that scale -- see
+`derive_terrain_pydem.py`'s own docstring for the timing data. Use that
+module for TWI/slope/aspect going forward.
+
+This file's sky-view-factor and Winstral-Sx steps remain relevant and
+unaffected (neither was part of the validated TWI methodology) -- kept
+here, still not run, still gated on WhiteboxTools being installed and
+verified, and still deferred behind Rung 3 per the design doc (snow/wind
+redistribution isn't v1 scope). The flow-accumulation/D8-pointer/
+slope/aspect steps below are superseded duplicates of the pyDEM path for
+TWI purposes specifically; harmless to leave as reference but should not
+be run for that purpose.
+
+---
+
+Derive slope, aspect, TWI, sky-view factor, and 16-azimuth Winstral Sx
 from a mosaicked 3DEP DEM, at Front-Range/Colorado scale (~300M cells).
 
 **Not executed this session** -- WhiteboxTools isn't installed in this

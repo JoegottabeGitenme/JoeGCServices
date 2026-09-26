@@ -356,17 +356,20 @@ services:
   trail-physics:
     # Not started by default `docker compose up` -- gated behind the
     # "trail-physics" profile (`docker compose --profile trail-physics up`).
-    # Reasons, as of this session: (1) the physics core hasn't passed Rung 1
-    # validation yet (blocked on manually acquiring the Tarrawarra dataset,
-    # see validation/tarrawarra/README.md), and per the design doc's own
-    # rule ("if you don't land near this, stop and debug") nothing should
-    # run against real trail data until it does; (2) WS1 (static
-    # terrain/soil stack) and WS2 (corridor mask) don't exist yet, so
-    # main.py's redistribution step is currently a no-op placeholder (see
-    # the NOTE in main.py's run_cycle). The service builds and its 82 unit
-    # tests pass; it is not yet something that should run continuously
-    # against production data. Remove this profile gate once Rung 1 passes
-    # and WS1/WS2 land.
+    # UPDATED (Session 11): Rung 1 validation now PASSES -- decisively, at
+    # two independent sites (see validation/tarrawarra/README.md and
+    # validation/shalehills/README.md) -- so that original blocking reason
+    # no longer applies. What still blocks removing this gate: (1) WS1 (a
+    # real static terrain/soil stack) exists only as a Boulder-area PILOT
+    # so far (pipelines/static/README.md), not a Colorado-wide stack, and
+    # main.py isn't wired to read it yet -- its redistribution step is
+    # still a no-op placeholder (see the NOTE in main.py's run_cycle); (2)
+    # WS2 (corridor mask) still doesn't exist; (3) a real, unfixed bug in
+    # main.py (valid_time isn't adjusted by forecast_hour, so multiple
+    # forecast hours would collide on the same upsert key) needs fixing
+    # before any live run. Remove this profile gate once main.py is wired
+    # to the real static stack and that bug is fixed (tracked as "Phase B"
+    # in docs/trail-conditions-design.md's Session 11 section).
     profiles: ["trail-physics"]
     build:
       context: services/trail-physics

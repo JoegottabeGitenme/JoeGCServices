@@ -1,0 +1,10 @@
+# pipelines/static/ dependencies, on top of services/trail-physics/
+# requirements.txt (this package imports directly from physics.*, see the
+# sys.path.insert pattern in derive_terrain_pydem.py/derive_soil_params.py/
+# derive_coarse_twi.py).
+rasterio>=1.3      # DEM/POLARIS reads (vsicurl streaming), mosaic, reproject, GeoTIFF I/O
+pyproj>=3.6         # grid_spec.py's WGS84 <-> EPSG:5070 reprojection (already a trail-physics dependency)
+zarr>=3.0           # assemble_static_stack.py (already a trail-physics dependency)
+pydem>=1.2          # derive_terrain_pydem.py -- the validated TWI engine (optional in
+                    # trail-physics' own requirements.txt; a hard requirement here, since
+                    # this package's whole point is running it for real)
