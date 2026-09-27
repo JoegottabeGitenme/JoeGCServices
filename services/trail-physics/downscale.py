@@ -23,6 +23,23 @@ this without modification -- its arithmetic broadcasts arrays for
 `theta_coarse`/`twi_mean` exactly the same way it broadcasts scalars
 (confirmed by reading its implementation before relying on this, not
 assumed).
+
+**Session 14: static-stack sampling split from combination, and batched
+across an entire forecast hour, not called per segment.** Live profiling
+of the first production backlog (Session 13) found the real bottleneck:
+each per-segment call to the old combined `downscale_soil_moisture` did 3
+independent `static_stack.sample_layer` windowed S3 reads (twi, theta_s,
+theta_wilt), each measured at ~11ms live against production MinIO. At
+9,029 segments/forecast-hour that's ~27,000 reads x ~11ms =~ 5 minutes --
+*entirely* request-count-bound (the actual HRRR forcing-grid read this
+was originally suspected to be the culprit for takes ~25ms total,
+confirmed live; it was never the bottleneck). Slower than HRRR's own
+~24 forecast-hours/hour ingest rate, so the backlog could mathematically
+never clear. `sample_static_inputs` now does exactly 3 reads *per
+forecast hour* (covering every point from every processed segment in one
+batch each), and `downscale_soil_moisture` is now pure combination logic
+over already-sampled arrays -- no I/O, callable per-segment (by slicing
+the batch) at effectively zero marginal cost.
 """
 
 from __future__ import annotations
@@ -37,6 +54,29 @@ from static_stack import StaticStack
 
 
 @dataclass
+class StaticSamples:
+    """Pre-sampled static-stack values for a batch of points -- the output
+    of the one real I/O pass (`sample_static_inputs`), sliced per-segment
+    afterward with `.slice()` at zero additional I/O cost."""
+
+    twi: np.ndarray
+    theta_s: np.ndarray
+    theta_wilt: np.ndarray
+    twi_bar: np.ndarray
+
+    def __len__(self) -> int:
+        return len(self.twi)
+
+    def slice(self, start: int, end: int) -> "StaticSamples":
+        return StaticSamples(
+            twi=self.twi[start:end],
+            theta_s=self.theta_s[start:end],
+            theta_wilt=self.theta_wilt[start:end],
+            twi_bar=self.twi_bar[start:end],
+        )
+
+
+@dataclass
 class DownscaleResult:
     predicted: np.ndarray  # same shape as the input soilw_samples
     # Fraction of points with a valid HRRR reading that ALSO fell inside
@@ -47,24 +87,15 @@ class DownscaleResult:
     confidence: float | None
 
 
-def downscale_soil_moisture(
-    static_stack: StaticStack | None,
-    hrrr_grid: HrrrGrid,
-    points_lat_lon: list[tuple[float, float]],
-    soilw_samples: np.ndarray,
-) -> DownscaleResult:
-    """Downscale one feature's per-vertex HRRR SOILW samples. `static_stack`
-    may be None (stack not configured/reachable) -- in which case every
-    point falls back to its own raw HRRR value, confidence 0.0 wherever a
-    valid HRRR reading exists at all."""
-    predicted = np.array(soilw_samples, dtype=float, copy=True)
-    valid_soilw = ~np.isnan(soilw_samples)
-    n_valid = int(valid_soilw.sum())
-
-    if static_stack is None or n_valid == 0:
-        confidence = 0.0 if n_valid > 0 else None
-        return DownscaleResult(predicted=predicted, confidence=confidence)
-
+def sample_static_inputs(
+    static_stack: StaticStack, hrrr_grid: HrrrGrid, points_lat_lon: list[tuple[float, float]]
+) -> StaticSamples:
+    """The real I/O: exactly 3 static-stack windowed reads (twi, theta_s,
+    theta_wilt), covering ALL given points in one call each. Call this
+    ONCE per forecast hour with every point from every segment being
+    processed that hour -- calling it once per segment instead is the
+    Session 13 performance bug this function's introduction (Session 14)
+    fixes; see this module's own docstring."""
     rows_cols = [static_stack.lonlat_to_rowcol(lon, lat) for lat, lon in points_lat_lon]
     twi = static_stack.sample_layer("twi", rows_cols)
     theta_s = static_stack.sample_layer("theta_s", rows_cols)
@@ -72,19 +103,48 @@ def downscale_soil_moisture(
 
     # HrrrGrid.geo_to_grid returns (i, j); row=j, col=i -- the same
     # convention forcing.sample_points already established (no flip
-    # needed, south-origin grid).
+    # needed, south-origin grid). This lookup is a pure in-memory dict
+    # read (static_stack.py's own docstring: ~186 entries for the pilot),
+    # not I/O -- fine to leave per-point.
     hrrr_ij = [hrrr_grid.geo_to_grid(lat, lon) for lat, lon in points_lat_lon]
     twi_bar = np.array([static_stack.hrrr_twi_bar(hrrr_row=j, hrrr_col=i) for i, j in hrrr_ij])
 
-    covered = valid_soilw & ~np.isnan(twi) & ~np.isnan(theta_s) & ~np.isnan(theta_wilt) & ~np.isnan(twi_bar)
+    return StaticSamples(twi=twi, theta_s=theta_s, theta_wilt=theta_wilt, twi_bar=twi_bar)
+
+
+def downscale_soil_moisture(
+    static_samples: StaticSamples | None,
+    soilw_samples: np.ndarray,
+) -> DownscaleResult:
+    """Pure combination logic, no I/O -- combines a batch's own HRRR
+    readings with its ALREADY-sampled static values (see
+    `sample_static_inputs`). `static_samples` may be None (stack not
+    configured/reachable, or this segment had no points in the sampled
+    batch) -- in which case every point falls back to its own raw HRRR
+    value, confidence 0.0 wherever a valid HRRR reading exists at all."""
+    predicted = np.array(soilw_samples, dtype=float, copy=True)
+    valid_soilw = ~np.isnan(soilw_samples)
+    n_valid = int(valid_soilw.sum())
+
+    if static_samples is None or n_valid == 0:
+        confidence = 0.0 if n_valid > 0 else None
+        return DownscaleResult(predicted=predicted, confidence=confidence)
+
+    covered = (
+        valid_soilw
+        & ~np.isnan(static_samples.twi)
+        & ~np.isnan(static_samples.theta_s)
+        & ~np.isnan(static_samples.theta_wilt)
+        & ~np.isnan(static_samples.twi_bar)
+    )
 
     if covered.any():
         downscaled = redistribute_podpac(
             theta_coarse=soilw_samples[covered],
-            twi=twi[covered],
-            theta_s=theta_s[covered],
-            theta_wilt=theta_wilt[covered],
-            twi_mean=twi_bar[covered],
+            twi=static_samples.twi[covered],
+            theta_s=static_samples.theta_s[covered],
+            theta_wilt=static_samples.theta_wilt[covered],
+            twi_mean=static_samples.twi_bar[covered],
         )
         predicted[covered] = downscaled
 

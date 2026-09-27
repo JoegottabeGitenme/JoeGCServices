@@ -191,6 +191,74 @@ class TestProcessForecastHourValidTime:
         assert len(captured_rows) == 1  # only feature 1 processed
 
 
+class TestStaticStackSampledOncePerForecastHour:
+    """Session 14: the actual regression test for the live-profiled
+    performance bug -- `sample_static_inputs` (the real I/O) must be
+    called exactly ONCE per forecast hour, covering every point from
+    every processed segment in one batch, never once per segment. The
+    old per-segment call pattern was measured live in production to cost
+    several minutes per forecast hour (thousands of tiny S3 reads),
+    slower than HRRR's own ingest rate -- see downscale.py's own module
+    docstring."""
+
+    def test_sample_static_inputs_called_once_regardless_of_feature_count(self):
+        config = _fake_config()
+        job = db.PendingForecastHour(reference_time=datetime(2026, 1, 15, 12, 0), forecast_hour=0)
+        static_stack = _fake_static_stack()
+
+        with patch("main.open_level0_array", return_value=np.zeros((10, 10))), \
+             patch("main.sample_points", return_value=[MagicMock(value=0.2), MagicMock(value=0.2)]), \
+             patch("main.build_segment_condition_row", return_value={}), \
+             patch("main.db") as mock_db, \
+             patch("main.is_frozen_ground", return_value=np.array([0.0, 0.0])), \
+             patch("main.sample_static_inputs") as mock_sample_static, \
+             patch("main.downscale_soil_moisture") as mock_downscale:
+            mock_db.upsert_segment_conditions.return_value = 5
+            fake_samples = MagicMock()
+            fake_samples.slice.return_value = MagicMock()
+            mock_sample_static.return_value = fake_samples
+            mock_downscale.return_value = MagicMock(predicted=np.array([0.2, 0.2]), confidence=1.0)
+
+            main._process_forecast_hour(
+                config, conn=MagicMock(), feature_ids=[1, 2, 3, 4, 5],
+                feature_geometries={
+                    1: [(-105.2, 39.75)], 2: [(-105.2, 39.75)], 3: [(-105.2, 39.75)],
+                    4: [(-105.2, 39.75)], 5: [(-105.2, 39.75)],
+                },
+                static_stack=static_stack, job=job,
+            )
+
+        # The whole point: 1 call total, not 5 (one per feature).
+        assert mock_sample_static.call_count == 1
+        # And downscale_soil_moisture (pure combination, no I/O) is fine
+        # to call per-segment -- that's not the expensive part.
+        assert mock_downscale.call_count == 5
+
+    def test_no_static_stack_never_calls_sample_static_inputs(self):
+        config = _fake_config()
+        job = db.PendingForecastHour(reference_time=datetime(2026, 1, 15, 12, 0), forecast_hour=0)
+
+        with patch("main.open_level0_array", return_value=np.zeros((10, 10))), \
+             patch("main.sample_points", return_value=[MagicMock(value=0.2)]), \
+             patch("main.build_segment_condition_row", return_value={}), \
+             patch("main.db") as mock_db, \
+             patch("main.is_frozen_ground", return_value=np.array([0.0])), \
+             patch("main.sample_static_inputs") as mock_sample_static, \
+             patch("main.downscale_soil_moisture") as mock_downscale:
+            mock_db.upsert_segment_conditions.return_value = 1
+            mock_downscale.return_value = MagicMock(predicted=np.array([0.2]), confidence=0.0)
+
+            main._process_forecast_hour(
+                config, conn=MagicMock(), feature_ids=[1],
+                feature_geometries={1: [(-105.2, 39.75)]}, static_stack=None, job=job,
+            )
+
+        mock_sample_static.assert_not_called()
+        mock_downscale.assert_called_once()
+        # Called with static_samples=None since there's no stack.
+        assert mock_downscale.call_args.args[0] is None
+
+
 class TestRunCycle:
     def test_no_pending_work_returns_zero(self):
         config = _fake_config()

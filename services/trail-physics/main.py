@@ -44,7 +44,7 @@ import numpy as np
 import db
 from aggregate import build_segment_condition_row
 from config import Config
-from downscale import downscale_soil_moisture
+from downscale import downscale_soil_moisture, sample_static_inputs
 from forcing import open_level0_array, sample_points, storage_path
 from hrrr_grid import HrrrGrid
 from physics.snow import is_frozen_ground
@@ -189,17 +189,54 @@ def _process_forecast_hour(
     reference_time_utc = job.reference_time.replace(tzinfo=timezone.utc)
     valid_time = reference_time_utc + timedelta(hours=job.forecast_hour)
 
-    rows = []
+    # Session 14 perf fix: flatten every processed segment's vertices into
+    # ONE batch and sample the static stack exactly once for the whole
+    # forecast hour -- see downscale.py's own module docstring for why a
+    # naive per-segment call pattern (this loop's previous shape) was
+    # measured live to cost several minutes per forecast hour, slower than
+    # HRRR's own ingest rate, entirely from S3 request-count overhead.
+    feature_order: list[int] = []
+    all_points: list[tuple[float, float]] = []
+    offsets: dict[int, tuple[int, int]] = {}
     for feature_id in feature_ids:
         vertices = feature_geometries.get(feature_id)
         if not vertices:
             continue
         points_lat_lon = [(lat, lon) for lon, lat in vertices]  # geometry is (lon,lat); grid wants (lat,lon)
+        start = len(all_points)
+        all_points.extend(points_lat_lon)
+        offsets[feature_id] = (start, len(all_points))
+        feature_order.append(feature_id)
 
-        soilw_samples = np.array([s.value for s in sample_points(soilw_grid, HRRR_GRID, points_lat_lon)])
-        tsoil_samples = np.array([s.value for s in sample_points(tsoil_grid, HRRR_GRID, points_lat_lon)])
+    if not all_points:
+        rows_written = 0
+        db.mark_forecast_hour_processed(
+            conn,
+            reference_time=job.reference_time,
+            forecast_hour=job.forecast_hour,
+            rows_written=rows_written,
+            model_version=config.model_version,
+        )
+        log.info(
+            "Run %s forecast hour %d: wrote %d segment_conditions rows",
+            job.reference_time, job.forecast_hour, rows_written,
+        )
+        return rows_written
 
-        result = downscale_soil_moisture(static_stack, HRRR_GRID, points_lat_lon, soilw_samples)
+    soilw_all = np.array([s.value for s in sample_points(soilw_grid, HRRR_GRID, all_points)])
+    tsoil_all = np.array([s.value for s in sample_points(tsoil_grid, HRRR_GRID, all_points)])
+    static_samples_all = (
+        sample_static_inputs(static_stack, HRRR_GRID, all_points) if static_stack is not None else None
+    )
+
+    rows = []
+    for feature_id in feature_order:
+        start, end = offsets[feature_id]
+        soilw_samples = soilw_all[start:end]
+        tsoil_samples = tsoil_all[start:end]
+        seg_static = static_samples_all.slice(start, end) if static_samples_all is not None else None
+
+        result = downscale_soil_moisture(seg_static, soilw_samples)
         frozen_flags = is_frozen_ground(tsoil_samples)
 
         rows.append(
