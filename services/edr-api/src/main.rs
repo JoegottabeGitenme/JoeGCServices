@@ -184,6 +184,14 @@ async fn run_server(args: Args) {
             "/edr/collections/:collection_id/items",
             get(handlers::items::items_handler),
         )
+        // Per-trail forecast conditions timeseries (linear_features only;
+        // Session 14). Distinct from `?conditions=latest` on /items, which
+        // only ever returns one row -- this returns the full analysis +
+        // forecast-hour series from trail-physics' most recent run.
+        .route(
+            "/edr/collections/:collection_id/items/:feature_id/conditions",
+            get(handlers::linear_features::trail_conditions_timeseries_handler),
+        )
         // County aggregate (custom EDR-adjacent endpoint; storm-event feature collections)
         .route(
             "/edr/collections/:collection_id/counties",

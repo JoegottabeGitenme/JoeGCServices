@@ -9,13 +9,21 @@
 # a trail as rideable and another as not once the physics/condition layers
 # land in a later phase.
 #
-# Session 13: `?conditions=latest` (radius/area/items) now merges each
-# feature's latest `segment_conditions` row (soil_moisture, frozen_fraction,
+# Session 13: `?conditions=latest` (radius/area/items) merges each feature's
+# latest `segment_conditions` row (soil_moisture, frozen_fraction,
 # confidence, valid_time, forecast_hour, model_version) into its GeoJSON
 # properties, when the trail-physics service has produced one -- see
 # crates/storage/src/segment_conditions.rs and services/trail-physics/.
 #
-# **Coverage caveat, stated plainly**: as of Session 13, trail-physics'
+# Session 14: fixed "latest" to mean the most recent hour we actually have a
+# value for (valid_time nearest now, never a future forecast row) instead of
+# "whichever row was written to the database most recently" -- the two only
+# differ during backlog/reprocessing windows, but differed badly during
+# trail-physics' first production run. Also added a per-trail forecast
+# timeseries endpoint (below) for UIs that want more than a single current
+# reading -- e.g. "firm until 10am" style charts.
+#
+# **Coverage caveat, stated plainly**: as of this session, trail-physics'
 # terrain-informed downscaling only has real coverage for the WS1 static
 # stack's Boulder-area pilot region (pipelines/static/README.md) -- outside
 # that area, a segment either has no `conditions` block at all (trail-physics
@@ -32,7 +40,14 @@
 # - /collections/trails/area   - Trail features intersecting a bounding box
 # - /collections/trails/items  - GeoJSON items (bbox viewport query, or
 #                                 ?q=<name> for name search, e.g. ?q=apex)
-# All three accept `&conditions=latest` to merge in trail-physics output.
+# All three accept `&conditions=latest` to merge in trail-physics' single
+# most-current reading.
+#
+# - /collections/trails/items/{feature_id}/conditions - the FULL forecast
+#   timeseries (analysis + every forecast hour) from trail-physics' most
+#   recent run for one trail, plain JSON (not GeoJSON -- no geometry).
+#   404 if feature_id isn't a known trail; a known trail with no coverage
+#   yet returns 200 with an empty `conditions` array, not an error.
 #
 # Trailheads (point locations, not linear features) are served separately
 # through the shared `locations` collection with `location_type=trailhead`

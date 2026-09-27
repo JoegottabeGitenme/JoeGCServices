@@ -88,11 +88,11 @@ pub struct TrailItemsParams {
 }
 
 /// Whether a `conditions` query param value requests condition merging.
-/// Only `"latest"` is recognized (the only mode implemented -- a full
-/// per-feature timeseries endpoint is a separate, not-yet-built query, see
-/// `SegmentConditionsCatalog::get_timeseries_for_feature`); any other value
-/// is silently treated as "no conditions requested" rather than a 400, since
-/// this is an additive, optional enrichment, not a required parameter.
+/// Only `"latest"` is recognized; any other value is silently treated as
+/// "no conditions requested" rather than a 400, since this is an additive,
+/// optional enrichment, not a required parameter. The full per-feature
+/// timeseries (Session 14) is a separate endpoint --
+/// `trail_conditions_timeseries_handler` below -- not a mode of this param.
 fn wants_latest_conditions(conditions: &Option<String>) -> bool {
     conditions.as_deref() == Some("latest")
 }
@@ -230,6 +230,85 @@ pub async fn trail_items_handler(
     collection["numberReturned"] = json!(returned);
     collection["timeStamp"] = json!(chrono::Utc::now().to_rfc3339());
     geojson_response(collection)
+}
+
+/// Per-feature forecast timeseries: the full analysis + forecast-hour
+/// series from trail-physics' most recent run for one trail, e.g. the data
+/// a "firm until 10am" chart on a trail detail page needs -- not exposed by
+/// `?conditions=latest`, which only ever returns a single row.
+///
+/// `GET /edr/collections/:collection_id/items/:feature_id/conditions`
+///
+/// 404 if `feature_id` isn't a known trail at all (distinct from "known
+/// trail, zero condition rows yet" -- e.g. any trail outside WS1's current
+/// pilot coverage, see `pipelines/static/README.md` -- which is a normal
+/// empty-`conditions`-array 200, not an error).
+pub async fn trail_conditions_timeseries_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path((collection_id, feature_id)): Path<(String, i64)>,
+) -> Response {
+    if let Err(resp) = resolve_trails_collection(&state, &collection_id).await {
+        return resp;
+    }
+
+    let feature = match state
+        .linear_feature_catalog
+        .get_feature_by_id(feature_id)
+        .await
+    {
+        Ok(Some(f)) => f,
+        Ok(None) => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                edr_protocol::responses::ExceptionResponse::not_found(format!(
+                    "No trail with feature_id {}",
+                    feature_id
+                )),
+            )
+        }
+        Err(e) => return internal_error(format!("Feature lookup failed: {}", e)),
+    };
+
+    let rows = match state
+        .segment_conditions_catalog
+        .get_timeseries_for_feature(feature_id)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(e) => return internal_error(format!("Timeseries query failed: {}", e)),
+    };
+
+    json_response(timeseries_to_json(&feature, feature_id, &rows))
+}
+
+fn timeseries_to_json(
+    feature: &LinearFeatureItem,
+    feature_id: i64,
+    rows: &[SegmentCondition],
+) -> Value {
+    let run_time = rows.first().map(|r| r.run_time.to_rfc3339());
+    let model_version = rows.first().map(|r| r.model_version.clone());
+    let conditions: Vec<Value> = rows
+        .iter()
+        .map(|c| {
+            json!({
+                "valid_time": c.valid_time.to_rfc3339(),
+                "forecast_hour": c.forecast_hour,
+                "soil_moisture": c.soil_moisture,
+                "frozen_fraction": c.frozen_fraction,
+                "confidence": c.confidence,
+                "model_version": c.model_version,
+            })
+        })
+        .collect();
+
+    json!({
+        "feature_id": feature_id,
+        "name": feature.name,
+        "run_time": run_time,
+        "model_version": model_version,
+        "conditions": conditions,
+    })
 }
 
 // =============================================================================
@@ -471,6 +550,22 @@ fn geojson_response(value: Value) -> Response {
     }
 }
 
+/// Plain-JSON response (not GeoJSON -- `trail_conditions_timeseries_handler`
+/// returns a conditions array, not a geometry-bearing feature). A much
+/// shorter cache TTL than `geojson_response`'s 1h: this data changes hourly
+/// as new forecast hours land, unlike trail geometry.
+fn json_response(value: Value) -> Response {
+    match serde_json::to_string(&value) {
+        Ok(json) => Response::builder()
+            .status(StatusCode::OK)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .header(axum::http::header::CACHE_CONTROL, "max-age=300")
+            .body(json.into())
+            .unwrap(),
+        Err(e) => internal_error(format!("Serialization failed: {}", e)),
+    }
+}
+
 fn bad_request(msg: impl Into<String>) -> Response {
     error_response(
         StatusCode::BAD_REQUEST,
@@ -591,5 +686,86 @@ mod tests {
 
         let f2 = feats.iter().find(|f| f["id"] == json!(2)).unwrap();
         assert!(f2["properties"].get("conditions").is_none());
+    }
+
+    // =========================================================================
+    // trail_conditions_timeseries_handler / timeseries_to_json (Session 14)
+    // =========================================================================
+
+    fn sample_condition_at(
+        feature_id: i64,
+        hour: i64,
+        forecast_hour: i32,
+        soil_moisture: f32,
+    ) -> SegmentCondition {
+        SegmentCondition {
+            feature_id,
+            run_time: Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap(),
+            valid_time: Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap()
+                + chrono::Duration::hours(hour),
+            forecast_hour,
+            soil_moisture: Some(soil_moisture),
+            frozen_fraction: Some(0.0),
+            frost_depth_m: None,
+            swe_mm: None,
+            softness_index: None,
+            confidence: Some(1.0),
+            model_version: "trail-physics-v1".to_string(),
+        }
+    }
+
+    #[test]
+    fn timeseries_to_json_includes_every_row_in_valid_time_order() {
+        let feature = sample_feature(7);
+        let rows = vec![
+            sample_condition_at(7, 0, 0, 0.20),
+            sample_condition_at(7, 1, 1, 0.21),
+            sample_condition_at(7, 2, 2, 0.19),
+        ];
+        let result = timeseries_to_json(&feature, 7, &rows);
+
+        assert_eq!(result["feature_id"], json!(7));
+        assert_eq!(result["name"], json!("Test Trail"));
+        assert_eq!(result["model_version"], json!("trail-physics-v1"));
+        assert_eq!(result["run_time"], json!("2026-01-15T12:00:00+00:00"));
+
+        let conditions = result["conditions"].as_array().unwrap();
+        assert_eq!(conditions.len(), 3);
+        assert_eq!(conditions[0]["forecast_hour"], json!(0));
+        assert_eq!(conditions[1]["forecast_hour"], json!(1));
+        assert_eq!(conditions[2]["forecast_hour"], json!(2));
+        assert_eq!(
+            conditions[0]["valid_time"],
+            json!("2026-01-15T12:00:00+00:00")
+        );
+        assert_eq!(
+            conditions[2]["valid_time"],
+            json!("2026-01-15T14:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn timeseries_to_json_handles_empty_series_without_erroring() {
+        // A known trail with zero segment_conditions rows (e.g. outside
+        // WS1's pilot coverage) is a normal, expected situation -- must
+        // yield an empty array, not null or an error, and run_time/
+        // model_version fall back to null (nothing to report them as).
+        let feature = sample_feature(8);
+        let result = timeseries_to_json(&feature, 8, &[]);
+
+        assert_eq!(result["feature_id"], json!(8));
+        assert_eq!(result["conditions"], json!([]));
+        assert_eq!(result["run_time"], Value::Null);
+        assert_eq!(result["model_version"], Value::Null);
+    }
+
+    #[test]
+    fn timeseries_to_json_preserves_per_row_soil_moisture_and_confidence() {
+        let feature = sample_feature(9);
+        let rows = vec![sample_condition_at(9, 0, 0, 0.33)];
+        let result = timeseries_to_json(&feature, 9, &rows);
+        let soil_moisture = result["conditions"][0]["soil_moisture"].as_f64().unwrap();
+        assert!((soil_moisture - 0.33).abs() < 1e-6);
+        assert_eq!(result["conditions"][0]["confidence"], json!(1.0));
     }
 }
