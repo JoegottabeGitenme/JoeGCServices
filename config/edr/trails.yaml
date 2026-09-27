@@ -7,24 +7,43 @@
 # This is feature-collection data with LINESTRING geometry: one feature per
 # OSM way (not merged per trail system), so that a rider can see one part of
 # a trail as rideable and another as not once the physics/condition layers
-# land in a later phase. v1 exposes geometry + metadata only -- no condition
-# data yet; the app is expected to query the gridded HRRR collections
-# (hrrr-soil, hrrr-snow) along a trail's own geometry itself.
+# land in a later phase.
+#
+# Session 13: `?conditions=latest` (radius/area/items) now merges each
+# feature's latest `segment_conditions` row (soil_moisture, frozen_fraction,
+# confidence, valid_time, forecast_hour, model_version) into its GeoJSON
+# properties, when the trail-physics service has produced one -- see
+# crates/storage/src/segment_conditions.rs and services/trail-physics/.
+#
+# **Coverage caveat, stated plainly**: as of Session 13, trail-physics'
+# terrain-informed downscaling only has real coverage for the WS1 static
+# stack's Boulder-area pilot region (pipelines/static/README.md) -- outside
+# that area, a segment either has no `conditions` block at all (trail-physics
+# hasn't reached it, e.g. it isn't an active mtb/hiking/track/bridleway
+# segment) or a `conditions` block with `confidence: 0.0` (a real HRRR
+# reading was sampled, but with no terrain downscaling applied -- see
+# `confidence`'s own description below). For areas without a `conditions`
+# block, the app should query the gridded HRRR collections (hrrr-soil,
+# hrrr-snow) along the trail's own geometry directly, same as before this
+# session.
 #
 # Supported EDR queries:
 # - /collections/trails/radius - Trail features near a point
 # - /collections/trails/area   - Trail features intersecting a bounding box
 # - /collections/trails/items  - GeoJSON items (bbox viewport query, or
 #                                 ?q=<name> for name search, e.g. ?q=apex)
+# All three accept `&conditions=latest` to merge in trail-physics output.
 #
 # Trailheads (point locations, not linear features) are served separately
 # through the shared `locations` collection with `location_type=trailhead`
 # -- see /edr/locations?q=apex.
 #
-# Advisory disclaimer: this collection is geometry + OSM metadata only. It
-# carries no condition/rideability judgment. See docs/trail-conditions-design.md
-# for the validation gates (Phase 0 report-separability, Tarrawarra physics-port
-# reproduction) that must pass before any derived condition parameter ships.
+# Advisory disclaimer: `soil_moisture`/`frozen_fraction` are a physics-based
+# advisory signal, not a rideability judgment or a closure authority --
+# validated against real ground-truth data at two independent research
+# sites (see validation/tarrawarra/README.md, validation/shalehills/README.md
+# and web/science.html) but not yet checked against rider-reported trail
+# conditions (design doc's "Rung 2", not yet run).
 
 model: trails
 data_type: featurecollection
@@ -33,11 +52,17 @@ observation_source: linear_features
 collections:
   - id: trails
     title: "Trails, Tracks & Bridleways (OSM)"
-    description: "OSM-sourced trail centerlines (mountain bike trails, hiking trails, tracks, bridleways). One feature per OSM way. Geometry and tags only -- no condition/rideability data in this collection yet."
+    description: "OSM-sourced trail centerlines (mountain bike trails, hiking trails, tracks, bridleways). One feature per OSM way. Geometry + OSM tags always; add ?conditions=latest for the latest physics-based soil moisture/frozen-ground advisory where trail-physics has produced one (currently the Boulder-area WS1 pilot region only -- see comment above)."
     parameters:
       - name: feature_class # mtb_trail | hiking_trail | track | bridleway
         levels: [surface]
       - name: name
+        levels: [surface]
+      - name: soil_moisture # fractional volumetric (m3/m3); only present with ?conditions=latest
+        levels: [surface]
+      - name: frozen_fraction # 0-1, fraction of sampled vertices with TSOIL<=273.15K; only present with ?conditions=latest
+        levels: [surface]
+      - name: confidence # 0-1, fraction of sampled vertices with real WS1 terrain downscaling (vs. raw HRRR fallback); only present with ?conditions=latest
         levels: [surface]
     run_mode: latest
 

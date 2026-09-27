@@ -361,7 +361,14 @@ build_images() {
   export CARGO_PROFILE=release
   
   log_info "Building application images (this may take 10-20 minutes for first build)..."
-  docker compose build
+  # --profile trail-physics: without this, `docker compose build` silently
+  # skips trail-physics (it's gated behind that profile in docker-compose.yml
+  # so it isn't started by a plain `docker compose up` -- but that gate also
+  # means a plain `build` leaves it out entirely, confirmed via
+  # `docker compose config --services` with vs. without this flag). Every
+  # other service has no profile, so this flag only ADDS trail-physics to
+  # what already gets built, it never narrows the set.
+  docker compose --profile trail-physics build
   
   # Note: nginx is managed by the gateway (/opt/gateway), not this stack
   
@@ -383,6 +390,7 @@ transfer_images() {
     "weather-wms-edr-api:latest"
     "weather-wms-ingester:latest"
     "weather-wms-downloader:latest"
+    "weather-wms-trail-physics:latest"
   )
   
   local archive="/tmp/weather-wms-images.tar.gz"

@@ -122,3 +122,71 @@ class TestMarkForecastHourProcessed:
         assert "ON CONFLICT" in sql
         assert params == ("hrrr", ref_time, 3, "trail-physics-v1", 42)
         conn.commit.assert_called_once()
+
+
+class TestGetActiveFeatureIdsInBbox:
+    """Session 13: the coverage-filter query that keeps trail-physics from
+    attempting all ~135,000 active Colorado trails every cycle."""
+
+    def test_uses_st_intersects_with_geography_cast(self):
+        """Must be a metrically-correct geography intersection (matching
+        pipelines/corridor/build_corridor_mask.py's own ST_Buffer
+        precedent), not a raw planar bbox comparison."""
+        cursor = FakeCursor(fetchall_result=[(1,), (2,), (3,)])
+        conn = FakeConnection(cursor)
+        result = db.get_active_feature_ids_in_bbox(conn, -105.6, 39.85, -105.1, 40.15)
+        assert result == [1, 2, 3]
+        assert "ST_Intersects" in cursor.executed_sql
+        assert "::geography" in cursor.executed_sql
+        assert "ST_MakeEnvelope" in cursor.executed_sql
+        assert "active = TRUE" in cursor.executed_sql
+
+    def test_bbox_values_passed_through(self):
+        cursor = FakeCursor()
+        conn = FakeConnection(cursor)
+        db.get_active_feature_ids_in_bbox(conn, -105.6, 39.85, -105.1, 40.15)
+        assert cursor.executed_params == (-105.6, 39.85, -105.1, 40.15)
+
+    def test_region_filter_included_when_given(self):
+        cursor = FakeCursor()
+        conn = FakeConnection(cursor)
+        db.get_active_feature_ids_in_bbox(conn, -105.6, 39.85, -105.1, 40.15, region="colorado")
+        assert "region = %s" in cursor.executed_sql
+        assert cursor.executed_params == ("colorado", -105.6, 39.85, -105.1, 40.15)
+
+    def test_empty_result(self):
+        cursor = FakeCursor(fetchall_result=[])
+        conn = FakeConnection(cursor)
+        assert db.get_active_feature_ids_in_bbox(conn, -105.6, 39.85, -105.1, 40.15) == []
+
+
+class TestGetFeatureGeometries:
+    def test_empty_input_returns_empty_dict_without_querying(self):
+        cursor = FakeCursor()
+        conn = FakeConnection(cursor)
+        result = db.get_feature_geometries(conn, [])
+        assert result == {}
+        assert cursor.executed_sql is None  # never even ran a query
+
+    def test_parses_multiple_features_into_dict(self):
+        import json
+
+        geojson_1 = json.dumps({"type": "LineString", "coordinates": [[-105.2, 39.75], [-105.21, 39.76]]})
+        geojson_2 = json.dumps({"type": "LineString", "coordinates": [[-105.3, 39.80]]})
+        cursor = FakeCursor(fetchall_result=[(1, geojson_1), (2, geojson_2)])
+        conn = FakeConnection(cursor)
+
+        result = db.get_feature_geometries(conn, [1, 2])
+
+        assert result[1] == [(-105.2, 39.75), (-105.21, 39.76)]
+        assert result[2] == [(-105.3, 39.80)]
+
+    def test_uses_any_array_query_not_per_feature_loop(self):
+        """The whole point -- one query for the batch, confirmed by
+        checking the SQL uses ANY(%s) against the full feature_ids list,
+        not N separate calls."""
+        cursor = FakeCursor(fetchall_result=[])
+        conn = FakeConnection(cursor)
+        db.get_feature_geometries(conn, [1, 2, 3])
+        assert "ANY(%s)" in cursor.executed_sql
+        assert cursor.executed_params == ([1, 2, 3],)

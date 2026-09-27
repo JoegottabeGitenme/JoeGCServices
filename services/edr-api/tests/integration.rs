@@ -15,7 +15,7 @@ use edr_api::{
 use grid_processor::{GridDataService, MinioConfig};
 use storage::{
     linear_features::LinearFeatureCatalog, observations::ObservationCatalog,
-    storm_events::StormEventCatalog, Catalog,
+    segment_conditions::SegmentConditionsCatalog, storm_events::StormEventCatalog, Catalog,
 };
 use test_utils::containers::TestInfrastructure;
 
@@ -56,6 +56,9 @@ async fn create_test_state(infra: &TestInfrastructure) -> Arc<AppState> {
     // Create linear feature catalog (trails collection)
     let linear_feature_catalog = Arc::new(LinearFeatureCatalog::new(catalog.pool_clone()));
 
+    // Create segment conditions catalog (trail-physics output)
+    let segment_conditions_catalog = Arc::new(SegmentConditionsCatalog::new(catalog.pool_clone()));
+
     // Create empty EDR config (no YAML files in test)
     let edr_config = EdrConfig::default();
 
@@ -70,6 +73,7 @@ async fn create_test_state(infra: &TestInfrastructure) -> Arc<AppState> {
         observation_catalog,
         storm_event_catalog,
         linear_feature_catalog,
+        segment_conditions_catalog,
         edr_config: Arc::new(RwLock::new(edr_config)),
         base_url: "http://localhost:8083/edr".to_string(),
         location_cache,

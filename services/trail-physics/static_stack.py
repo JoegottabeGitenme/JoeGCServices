@@ -50,6 +50,7 @@ class StaticStack:
         self.width: int = grid_spec["width"]
         self.height: int = grid_spec["height"]
         self._to_grid_crs = Transformer.from_crs("EPSG:4326", self.crs, always_xy=True)
+        self._to_wgs84 = Transformer.from_crs(self.crs, "EPSG:4326", always_xy=True)
 
         # The coarse HRRR-cell lambda_bar lookup is tiny (186 entries for
         # the pilot -- one per HRRR cell the stack overlaps, not a full
@@ -75,6 +76,23 @@ class StaticStack:
 
     def in_bounds(self, row: float, col: float) -> bool:
         return 0.0 <= row < self.height and 0.0 <= col < self.width
+
+    def wgs84_bbox(self) -> tuple[float, float, float, float]:
+        """This stack's own extent reprojected to WGS84 (min_lon, min_lat,
+        max_lon, max_lat) -- used to pre-filter which trail segments are
+        even worth processing (Session 13: without this, main.py would
+        attempt every active trail statewide for every forecast hour, far
+        more work than can complete within one poll interval; see
+        db.py::get_active_feature_ids_in_bbox). An approximate rectangle,
+        not the stack's exact (possibly non-rectangular, real-nodata-
+        pocketed) coverage -- deliberately a cheap pre-filter, not the
+        final word on coverage; `sample_layer`'s own per-point NaN handling
+        remains the authority on whether a specific point is truly
+        covered."""
+        corners_x = [self.xmin, self.xmax, self.xmin, self.xmax]
+        corners_y = [self.ymin, self.ymin, self.ymax, self.ymax]
+        lons, lats = self._to_wgs84.transform(corners_x, corners_y)
+        return min(lons), min(lats), max(lons), max(lats)
 
     def sample_layer(self, layer_name: str, points_row_col: list[tuple[float, float]]) -> np.ndarray:
         """Bilinear-sample one named 2-D layer at a batch of fractional

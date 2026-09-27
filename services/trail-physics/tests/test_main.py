@@ -1,10 +1,11 @@
-"""Tests for main.py's Session 12 orchestration -- especially the
+"""Tests for main.py's Session 12/13 orchestration -- the
 valid_time = reference_time + forecast_hour bug fix (previously valid_time
 was reference_time alone, causing every forecast hour to collide on
 segment_conditions's own UNIQUE(feature_id, valid_time, model_version)
-upsert key) and the open_static_stack graceful-failure fallback. No live
-Postgres/MinIO reachable from this environment -- these tests mock db.py/
-forcing.py/static_stack.py's calls, the same posture as every other
+upsert key), the open_static_stack graceful-failure fallback, and Session
+13's coverage-filtered (not statewide) processing. No live Postgres/MinIO
+reachable from this environment -- these tests mock db.py/forcing.py/
+static_stack.py's calls, the same posture as every other
 not-integration-tested module in this service.
 """
 
@@ -41,6 +42,12 @@ def _fake_config(**overrides):
     return Config(**defaults)
 
 
+def _fake_static_stack(bbox=(-105.6, 39.85, -105.1, 40.15)):
+    stack = MagicMock()
+    stack.wgs84_bbox.return_value = bbox
+    return stack
+
+
 class TestOpenStaticStack:
     def test_none_path_returns_none(self):
         config = _fake_config(static_stack_path=None)
@@ -75,11 +82,13 @@ class TestProcessForecastHourValidTime:
              patch("main.db") as mock_db, \
              patch("main.is_frozen_ground", return_value=np.array([])), \
              patch("main.downscale_soil_moisture") as mock_downscale:
-            mock_db.get_feature_geometry.return_value = [(-105.2, 39.75)]
             mock_db.upsert_segment_conditions.return_value = 1
             mock_downscale.return_value = MagicMock(predicted=np.array([0.2]), confidence=0.0)
 
-            main._process_forecast_hour(config, conn=MagicMock(), feature_ids=[1], static_stack=None, job=job)
+            main._process_forecast_hour(
+                config, conn=MagicMock(), feature_ids=[1],
+                feature_geometries={1: [(-105.2, 39.75)]}, static_stack=None, job=job,
+            )
 
         assert len(captured_rows) == 1
         expected_valid_time = reference_time.replace(tzinfo=timezone.utc) + timedelta(hours=5)
@@ -102,11 +111,13 @@ class TestProcessForecastHourValidTime:
              patch("main.db") as mock_db, \
              patch("main.is_frozen_ground", return_value=np.array([])), \
              patch("main.downscale_soil_moisture") as mock_downscale:
-            mock_db.get_feature_geometry.return_value = [(-105.2, 39.75)]
             mock_db.upsert_segment_conditions.return_value = 1
             mock_downscale.return_value = MagicMock(predicted=np.array([0.2]), confidence=0.0)
 
-            main._process_forecast_hour(config, conn=MagicMock(), feature_ids=[1], static_stack=None, job=job)
+            main._process_forecast_hour(
+                config, conn=MagicMock(), feature_ids=[1],
+                feature_geometries={1: [(-105.2, 39.75)]}, static_stack=None, job=job,
+            )
 
         assert captured_rows[0]["valid_time"] == reference_time.replace(tzinfo=timezone.utc)
 
@@ -122,11 +133,13 @@ class TestProcessForecastHourValidTime:
              patch("main.db") as mock_db, \
              patch("main.is_frozen_ground", return_value=np.array([])), \
              patch("main.downscale_soil_moisture") as mock_downscale:
-            mock_db.get_feature_geometry.return_value = [(-105.2, 39.75)]
             mock_db.upsert_segment_conditions.return_value = 7
             mock_downscale.return_value = MagicMock(predicted=np.array([0.2]), confidence=1.0)
 
-            main._process_forecast_hour(config, conn=MagicMock(), feature_ids=[1], static_stack=None, job=job)
+            main._process_forecast_hour(
+                config, conn=MagicMock(), feature_ids=[1],
+                feature_geometries={1: [(-105.2, 39.75)]}, static_stack=None, job=job,
+            )
 
             mock_db.mark_forecast_hour_processed.assert_called_once()
             call_kwargs = mock_db.mark_forecast_hour_processed.call_args.kwargs
@@ -140,9 +153,42 @@ class TestProcessForecastHourValidTime:
         job = db.PendingForecastHour(reference_time=datetime(2026, 1, 15, 12, 0), forecast_hour=3)
         with patch("main.open_level0_array", side_effect=Exception("not found in MinIO")), \
              patch("main.db") as mock_db:
-            rows_written = main._process_forecast_hour(config, conn=MagicMock(), feature_ids=[1], static_stack=None, job=job)
+            rows_written = main._process_forecast_hour(
+                config, conn=MagicMock(), feature_ids=[1],
+                feature_geometries={1: [(-105.2, 39.75)]}, static_stack=None, job=job,
+            )
         assert rows_written == 0
         mock_db.mark_forecast_hour_processed.assert_not_called()  # don't mark done -- retry next cycle
+
+    def test_feature_with_no_geometry_is_skipped_not_errored(self):
+        """A feature_id present in feature_ids but absent from
+        feature_geometries (e.g. deleted between the two queries) must be
+        silently skipped, not raise."""
+        config = _fake_config()
+        job = db.PendingForecastHour(reference_time=datetime(2026, 1, 15, 12, 0), forecast_hour=0)
+
+        captured_rows = []
+
+        def fake_build_row(**kwargs):
+            captured_rows.append(kwargs)
+            return kwargs
+
+        with patch("main.open_level0_array", return_value=np.zeros((10, 10))), \
+             patch("main.sample_points", return_value=[]), \
+             patch("main.build_segment_condition_row", side_effect=fake_build_row), \
+             patch("main.db") as mock_db, \
+             patch("main.is_frozen_ground", return_value=np.array([])), \
+             patch("main.downscale_soil_moisture") as mock_downscale:
+            mock_db.upsert_segment_conditions.return_value = 0
+            mock_downscale.return_value = MagicMock(predicted=np.array([0.2]), confidence=0.0)
+
+            main._process_forecast_hour(
+                config, conn=MagicMock(), feature_ids=[1, 2],
+                feature_geometries={1: [(-105.2, 39.75)]},  # feature 2 missing
+                static_stack=None, job=job,
+            )
+
+        assert len(captured_rows) == 1  # only feature 1 processed
 
 
 class TestRunCycle:
@@ -153,16 +199,59 @@ class TestRunCycle:
             result = main.run_cycle(config, conn=MagicMock())
         assert result == 0
 
-    def test_processes_each_pending_job(self):
+    def test_no_static_stack_skips_all_processing(self):
+        """Session 13: without a static stack, the cycle must do NO
+        segment processing at all (not fall back to statewide raw-HRRR
+        processing, which reintroduces the exact sizing problem coverage
+        filtering exists to avoid)."""
+        config = _fake_config()
+        jobs = [db.PendingForecastHour(reference_time=datetime(2026, 1, 15, 12, 0), forecast_hour=0)]
+        with patch("main.db") as mock_db, patch("main.open_static_stack", return_value=None):
+            mock_db.get_pending_forecast_hours.return_value = jobs
+            result = main.run_cycle(config, conn=MagicMock())
+        assert result == 0
+        mock_db.get_active_feature_ids_in_bbox.assert_not_called()
+
+    def test_no_features_in_coverage_returns_zero(self):
+        config = _fake_config()
+        jobs = [db.PendingForecastHour(reference_time=datetime(2026, 1, 15, 12, 0), forecast_hour=0)]
+        stack = _fake_static_stack()
+        with patch("main.db") as mock_db, patch("main.open_static_stack", return_value=stack):
+            mock_db.get_pending_forecast_hours.return_value = jobs
+            mock_db.get_active_feature_ids_in_bbox.return_value = []
+            result = main.run_cycle(config, conn=MagicMock())
+        assert result == 0
+
+    def test_processes_each_pending_job_within_coverage(self):
         config = _fake_config()
         jobs = [
             db.PendingForecastHour(reference_time=datetime(2026, 1, 15, 12, 0), forecast_hour=0),
             db.PendingForecastHour(reference_time=datetime(2026, 1, 15, 12, 0), forecast_hour=1),
         ]
-        with patch("main.db") as mock_db, patch("main.open_static_stack", return_value=None), \
+        stack = _fake_static_stack()
+        with patch("main.db") as mock_db, patch("main.open_static_stack", return_value=stack), \
              patch("main._process_forecast_hour", return_value=5) as mock_process:
             mock_db.get_pending_forecast_hours.return_value = jobs
-            mock_db.get_active_feature_ids.return_value = [1, 2, 3]
+            mock_db.get_active_feature_ids_in_bbox.return_value = [1, 2, 3]
+            mock_db.get_feature_geometries.return_value = {1: [(-105.2, 39.75)]}
             result = main.run_cycle(config, conn=MagicMock())
         assert result == 10  # 5 + 5
         assert mock_process.call_count == 2
+
+    def test_coverage_query_uses_static_stack_bbox(self):
+        """The whole point of Session 13's fix -- confirm the bbox from
+        the static stack actually drives the feature-selection query, not
+        an unrelated/default region."""
+        config = _fake_config()
+        jobs = [db.PendingForecastHour(reference_time=datetime(2026, 1, 15, 12, 0), forecast_hour=0)]
+        stack = _fake_static_stack(bbox=(-105.6, 39.85, -105.1, 40.15))
+        with patch("main.db") as mock_db, patch("main.open_static_stack", return_value=stack), \
+             patch("main._process_forecast_hour", return_value=0):
+            mock_db.get_pending_forecast_hours.return_value = jobs
+            mock_db.get_active_feature_ids_in_bbox.return_value = [1]
+            mock_db.get_feature_geometries.return_value = {1: [(-105.2, 39.75)]}
+            main.run_cycle(config, conn=MagicMock())
+
+        mock_db.get_active_feature_ids_in_bbox.assert_called_once()
+        call_args = mock_db.get_active_feature_ids_in_bbox.call_args
+        assert call_args.args[1:5] == (-105.6, 39.85, -105.1, 40.15)

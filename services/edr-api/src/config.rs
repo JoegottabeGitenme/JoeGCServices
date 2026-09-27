@@ -1210,4 +1210,32 @@ collections:
         // UGRD has no valid_range (should default to None)
         assert!(params[2].valid_range.is_none());
     }
+
+    /// Regression test: every real committed `config/edr/*.yaml` file must
+    /// parse without error, and the `trails` collection specifically must
+    /// expose the Session 13 `conditions=latest` parameters
+    /// (soil_moisture/frozen_fraction/confidence) -- catches a config typo
+    /// or schema mismatch that a synthetic-yaml-snippet unit test above
+    /// wouldn't (those only prove the deserializer's SHAPE is right, not
+    /// that any specific real file actually matches it).
+    #[test]
+    fn test_real_config_edr_directory_loads_and_trails_has_condition_parameters() {
+        // Tests run with CARGO_MANIFEST_DIR as the working directory
+        // (services/edr-api/), not the repo root.
+        let config = EdrConfig::load_from_dir("../../config/edr")
+            .expect("real config/edr directory must parse without error");
+        let (_model_config, collection) = config
+            .find_collection("trails")
+            .expect("trails collection must exist in the real config");
+
+        let param_names: Vec<&str> = collection
+            .parameters
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert!(param_names.contains(&"soil_moisture"));
+        assert!(param_names.contains(&"frozen_fraction"));
+        assert!(param_names.contains(&"confidence"));
+        assert!(param_names.contains(&"feature_class"));
+    }
 }

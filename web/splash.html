@@ -820,12 +820,14 @@
             </h2>
             <div class="examples-section">
                 <p class="card-description">
-                    OSM-sourced trail geometry (one feature per trail segment, not merged per system)
-                    plus the raw HRRR soil/snow ingredients for answering "will I be able to ride here today?"
-                    This is geometry and weather data only &mdash; no rideability judgment is computed server-side yet.
+                    OSM-sourced trail geometry (one feature per trail segment, not merged per system),
+                    the raw HRRR soil/snow ingredients, and &mdash; for a Boulder-area pilot region so far,
+                    with more terrain coverage on the way &mdash; real terrain-downscaled soil moisture,
+                    physics validated against ground-truth data at two independent research sites. This is
+                    an advisory signal, not a rideability judgment or a closure authority.
                     See the <a href="/edr" style="color: var(--primary-light);">API docs</a> for the endpoints, or
-                    <a href="/science.html" style="color: var(--primary-light);">the science behind it</a> for why
-                    a physics model beats a rain-gauge threshold, and exactly how far along it is.
+                    <a href="/science.html" style="color: var(--primary-light);">the science behind it</a> for
+                    exactly how it works, what's validated, and how far the coverage extends today.
                 </p>
                 <div class="edr-examples-grid">
                     <!-- Trail geometry bbox query -->
@@ -853,6 +855,34 @@
                             <div class="edr-example-title">Trail Geometry (OSM)</div>
                             <div class="edr-example-desc">One feature per OSM way &mdash; segment-level, so part of a trail can show different conditions than the rest once physics lands</div>
                             <div class="edr-example-endpoint">GET /edr/collections/trails/items?bbox=minLon,minLat,maxLon,maxLat</div>
+                        </div>
+                    </a>
+
+                    <!-- Downscaled trail conditions (WS1 pilot coverage) -->
+                    <a href="/edr/collections/trails/items?bbox=-105.42,39.93,-105.36,39.98&conditions=latest&limit=5" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#128167;</span>
+                            <span class="location-name">Forsythe Canyon Trail</span>
+                            <span class="location-id">conditions=latest</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response"><span class="key">"type"</span>: <span class="string">"Feature"</span>,
+<span class="key">"id"</span>: <span class="number">956937928</span>,
+<span class="key">"properties"</span>: {
+  <span class="key">"name"</span>: <span class="string">"Forsythe Canyon Trail"</span>,
+  <span class="key">"feature_class"</span>: <span class="string">"mtb_trail"</span>,
+  <span class="key">"conditions"</span>: {
+    <span class="key">"valid_time"</span>: <span class="string">"2026-09-27T18:00:00Z"</span>,
+    <span class="key">"soil_moisture"</span>: <span class="number">0.184</span>,
+    <span class="key">"frozen_fraction"</span>: <span class="number">0.0</span>,
+    <span class="key">"confidence"</span>: <span class="number">1.0</span>
+  }
+}</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">Downscaled Soil Moisture (pilot region)</div>
+                            <div class="edr-example-desc"><code>&amp;conditions=latest</code> merges terrain-downscaled soil moisture into any trails query. <code>confidence</code> is the fraction of this segment actually covered by real terrain data today (1.0 here; 0.0 or absent outside the pilot region) &mdash; see <a href="/science.html" style="color: var(--primary-light);">the validation</a> behind the physics itself</div>
+                            <div class="edr-example-endpoint">GET /edr/collections/trails/items?bbox=...&amp;conditions=latest</div>
                         </div>
                     </a>
 

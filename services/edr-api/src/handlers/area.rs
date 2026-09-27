@@ -194,6 +194,11 @@ pub struct AreaQueryParams {
     /// Requires 'run' to be specified.
     #[serde(rename = "forecast-hour")]
     pub forecast_hour: Option<String>,
+
+    /// linear-features-only: `?conditions=latest` merges trail-physics
+    /// output into each feature's properties. See
+    /// `linear_features::TrailAreaParams::conditions`.
+    pub conditions: Option<String>,
 }
 
 /// GET /edr/collections/:collection_id/area
@@ -216,6 +221,7 @@ pub async fn area_handler(
                         coords: params.coords.clone(),
                         limit: None,
                         f: params.f.clone(),
+                        conditions: params.conditions.clone(),
                     };
                     drop(config);
                     return crate::handlers::linear_features::trail_area_handler(

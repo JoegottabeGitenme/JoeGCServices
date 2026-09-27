@@ -91,6 +91,11 @@ pub struct RadiusQueryParams {
     /// Minimum population filter (populated-places collection only).
     #[serde(rename = "min-population")]
     pub min_population: Option<i64>,
+
+    /// linear-features-only: `?conditions=latest` merges trail-physics
+    /// output into each feature's properties. See
+    /// `linear_features::TrailRadiusParams::conditions`.
+    pub conditions: Option<String>,
 }
 
 /// GET /edr/collections/:collection_id/radius
@@ -134,6 +139,7 @@ pub async fn radius_handler(
                         within_units: params.within_units.clone(),
                         limit: None,
                         f: params.f.clone(),
+                        conditions: params.conditions.clone(),
                     };
                     drop(config);
                     return crate::handlers::linear_features::trail_radius_handler(

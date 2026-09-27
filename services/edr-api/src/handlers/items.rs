@@ -40,6 +40,10 @@ pub struct ItemsQueryParams {
     #[serde(default)]
     pub offset: Option<i64>,
     pub f: Option<String>,
+    /// linear-features-only: `?conditions=latest` merges trail-physics
+    /// output into each feature's properties. See
+    /// `linear_features::TrailItemsParams::conditions`.
+    pub conditions: Option<String>,
 }
 
 /// GET /edr/collections/:collection_id/items
@@ -84,6 +88,7 @@ pub async fn items_handler(
                 limit: params.limit,
                 offset: params.offset,
                 f: params.f.clone(),
+                conditions: params.conditions.clone(),
             };
             linear_features::trail_items_handler(
                 Extension(state),

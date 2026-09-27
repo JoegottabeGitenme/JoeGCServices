@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use grid_processor::{GridDataService, MinioConfig};
 use storage::linear_features::LinearFeatureCatalog;
 use storage::observations::ObservationCatalog;
+use storage::segment_conditions::SegmentConditionsCatalog;
 use storage::storm_events::StormEventCatalog;
 use storage::Catalog;
 
@@ -33,6 +34,13 @@ pub struct AppState {
     /// Linear feature catalog for the trails feature collection (OSM-sourced
     /// trails/tracks/bridleways; see crates/trail-sync).
     pub linear_feature_catalog: Arc<LinearFeatureCatalog>,
+
+    /// Segment conditions catalog -- per-segment, per-hour physics output
+    /// written by the Python `trail-physics` service
+    /// (`?conditions=latest` on the trails collection; see
+    /// `crates/storage/src/segment_conditions.rs`'s own module docs for why
+    /// this was built ahead of being wired in here).
+    pub segment_conditions_catalog: Arc<SegmentConditionsCatalog>,
 
     /// EDR configuration (hot-reloadable).
     pub edr_config: Arc<RwLock<EdrConfig>>,
@@ -107,6 +115,12 @@ impl AppState {
         // Create linear feature catalog for the trails feature collection
         let linear_feature_catalog = Arc::new(LinearFeatureCatalog::new(catalog.pool_clone()));
 
+        // Create segment conditions catalog (trail-physics output --
+        // read-only from this service's side; may legitimately be empty if
+        // trail-physics hasn't run yet or hasn't reached a given area).
+        let segment_conditions_catalog =
+            Arc::new(SegmentConditionsCatalog::new(catalog.pool_clone()));
+
         // Load EDR config
         let edr_dir = format!("{}/edr", config_dir);
         let edr_config = EdrConfig::load_from_dir(&edr_dir)?;
@@ -142,6 +156,7 @@ impl AppState {
             observation_catalog,
             storm_event_catalog,
             linear_feature_catalog,
+            segment_conditions_catalog,
             edr_config: Arc::new(RwLock::new(edr_config)),
             base_url,
             location_cache,

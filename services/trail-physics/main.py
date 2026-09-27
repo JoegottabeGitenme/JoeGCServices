@@ -80,14 +80,20 @@ def open_static_stack(config: Config) -> StaticStack | None:
     -- a missing/unreachable static stack is a real, expected situation
     (nothing has been uploaded there yet, or a region config points
     somewhere that hasn't been built), not a reason to crash the whole
-    service; every segment simply falls back to raw HRRR with
-    confidence=0.0 (see downscale.py)."""
+    service. As of Session 13, `run_cycle` also uses the stack's own
+    coverage envelope to decide WHICH segments to even attempt (see its
+    own docstring) -- so a None here means this cycle does no segment
+    processing at all, not "process everything with a raw-HRRR fallback"
+    (that fallback still exists, in `downscale.py`, for individual points
+    that fall just outside the stack's real coverage within an otherwise-
+    processed segment -- it is not a substitute for having a stack at
+    all)."""
     if not config.static_stack_path:
         return None
     try:
         return StaticStack(s3_store(config, config.static_stack_path))
     except Exception as e:  # noqa: BLE001 -- log and fall back, don't crash the cycle
-        log.warning("Could not open static stack at %s: %s -- falling back to raw HRRR everywhere", config.static_stack_path, e)
+        log.warning("Could not open static stack at %s: %s -- skipping segment processing this cycle", config.static_stack_path, e)
         return None
 
 
@@ -95,7 +101,22 @@ def run_cycle(config: Config, conn) -> int:
     """Process every pending (reference_time, forecast_hour) -- one job
     per forecast hour, incrementally, as its inputs land (Session 12).
     Returns the total number of segment_conditions rows written this
-    cycle."""
+    cycle.
+
+    **Session 13: coverage-filtered, not statewide.** Colorado has ~135,000
+    active trail segments; HRRR ships ~49 forecast hours per run, hourly --
+    processing every active segment for every pending hour is arithmetically
+    more work than can complete within one poll interval, long before WS1
+    covers more than a small pilot region. Only segments that intersect the
+    static stack's own coverage envelope are processed (see
+    `db.get_active_feature_ids_in_bbox` / `static_stack.StaticStack.
+    wgs84_bbox`) -- everywhere else, the app already reads raw HRRR
+    directly (hrrr-soil/hrrr-snow), so a `segment_conditions` row would add
+    no information a rider doesn't already have. If no static stack is
+    configured/reachable at all, this cycle does no segment processing
+    (logged clearly) rather than falling back to "process everything raw" --
+    the same sizing problem in a different guise.
+    """
     pending = db.get_pending_forecast_hours(
         conn,
         max_forecast_hour=config.max_forecast_hour,
@@ -108,26 +129,44 @@ def run_cycle(config: Config, conn) -> int:
 
     log.info("Found %d pending forecast hour(s) to process", len(pending))
 
-    feature_ids = db.get_active_feature_ids(conn, region=config.region)
-    log.info("Processing against %d active trail segments", len(feature_ids))
-
     static_stack = open_static_stack(config)
     if static_stack is None:
         log.warning(
-            "No static stack available (path=%s) -- every segment this cycle will use raw "
-            "HRRR values with confidence=0.0, not topographically downscaled",
+            "No static stack available (path=%s) -- skipping segment processing this cycle "
+            "(processing all active trails statewide would not keep up with hourly HRRR "
+            "ingest; see run_cycle's own docstring)",
             config.static_stack_path,
         )
+        return 0
+
+    min_lon, min_lat, max_lon, max_lat = static_stack.wgs84_bbox()
+    feature_ids = db.get_active_feature_ids_in_bbox(conn, min_lon, min_lat, max_lon, max_lat, region=config.region)
+    log.info(
+        "Processing against %d active trail segments intersecting the static stack's coverage "
+        "(bbox %.4f,%.4f,%.4f,%.4f)",
+        len(feature_ids), min_lon, min_lat, max_lon, max_lat,
+    )
+    if not feature_ids:
+        log.info("No active trail segments intersect the static stack's coverage -- nothing to process")
+        return 0
+
+    # Fetched once per cycle, not once per feature per forecast hour --
+    # trail geometry doesn't change within a cycle (see
+    # db.get_feature_geometries's own docstring for why this replaced
+    # Session 12's per-forecast-hour-per-feature query).
+    feature_geometries = db.get_feature_geometries(conn, feature_ids)
 
     rows_written_total = 0
     for job in pending:
-        rows_written_total += _process_forecast_hour(config, conn, feature_ids, static_stack, job)
+        rows_written_total += _process_forecast_hour(config, conn, feature_ids, feature_geometries, static_stack, job)
 
     log.info("Cycle complete: wrote %d segment_conditions rows total", rows_written_total)
     return rows_written_total
 
 
-def _process_forecast_hour(config: Config, conn, feature_ids, static_stack, job: db.PendingForecastHour) -> int:
+def _process_forecast_hour(
+    config: Config, conn, feature_ids, feature_geometries: dict, static_stack, job: db.PendingForecastHour
+) -> int:
     ref_path_str = reference_time_to_path_str(job.reference_time)
     soilw_path = storage_path("hrrr", ref_path_str, "SOILW", "4 cm below ground", job.forecast_hour)
     tsoil_path = storage_path("hrrr", ref_path_str, "TSOIL", "4 cm below ground", job.forecast_hour)
@@ -152,7 +191,7 @@ def _process_forecast_hour(config: Config, conn, feature_ids, static_stack, job:
 
     rows = []
     for feature_id in feature_ids:
-        vertices = db.get_feature_geometry(conn, feature_id)
+        vertices = feature_geometries.get(feature_id)
         if not vertices:
             continue
         points_lat_lon = [(lat, lon) for lon, lat in vertices]  # geometry is (lon,lat); grid wants (lat,lon)

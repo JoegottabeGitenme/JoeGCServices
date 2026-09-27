@@ -133,3 +133,48 @@ class TestLonLatToRowCol:
         row, col = stack.lonlat_to_rowcol(lon, lat)
         assert row == pytest.approx(0.0, abs=1e-6)
         assert col == pytest.approx(0.0, abs=1e-6)
+
+
+class TestWgs84Bbox:
+    def test_returns_four_values_in_correct_order(self, tmp_path):
+        store_path, *_ = _build_synthetic_stack(tmp_path)
+        stack = StaticStack(store_path)
+        min_lon, min_lat, max_lon, max_lat = stack.wgs84_bbox()
+        assert min_lon < max_lon
+        assert min_lat < max_lat
+
+    def test_bbox_contains_the_grid_origin_round_trip(self, tmp_path):
+        """The point used by test_round_trips_a_known_point (the grid's
+        own xmin,ymax corner) must fall inside the bbox this method
+        reports for the very same grid -- a real consistency check
+        between the two coordinate-conversion paths, not just "some
+        plausible-looking numbers."""
+        store_path, *_ = _build_synthetic_stack(tmp_path)
+        stack = StaticStack(store_path)
+        from pyproj import Transformer
+
+        to_wgs84 = Transformer.from_crs("EPSG:5070", "EPSG:4326", always_xy=True)
+        lon, lat = to_wgs84.transform(0.0, 100.0)
+        min_lon, min_lat, max_lon, max_lat = stack.wgs84_bbox()
+        assert min_lon <= lon <= max_lon
+        assert min_lat <= lat <= max_lat
+
+    def test_real_pilot_bbox_matches_grid_spec_pilot_bbox(self):
+        """If the real pilot stack (Session 11) is present, its own
+        reported wgs84_bbox must roughly match the pinned
+        grid_spec.PILOT_BBOX_WGS84 it was built from -- not exactly (this
+        method reports the SNAPPED grid's extent, which is slightly wider
+        than the original requested bbox, see grid_spec.py's own outward-
+        snapping behavior), but close."""
+        path = (
+            Path(__file__).parent.parent.parent.parent
+            / "pipelines" / "static" / "data" / "static" / "colorado-10m-pilot.zarr"
+        )
+        if not path.exists():
+            pytest.skip("real pilot stack not built this session (see pipelines/static/README.md)")
+        stack = StaticStack(str(path))
+        min_lon, min_lat, max_lon, max_lat = stack.wgs84_bbox()
+        assert -105.7 < min_lon < -105.5
+        assert -105.2 < max_lon < -105.0
+        assert 39.8 < min_lat < 39.9
+        assert 40.1 < max_lat < 40.2
