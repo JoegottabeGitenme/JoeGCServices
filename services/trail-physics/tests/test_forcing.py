@@ -17,9 +17,41 @@ from hrrr_grid import HrrrGrid
 
 
 def test_storage_path_matches_rust_convention():
-    """Mirrors build_storage_path (crates/ingestion/src/grib2.rs)."""
-    path = storage_path("hrrr", "20260922_18z", "SOILW", "4_cm_below_ground", 3)
-    assert path == "grids/hrrr/20260922_18z/SOILW_4_cm_below_ground_f003.zarr"
+    """Session 13 real bug fix: the previous version of this test passed
+    an ALREADY-sanitized level string ("4_cm_below_ground") and asserted
+    the (buggy) passthrough function returned it with the ORIGINAL-case
+    param still attached ("SOILW_...") -- which masked the real bug,
+    since it never exercised what main.py actually calls this function
+    with: the NATURAL, catalog-matching strings ("SOILW", "4 cm below
+    ground", spaces and all). That mismatch meant every single forecast
+    hour failed to read on trail-physics' first live production cycle
+    (confirmed: 100% of forecast hours in that cycle logged "No group
+    found in store"). Fixed by comparing against a REAL
+    `datasets.storage_path` row read directly from the production
+    catalog (not re-derived from memory a second time) -- see
+    test_storage_path_matches_real_production_catalog_row below for that
+    exact value, locked in as a permanent regression test."""
+    path = storage_path("hrrr", "20260922_18z", "SOILW", "4 cm below ground", 3)
+    assert path == "grids/hrrr/20260922_18z/soilw_4_cm_below_ground_f003.zarr"
+
+
+def test_storage_path_matches_real_production_catalog_row():
+    """The EXACT real storage_path value read from a live `datasets` row
+    on the production catalog (Session 13): confirms this function's
+    output is not just internally consistent but matches what the real
+    Rust ingester actually wrote to MinIO."""
+    path = storage_path("hrrr", "20260927_03z", "SOILW", "4 cm below ground", 18)
+    assert path == "grids/hrrr/20260927_03z/soilw_4_cm_below_ground_f018.zarr"
+
+
+def test_storage_path_sanitizes_slashes_too():
+    """Rust's own sanitizer replaces both spaces AND slashes -- a level
+    string containing a slash must not leak into the filename as a
+    literal '/' (which would create an unintended sub-directory)."""
+    path = storage_path("gfs", "20260922_18z", "TMP", "0-0.1 m/below ground", 0)
+    assert path == "grids/gfs/20260922_18z/tmp_0-0.1_m_below_ground_f000.zarr"
+    filename = path.rsplit("/", 1)[-1]
+    assert filename.count("/") == 0
 
 
 def test_bilinear_sample_exact_grid_point():

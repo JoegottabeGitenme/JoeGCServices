@@ -21,16 +21,19 @@ Rust writer during the trail-conditions ingredients session, not assumed):
 - Object key convention: `grids/{model}/{YYYYMMDD_HHz}/{param}_{level}_f{FFF}.zarr`
   (`build_storage_path`, crates/ingestion/src/grib2.rs).
 
-**Not tested against live production MinIO data this session** -- the S3
-API port (9000) isn't publicly exposed (only the admin console on 9001 is
-proxied through the gateway), so there was no reachable endpoint to test
-against from this environment. Tested instead against a local Zarr v3 array
-built to the same shape/dtype/fill-value convention (see
-tests/test_forcing.py), which proves the bilinear-sampling logic
-correctly, just not a live end-to-end read. s3fs + zarr-python 3 is a
-well-established, standard combination for this (not a novel integration
-risk) -- treat "does it actually reach MinIO" as a one-time smoke test to
-run once this service is deployed, not an open design question.
+**Session 13: tested against live production MinIO data for the first
+time -- and it caught a real bug, exactly as the "treat this as a smoke
+test" posture below anticipated.** `storage_path()` was interpolating
+`param`/`level` verbatim (e.g. `"SOILW_4 cm below ground_f018.zarr"`),
+but the real Rust ingester's own `build_storage_path`
+(`crates/ingestion/src/grib2.rs`) lowercases the parameter and replaces
+spaces/slashes with underscores in the level string before building the
+path (`param.to_lowercase()`, `level.replace([' ', '/'], "_").
+to_lowercase()`) -- producing `"soilw_4_cm_below_ground_f018.zarr"`.
+Every single forecast hour failed to read ("No group found in store")
+on the very first live cycle until this was found and fixed by comparing
+against a real `datasets.storage_path` row read directly from the
+production catalog, not by re-guessing the convention a second time.
 """
 
 from __future__ import annotations
@@ -45,14 +48,29 @@ from hrrr_grid import HrrrGrid
 
 
 def storage_path(model: str, reference_time_str: str, param: str, level: str, forecast_hour: int) -> str:
-    """Mirrors `build_storage_path` (crates/ingestion/src/grib2.rs):
-    grids/{model}/{YYYYMMDD_HHz}/{param}_{level}_f{FFF}.zarr
+    """Mirrors `build_storage_path` (crates/ingestion/src/grib2.rs) EXACTLY,
+    including its lowercase/underscore sanitization -- confirmed against a
+    real `datasets.storage_path` row read directly from the production
+    catalog (Session 13), not re-derived from the docstring alone a second
+    time:
+
+        grids/{model}/{YYYYMMDD_HHz}/{param.lower()}_{level_sanitized}_f{FFF}.zarr
+
+    where `level_sanitized` replaces spaces and slashes with underscores
+    and lowercases the result (matching Rust's
+    `level.replace([' ', '/'], "_").to_lowercase()` exactly). `param`/
+    `level` are passed in their NATURAL form (e.g. "SOILW", "4 cm below
+    ground" -- the same strings stored in the `datasets` catalog's own
+    `parameter`/`level` columns) -- this function owns the sanitization,
+    callers should not pre-sanitize.
 
     `reference_time_str` must already be in `YYYYMMDD_HHz` form (e.g.
     "20260922_18z") -- this module doesn't own datetime formatting, the
     catalog-polling caller does.
     """
-    return f"grids/{model}/{reference_time_str}/{param}_{level}_f{forecast_hour:03d}.zarr"
+    param_sanitized = param.lower()
+    level_sanitized = level.replace(" ", "_").replace("/", "_").lower()
+    return f"grids/{model}/{reference_time_str}/{param_sanitized}_{level_sanitized}_f{forecast_hour:03d}.zarr"
 
 
 @dataclass
