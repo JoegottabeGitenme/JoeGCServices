@@ -354,26 +354,28 @@ services:
     restart: unless-stopped
 
   trail-physics:
-    # Not started by default `docker compose up` -- gated behind the
-    # "trail-physics" profile (`docker compose --profile trail-physics up`).
-    # UPDATED (Session 12): the code-side work is now DONE -- Rung 1
-    # validation passes at two independent sites (validation/tarrawarra/,
-    # validation/shalehills/), main.py is wired to the real WS1 static
-    # stack via static_stack.py/downscale.py (falls back to raw HRRR with
-    # confidence=0.0 wherever the stack doesn't cover, which is currently
-    # everywhere except the Boulder-area pilot -- see
-    # pipelines/static/README.md), the valid_time/forecast_hour upsert
-    # collision bug is fixed, and it's now an incremental, ingest-keyed
-    # job worker (db.py's trail_physics_progress ledger) rather than a
-    # "reprocess the latest run every 30 minutes" poll. What still blocks
-    # removing this gate: (1) the pilot static stack hasn't actually been
-    # uploaded to this NUC's MinIO yet (pipelines/static/upload_static_
-    # stack.sh was written but not executed -- needs real SSH access this
-    # sandboxed environment doesn't have); (2) nothing here has been
-    # smoke-tested against live production Postgres/MinIO even once. Once
-    # both of those happen and the first real cycle's output looks sane,
-    # remove this gate.
-    profiles: ["trail-physics"]
+    # Session 13: gate removed -- started by default now. The pilot static
+    # stack is uploaded to this NUC's MinIO (colorado-10m/pilot), and the
+    # first live cycle against real production Postgres/MinIO/HRRR data
+    # has been run and verified: real segment_conditions rows with
+    # physically sane soil_moisture, confidence=1.0 for covered points,
+    # and the live EDR ?conditions=latest endpoint returning real data
+    # for real trails (Meyer's Homestead Trail, Lazy Z Road, Gross
+    # Reservoir Road). That first live cycle also caught and fixed a real
+    # bug (forcing.py's storage_path case/underscore mismatch against the
+    # Rust ingester's actual naming convention -- see that file's module
+    # docstring) that had silently made every forecast hour fail to read
+    # until found. Coverage is still pilot-scoped (Boulder-area only, see
+    # pipelines/static/README.md) -- everywhere else falls back to raw,
+    # undownscaled HRRR with confidence=0.0, not an error state. On this
+    # first-ever deployment the job ledger (db.py's trail_physics_progress)
+    # started with a real ~323-forecast-hour backlog (every pending
+    # (reference_time, forecast_hour) within TRAIL_PHYSICS_LOOKBACK_HOURS
+    # that predates this service ever running), processed oldest-first at
+    # roughly 4 minutes/hour (~21h to fully clear) -- so ?conditions=latest
+    # will lag real-time by up to that long until the backlog catches up;
+    # this is a one-time catch-up cost, not a steady-state characteristic
+    # (steady state is a handful of new forecast hours per 60s poll).
     build:
       context: services/trail-physics
       dockerfile: Dockerfile

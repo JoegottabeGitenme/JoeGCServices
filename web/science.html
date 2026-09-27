@@ -222,8 +222,9 @@
 
         <div class="status-box">
             <div class="status-title">&#9888; Advisory, Not Yet Validated</div>
-            <p><strong>Nothing on this page describes a shipped, validated product.</strong> As of today, FolkWeather's trail pages show raw HRRR/NLDAS weather model output — soil moisture, soil temperature, snow depth — at native 3km resolution, honestly labeled as such. This page documents the physics pipeline we're building to turn that into something better, and exactly how far along it is.</p>
-            <p>The first validation gate (Rung 1, described below) has now <strong>passed</strong> against real ground-truth data — but only after we discovered that the published paper's own printed equation doesn't match its own published reference code (see below for the full story). We then ran two further, independent checks before trusting that result: a different measurement instrument at the same site, and — the one that actually matters most — a second research catchment on a different continent, with different terrain, soil, and vegetation, that this project's physics had never seen in any form. <strong>Both passed</strong>, decisively, with the exact same numbers untouched throughout. That's real, accumulating evidence the underlying physics is genuine and transferable — not a finished product: this validates the physics core, not a live Colorado deployment, which still needs its own real terrain data built before anything is shown to a rider. Until that's done, no condition or rideability judgment is computed or displayed. This is a deliberate, non-negotiable sequencing choice, not an oversight.</p>
+            <p><strong>This is not a finished, rider-facing product yet.</strong> FolkWeather's trail pages still show raw HRRR/NLDAS weather model output — soil moisture, soil temperature, snow depth — at native 3km resolution, honestly labeled as such. There is no per-trail "is it rideable" verdict anywhere on this site. This page documents the physics pipeline behind the topographically-downscaled numbers, and exactly how far along it is.</p>
+            <p>The first validation gate (Rung 1, described below) has now <strong>passed</strong> against real ground-truth data — but only after we discovered that the published paper's own printed equation doesn't match its own published reference code (see below for the full story). We then ran two further, independent checks before trusting that result: a different measurement instrument at the same site, and — the one that actually matters most — a second research catchment on a different continent, with different terrain, soil, and vegetation, that this project's physics had never seen in any form. <strong>Both passed</strong>, decisively, with the exact same numbers untouched throughout. That's real, accumulating evidence the underlying physics is genuine and transferable.</p>
+            <p><strong>Update: the pipeline is now live in production</strong> for a Boulder-area pilot region — real 10-meter terrain/soil data, real hourly HRRR ingest, real topographically-downscaled soil moisture, queryable today via <code>?conditions=latest</code> on the <a href="/edr/collections/trails/items">trails EDR endpoint</a> (see the live example on the <a href="/#trails">splash page</a>). Outside that pilot bbox, the same query still runs but honestly reports <code>confidence: 0.0</code> and falls back to raw, undownscaled HRRR — not an error, just accurate labeling of what terrain data actually exists today. There is still no trail-page UI built on top of this yet, and on this very first production deployment the job is working through a one-time historical backlog, so <code>latest</code> may lag real-time by some hours until it catches up. This is a live physics API, not yet a finished rider experience — that sequencing remains deliberate.</p>
         </div>
 
         <section id="problem">
@@ -385,21 +386,27 @@
                     <span class="pipeline-arrow">&rarr;</span>
                     <span class="pipeline-step">Sample at trail vertices</span>
                     <span class="pipeline-arrow">&rarr;</span>
-                    <span class="pipeline-step">Eq.&nbsp;1 redistribution</span>
+                    <span class="pipeline-step">PODPAC redistribution (real terrain)</span>
                     <span class="pipeline-arrow">&rarr;</span>
                     <span class="pipeline-step">Frozen-ground gate</span>
                     <span class="pipeline-arrow">&rarr;</span>
                     <span class="pipeline-step">Per-segment aggregate</span>
+                    <span class="pipeline-arrow">&rarr;</span>
+                    <span class="pipeline-step">EDR <code>?conditions=latest</code></span>
                 </div>
             </div>
             <p>
-                What exists right now is real, tested code (82 unit tests covering the physics core, the
-                HRRR grid transform, the snow model, and the aggregation logic), wired together end-to-end —
-                but running with a placeholder in place of real terrain data, since the actual 10-meter
-                elevation/soil/canopy stack for Colorado hasn't been built yet. That means today's pipeline
-                run outputs the same value HRRR already gives you at each point, not yet a
-                topographically-downscaled one. The terrain-derived discrimination — the entire point of
-                this project — plugs into an already-built, already-tested slot; it isn't running yet.
+                This pipeline is now running in production, end to end, against real data — not a
+                placeholder. A 10-meter elevation/soil terrain stack for a Boulder-area pilot (real USGS
+                3DEP elevation, real POLARIS soil texture, TWI derived with the exact pyDEM configuration
+                validated in Rung&nbsp;1 below) is live in this deployment's own storage. Every hour, as
+                new HRRR soil-moisture and soil-temperature grids land, a worker samples them at trail
+                vertices inside the pilot's coverage, applies the real validated redistribution equation
+                (not the paper's printed Eq.&nbsp;1 — see the equation-discovery story below) using each
+                point's own terrain wetness index against its HRRR cell's coarse-scale mean, and writes the
+                downscaled result to the trails EDR API. Outside the pilot bbox the same worker still runs
+                but honestly reports <code>confidence:&nbsp;0.0</code> and passes through raw HRRR
+                unchanged — coverage is real but currently small, not statewide.
             </p>
             <p>
                 We deliberately did <em>not</em> implement Winstral-style wind-driven snow redistribution

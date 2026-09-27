@@ -1177,6 +1177,127 @@ absolutely could not ship without a regression test for).
 
 ---
 
+## Session 13 summary — Phase C (minimal EDR exposure) + coverage-filtered processing + first live production deployment
+
+**Phase 1 (code, no live infra yet):**
+- **Minimal Phase C**: `SegmentConditionsCatalog` wired into `edr-api`'s
+  `AppState`. New `?conditions=latest` param on the trails
+  radius/area/items endpoints — batch-fetches via
+  `get_latest_for_features` and merges `soil_moisture`/
+  `frozen_fraction`/`confidence`/`valid_time`/`forecast_hour`/
+  `model_version` into each feature's GeoJSON properties; features
+  without a row simply omit the block (no null spam). `config/edr/
+  trails.yaml` documents the new param plus an honest pilot-coverage
+  disclaimer. 237 edr-api tests passing (up from 231).
+- **Coverage-filtered trail-physics**: fixed a real sizing problem —
+  ~135,000 active Colorado trail segments times ~49 pending forecast
+  hours per HRRR run is more work than fits in a 60s poll interval.
+  `static_stack.py::wgs84_bbox()` + `db.py::get_active_feature_ids_in_
+  bbox`/`get_feature_geometries` (batched once per cycle, fixing a
+  redundant per-feature-per-forecast-hour query pattern from Session 12)
+  restrict processing to segments intersecting the WS1 static stack's own
+  coverage — currently the Boulder-area pilot. If no static stack is
+  reachable, the cycle now does **zero** segment processing, not a
+  statewide raw-HRRR fallback (which would reintroduce the same sizing
+  problem). 206 trail-physics tests passing (up from 192).
+- **`deploy-remote.sh` fix**: confirmed live that `docker compose build`/
+  `config --services` silently excludes profile-gated services unless
+  `--profile <name>` is passed — a real gap that meant trail-physics was
+  never actually being built or transferred by prior deploys. Fixed
+  `build_images()`/`transfer_images()`.
+- `web/splash.html` gained a live example query card using a real trail
+  name/feature_id looked up from the live production DB (Forsythe Canyon
+  Trail).
+- Committed `ded317e`, pushed, CI green.
+
+**Phase 2 — live deployment (the actual first-ever run against real
+production infrastructure):**
+- Confirmed SSH connectivity to the NUC works (a prior session's belief
+  that it was unreachable was just a wrong hostname guess — verify facts
+  live, don't trust memory).
+- `./scripts/deploy-remote.sh --rebuild` — full image build/transfer/
+  redeploy, brief outage as expected, verified all containers healthy
+  post-deploy and `segment_conditions`/`trail_physics_progress` now exist
+  with no data loss (135,137 trails intact).
+- Uploaded the Boulder-area pilot static stack (`pipelines/static/
+  upload_static_stack.sh`) to the NUC's real MinIO and verified the read
+  path end-to-end from inside the actual deployed container: CRS
+  EPSG:5070, shape 3762×4542, `wgs84_bbox()` correct, TWI/`twi_bar`
+  readable.
+- **Started trail-physics for the first time ever in production** —
+  and every single forecast hour immediately failed with `No group found
+  in store ... at path ''`. This is exactly what the "first live
+  deployment is the real smoke test" posture (stated explicitly in
+  `forcing.py`'s own module docstring since Session 12) was for.
+
+**The bug, found and fixed**: `forcing.py::storage_path()` interpolated
+`param`/`level` verbatim (producing paths like
+`"SOILW_4 cm below ground_f018.zarr"`), but the real Rust ingester's own
+`build_storage_path` (`crates/ingestion/src/grib2.rs`) lowercases the
+parameter and replaces spaces/slashes with underscores in the level
+string first (`param.to_lowercase()`,
+`level.replace([' ', '/'], "_").to_lowercase()`), producing the real,
+actual path: `"soilw_4_cm_below_ground_f018.zarr"`. Found by pulling a
+real `datasets.storage_path` row directly from the live production
+catalog and comparing byte-for-byte — not by re-reading the docstring's
+own (also-unverified) claimed convention a second time. The existing test
+for this function had itself masked the bug: it passed an
+already-pre-sanitized level string, which "passed" against the old buggy
+passthrough implementation without ever exercising what `main.py` (and
+the real catalog) actually use — natural, space-containing strings. Fixed
+`storage_path()` to replicate Rust's exact sanitization, fixed the
+masking test, added a permanent regression test locked to the real
+catalog value read live, and an edge-case test for slashes. 208
+trail-physics tests passing (up from 206). Rebuilt just the trail-physics
+image, redeployed it, confirmed the fix live.
+
+**Confirmed working end-to-end, live, with real data**: `segment_
+conditions` rows with physically plausible soil moisture (0.10–0.25
+m³/m³), `confidence=1.0` for points inside the pilot's coverage; the live
+EDR `?conditions=latest` endpoint returning real numbers for real named
+trails (Meyer's Homestead Trail, Lazy Z Road, Gross Reservoir Road).
+
+**A real operational finding, surfaced honestly rather than silently
+absorbed**: `get_pending_forecast_hours` is ordered oldest-first
+(deliberate, for restart-resumability — Session 12's own choice), so this
+very first deployment started with a real backlog (~323 pending forecast
+hours — everything within `TRAIL_PHYSICS_LOOKBACK_HOURS` that predates
+this service ever running), processed at a sustained, confirmed-live pace
+of roughly 4 minutes per forecast hour (full CONUS-grid reads from MinIO
+each time) — around 21 hours to fully clear. Until it does,
+`?conditions=latest` lags real-time by however much backlog remains. This
+is a one-time catch-up cost on first deployment, not a steady-state
+characteristic (steady state is a handful of new forecast hours per 60s
+poll, once caught up). Asked the user how to handle it; decision: let it
+run in the background — harmless and self-correcting, no code changes.
+
+**Wrap-up**: removed the `docker-compose.yml` trail-physics profile gate
+now that the pipeline is confirmed working live (comment rewritten to
+describe the confirmed-live state, including the backlog caveat).
+Redeployed via `--update` (config-only), confirmed trail-physics survived
+without a restart and with no data loss. Updated `web/science.html`'s
+intro and "Pipeline, Today" section to honestly describe the live
+pilot-scoped deployment (real terrain, real HRRR, real EDR output,
+still-pilot-only coverage, no rider-facing UI yet, first-deployment
+backlog caveat) rather than the pre-live "placeholder terrain" language.
+
+### What this session did NOT do
+
+- **Did not build any rider-facing trail-conditions UI** — the only live
+  surface is the EDR API's `?conditions=latest` param plus the example
+  query card on the splash page. Deliberately out of scope.
+- **Did not expand pilot coverage beyond the Boulder area** — still the
+  same Session 11 static stack, unchanged.
+- **Did not optimize per-forecast-hour processing time** — the ~4 min/
+  hour pace (full-grid S3 reads) was confirmed live but not profiled or
+  optimized; the user chose to let the one-time backlog run rather than
+  invest in this now.
+- **Did not implement newest-first or priority-ordered backlog
+  processing** — oldest-first (Session 12's resumability design) stays
+  as-is per the user's explicit choice this session.
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design
