@@ -40,9 +40,23 @@ impl SegmentConditionsCatalog {
         Self { pool }
     }
 
-    /// Latest available condition row for a single feature (across all
-    /// model_versions -- the most recently ingested one wins), regardless
-    /// of whether it's an analysis or forecast-hour row.
+    /// Latest available condition row for a single feature: the row with
+    /// the greatest `valid_time` that is not in the future (i.e. the most
+    /// recent hour we actually have a computed value for -- a genuine
+    /// "current conditions" nowcast), tie-broken by the newest `run_time`
+    /// (a fresher model initialization for the same valid hour supersedes
+    /// an older one, standard NWP practice).
+    ///
+    /// **Session 14 fix**: this previously ordered by `ingested_at DESC`
+    /// -- "whichever row this service happened to write most recently",
+    /// which is right in steady state (processing is strictly
+    /// chronological) but silently wrong during any backlog/reprocessing
+    /// window: on trail-physics' very first production run, this served
+    /// hours-to-a-day-old data as "latest" for the entire ~21h it took to
+    /// work through its initial backlog, even though it was writing rows
+    /// in valid_time order the whole time. Ordering by `valid_time`
+    /// directly makes "latest" mean what it says regardless of processing
+    /// order, ingest lag, service restarts, or future backfill jobs.
     pub async fn get_latest_for_feature(
         &self,
         feature_id: i64,
@@ -53,8 +67,8 @@ impl SegmentConditionsCatalog {
                    soil_moisture, frozen_fraction, frost_depth_m, swe_mm,
                    softness_index, confidence, model_version
             FROM segment_conditions
-            WHERE feature_id = $1
-            ORDER BY ingested_at DESC
+            WHERE feature_id = $1 AND valid_time <= NOW()
+            ORDER BY valid_time DESC, run_time DESC
             LIMIT 1
             "#,
         )
@@ -66,7 +80,9 @@ impl SegmentConditionsCatalog {
 
     /// Latest condition row for each of a batch of features (the `trails`
     /// `/items?conditions=latest` use case -- one query for a whole
-    /// viewport's worth of segments rather than N round trips).
+    /// viewport's worth of segments rather than N round trips). Same
+    /// valid-time-nearest-now semantics as `get_latest_for_feature` --
+    /// see that method's own docstring for the bug this fixes.
     pub async fn get_latest_for_features(
         &self,
         feature_ids: &[i64],
@@ -78,8 +94,8 @@ impl SegmentConditionsCatalog {
                    soil_moisture, frozen_fraction, frost_depth_m, swe_mm,
                    softness_index, confidence, model_version
             FROM segment_conditions
-            WHERE feature_id = ANY($1)
-            ORDER BY feature_id, ingested_at DESC
+            WHERE feature_id = ANY($1) AND valid_time <= NOW()
+            ORDER BY feature_id, valid_time DESC, run_time DESC
             "#,
         )
         .bind(feature_ids)

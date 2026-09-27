@@ -5,7 +5,9 @@
 use bytes::Bytes;
 use chrono::{Duration, Utc};
 
-use storage::{Catalog, CatalogEntry, ObjectStorage, ObjectStorageConfig};
+use storage::{
+    Catalog, CatalogEntry, ObjectStorage, ObjectStorageConfig, SegmentConditionsCatalog,
+};
 use test_utils::containers::TestInfrastructure;
 use wms_common::BoundingBox;
 
@@ -399,4 +401,232 @@ async fn test_object_storage_exists() {
         .await
         .expect("Failed to check exists");
     assert!(exists);
+}
+
+// ============================================================================
+// SegmentConditionsCatalog Integration Tests (Session 14)
+//
+// The Python trail-physics service writes this table directly via psycopg,
+// not through this crate -- these tests seed rows with raw sqlx::query
+// against the migrated schema, exactly what a real ingest would produce.
+// ============================================================================
+
+/// Helper: insert one segment_conditions row with an explicit valid_time
+/// (and run_time = valid_time, forecast_hour = 0, unless the caller cares
+/// otherwise -- these tests only exercise the "latest" query's ordering,
+/// not forecast-hour semantics).
+async fn insert_condition_row(
+    pool: &sqlx::PgPool,
+    feature_id: i64,
+    run_time: chrono::DateTime<Utc>,
+    valid_time: chrono::DateTime<Utc>,
+    soil_moisture: f32,
+    model_version: &str,
+) {
+    sqlx::query(
+        r#"INSERT INTO segment_conditions
+           (feature_id, run_time, valid_time, forecast_hour, soil_moisture, model_version)
+           VALUES ($1, $2, $3, 0, $4, $5)"#,
+    )
+    .bind(feature_id)
+    .bind(run_time)
+    .bind(valid_time)
+    .bind(soil_moisture)
+    .bind(model_version)
+    .execute(pool)
+    .await
+    .expect("Failed to insert segment_conditions row");
+}
+
+async fn connected_catalog(infra: &TestInfrastructure) -> Catalog {
+    let catalog = Catalog::connect(&infra.postgres_url())
+        .await
+        .expect("Failed to connect");
+    catalog.migrate().await.expect("Failed to migrate");
+    catalog
+        .migrate_linear_features()
+        .await
+        .expect("Failed to migrate linear_features");
+    catalog
+        .migrate_segment_conditions()
+        .await
+        .expect("Failed to migrate segment_conditions");
+    catalog
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_segment_conditions_latest_orders_by_valid_time_not_insertion_order() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = connected_catalog(&infra).await;
+    let pool = catalog.pool_clone();
+    let feature_id: i64 = 999_001;
+    let now = Utc::now();
+    let newer_valid_time = now - Duration::hours(1);
+    let older_valid_time = now - Duration::hours(3);
+
+    // The NEWER valid_time row is inserted FIRST (earlier ingested_at),
+    // the OLDER valid_time row SECOND (later ingested_at) -- deliberately
+    // backwards from what "order by ingested_at" would assume. This is
+    // the direct regression test for the real Session 13 bug: the old
+    // query (`ORDER BY ingested_at DESC`) would have returned the OLDER
+    // row here, since it was written last.
+    insert_condition_row(
+        &pool,
+        feature_id,
+        newer_valid_time,
+        newer_valid_time,
+        0.20,
+        "trail-physics-v1",
+    )
+    .await;
+    insert_condition_row(
+        &pool,
+        feature_id,
+        older_valid_time,
+        older_valid_time,
+        0.10,
+        "trail-physics-v1",
+    )
+    .await;
+
+    let conditions = SegmentConditionsCatalog::new(pool);
+    let result = conditions
+        .get_latest_for_feature(feature_id)
+        .await
+        .expect("query failed")
+        .expect("expected a row");
+
+    assert_eq!(result.valid_time, newer_valid_time);
+    assert_eq!(result.soil_moisture, Some(0.20));
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_segment_conditions_latest_excludes_future_valid_times() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = connected_catalog(&infra).await;
+    let pool = catalog.pool_clone();
+    let feature_id: i64 = 999_002;
+    let now = Utc::now();
+    let past_valid_time = now - Duration::hours(1);
+    // A genuine forecast-hour row for an upcoming hour of the same run --
+    // real data, not a bug, but not "current conditions" either.
+    let future_valid_time = now + Duration::hours(5);
+
+    insert_condition_row(
+        &pool,
+        feature_id,
+        past_valid_time,
+        past_valid_time,
+        0.15,
+        "trail-physics-v1",
+    )
+    .await;
+    insert_condition_row(
+        &pool,
+        feature_id,
+        past_valid_time,
+        future_valid_time,
+        0.99,
+        "trail-physics-v1",
+    )
+    .await;
+
+    let conditions = SegmentConditionsCatalog::new(pool);
+    let result = conditions
+        .get_latest_for_feature(feature_id)
+        .await
+        .expect("query failed")
+        .expect("expected a row");
+
+    assert_eq!(result.valid_time, past_valid_time);
+    assert_eq!(result.soil_moisture, Some(0.15));
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_segment_conditions_latest_tie_breaks_by_newest_run_time() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = connected_catalog(&infra).await;
+    let pool = catalog.pool_clone();
+    let feature_id: i64 = 999_003;
+    let now = Utc::now();
+    let valid_time = now - Duration::hours(1);
+
+    // Same valid_time, two different model_versions -- the only way two
+    // rows can share a valid_time given the table's own
+    // UNIQUE(feature_id, valid_time, model_version) constraint. Simulates
+    // an older initialization's forecast for this hour versus a fresher
+    // run's row for the identical hour.
+    insert_condition_row(
+        &pool,
+        feature_id,
+        valid_time - Duration::hours(2),
+        valid_time,
+        0.11,
+        "trail-physics-v1",
+    )
+    .await;
+    insert_condition_row(
+        &pool,
+        feature_id,
+        valid_time,
+        valid_time,
+        0.22,
+        "trail-physics-v2",
+    )
+    .await;
+
+    let conditions = SegmentConditionsCatalog::new(pool);
+    let result = conditions
+        .get_latest_for_feature(feature_id)
+        .await
+        .expect("query failed")
+        .expect("expected a row");
+
+    assert_eq!(result.soil_moisture, Some(0.22)); // the fresher run_time wins
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_segment_conditions_latest_for_features_batch_applies_same_semantics() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = connected_catalog(&infra).await;
+    let pool = catalog.pool_clone();
+    let now = Utc::now();
+
+    let feature_a: i64 = 999_010; // has a real past row -- should appear
+    let feature_b: i64 = 999_011; // only has a future row -- should be omitted entirely
+    let past_valid_time = now - Duration::hours(2);
+    let future_valid_time = now + Duration::hours(3);
+
+    insert_condition_row(
+        &pool,
+        feature_a,
+        past_valid_time,
+        past_valid_time,
+        0.33,
+        "trail-physics-v1",
+    )
+    .await;
+    insert_condition_row(
+        &pool,
+        feature_b,
+        past_valid_time,
+        future_valid_time,
+        0.77,
+        "trail-physics-v1",
+    )
+    .await;
+
+    let conditions = SegmentConditionsCatalog::new(pool);
+    let results = conditions
+        .get_latest_for_features(&[feature_a, feature_b])
+        .await
+        .expect("query failed");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].feature_id, feature_a);
+    assert_eq!(results[0].soil_moisture, Some(0.33));
 }
