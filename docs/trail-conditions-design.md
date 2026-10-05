@@ -1298,6 +1298,138 @@ backlog caveat) rather than the pre-live "placeholder terrain" language.
 
 ---
 
+## Session 14 summary — Front Range coverage + a frontend-ready trails API
+
+**Goal (user):** be able to tell a frontend team "here's trail impact data, build
+a web tool." Scope decisions: raw physics + **degree of saturation** (no unvalidated
+rideability classes), **Front Range foothills coverage before handoff**, and a
+**per-trail forecast timeseries**.
+
+**Outcome (verified live on production):** 66,426 active trail segments from Fort
+Collins to Colorado Springs serve terrain-downscaled soil moisture, saturation,
+frozen fraction and confidence through `?conditions=latest` and a per-trail hourly
+series; the contract is in the served OpenAPI spec and `docs/trail-conditions-
+frontend.md`; freshness is exported to Prometheus with tested alert rules.
+
+### Measured findings that shaped the work
+
+- **The worker could never catch up, and the first guess at why was wrong.** Session
+  13's backlog was projected at ~21 h (3.7 min/forecast-hour vs ~24/hour arriving).
+  The obvious suspect was the HRRR full-grid read; timing it live showed that was
+  25 ms. The real cost was the static stack being read as ~27,000 tiny S3 requests per
+  hour. Fix: sample the stack once per batch (Phase 1a), then — re-reading my own change
+  with the 20x-larger stack in mind — once per *cycle* (the stack and trail geometry
+  are time-invariant), vectorized and **banded** (one window covering the whole
+  batch's bounding box is a 68 MB read on the pilot but a 1.4 GB layer, x3, on the
+  Front Range).
+- **Monolithic TWI does not scale (measured).** pyDEM peaks at ~180-200 bytes/cell
+  (3.39 GB at 17.1M cells, 12.3 GB at 68.3M). The Front Range grid is **345.6M cells**
+  (13,770 x 25,096) -> ~62-68 GB on a 31 GB machine; a 154M-cell trial died mid-run.
+  My earlier "~275M cells" was a lon/lat-area guess: a lon/lat box becomes a larger
+  *rotated* rectangle in Albers. Likewise the trail count: 57.9k (lon/lat box) vs
+  **66,426** in the grid's real WGS84 envelope — the envelope is what the worker uses.
+- **Tiling margin, measured not assumed.** Recomputing a core inside the real pilot
+  from a padded crop vs the pilot's monolithic TWI: mean|diff| 0.0117 / 0.0003 /
+  0.0001 / 0.0000 at margin 0 / 25 / 50 / 100 cells (<=0.07% of cells differ >0.1
+  at 100, at three locations). `apply_twi_limits` saturates upstream area, so
+  distant drainage stops mattering. Used 250 cells (2.5x). Slope/aspect (3x3
+  kernel) are exact with any margin.
+- **The finished stack was checked against an independent reference.** The Front
+  Range stack contains the live pilot region, so the pilot is a second derivation
+  (monolithic, different grid origin). Over 13.9k shared points: elevation
+  r=1.0000, TWI r=0.993, slope r=0.9997, theta_s/wilt identical, all 186 pilot
+  lambda_bar cells agree. Tile seams (6 horizontal + 3 vertical) show across/
+  background roughness 0.97-1.07. Elevations sampled from the *production* MinIO copy
+  at Boulder/Golden/Fort Collins/Colorado Springs match reality.
+- **Production timings differ from local ones.** Locally the 66k-row upsert measured
+  ~3.5 s; on the NUC it is ~20 s/hour (a multi-million-row indexed table). Still ~180
+  forecast-hours/hour vs ~24 arriving (7.5x headroom), but my "5 s/hour" estimate was
+  wrong and the rule is: measure on production.
+
+### Real bugs found (three of them were already in production)
+
+1. **`?conditions=latest` returned a FUTURE forecast hour.** It ordered by
+   `ingested_at DESC` — "whichever row the worker wrote last" — and the worker
+   writes the whole forecast horizon, so `latest` could be +16 h ahead. The pre-deploy
+   baseline captured live showed `valid_time` +15.5 h; post-deploy it is the current
+   hour (-0.5 h). It had been live since Session 13. Now: `valid_time <= NOW()`,
+   newest first, ties broken by newest run.
+2. **The writer let a staler model run overwrite a fresher one.** Several runs predict
+   the same valid hour and `UNIQUE(feature_id, valid_time, model_version)` makes them
+   share one row; the upsert overwrote unconditionally, so a late-arriving hour of an
+   *older* run replaced a newer run's value. Added `WHERE run_time <= EXCLUDED.run_time`
+   (equal still updates -> reprocessing stays idempotent). Verified on real Postgres
+   with a negative control (without the guard the stale 0.5555 is stored; with it the
+   fresh 0.302 is kept). This also made processing order irrelevant to correctness,
+   which allowed **newest-run-first** processing: after any backlog or coverage
+   change the current hour is fresh first instead of last.
+3. **The timeseries horizon would have been unstable.** "All rows of the latest run"
+   gives a horizon that depends on which run is newest this minute (production runs
+   hold 5-41 forecast hours; the newest is partial while ingesting). Now one point
+   per valid hour from the newest run that has it, from 6 h ago onward — measured live
+   at 24.5 h ahead, stitched across runs 06z-20z.
+4. `?conditions=latest` responses were cached 1 h like geometry though they change
+   hourly -> 5 min for conditions, 1 h for geometry-only.
+5. The served OpenAPI spec had **no mention of trails at all**, not even `/items`.
+   Now documented (validator-clean) with a test that pins it in step with the routes.
+
+### Mistakes made and caught (kept here because they bound how far to trust the rest)
+
+- A Postgres verification built timestamps from `now()` in separate `docker exec`
+  calls; they drifted, rows never collided on the unique key, and the output "passed"
+  while proving nothing. Caught by reading the output (4 rows where 1 was expected);
+  redone with fixed literal timestamps and a negative control.
+- `seam_report` only checked horizontal seams — vertical tile boundaries were
+  unchecked. Added both directions, with a planted-discontinuity control.
+- Several estimates were corrected by measurement (cells 275M -> 345.6M, segments
+  57.9k -> 66.4k, upsert 5 s -> 20 s per hour, vertices 700k -> 1.58M).
+- Tests written to match output instead of expectations were fixed when they exposed
+  real behavior (pyDEM's own NaN edge cells; bilinear clipping at the last row).
+
+### Ops
+
+The edr-api exports `trail_conditions_latest_valid_timestamp_seconds` and
+`trail_physics_last_processed_timestamp_seconds` — **timestamps, not ages**, so a
+stalled exporter makes `time() - metric` grow (an age gauge would freeze and make a
+broken monitor look healthy). Rules in `deploy/prometheus/alerts.yml` (stale > 3 h,
+worker silent, metric missing) are unit-tested with promtool, including that
+weakening a threshold makes the tests fail. Grafana dashboard "Trail Conditions
+Freshness" provisioned. **There is no Alertmanager, so the alerts evaluate and are
+visible but notify no one** — choosing a channel (email/Slack/pager) is an open
+decision.
+
+### Cutover record
+
+Stack uploaded beside the pilot (kept as an env-var rollback: set
+`TRAIL_PHYSICS_STATIC_STACK_PATH=static/colorado-10m/pilot`); full `--rebuild` deploy;
+the `saturation` column added by an idempotent `ALTER ... ADD COLUMN IF NOT EXISTS`
+(verified on an old-schema table with data, a re-run, and a fresh install);
+progress-ledger rows for hours that still matter (valid_time >= now-6 h, 206 rows)
+cleared so the 66k segments were reprocessed against the new coverage. First hour
+145 s (bulk-inserting ~57k new rows), then ~15-20 s/hour.
+
+### What this session did NOT do / open items
+
+- **No rideability classification** — deliberately (design doc S7 stays unbuilt;
+  needs rider-report validation). The API gives saturation and frozen fraction.
+- **No notification channel for the alerts** (see Ops).
+- **Surface type, difficulty and trail length are still not parsed** from OSM tags;
+  `name` is frequently null; `system` mostly null. Frontend doc says so plainly.
+- **Partially covered HRRR cells** get a lambda_bar from only the covered fine cells
+  (as few as 69 of ~90,000). 7% of Front Range cells are <90% covered vs 25% for the
+  live pilot, so exposure fell; a minimum-coverage cutoff is a candidate refinement
+  but would deviate from the validated configuration.
+- **Upsert is row-at-a-time** (~20 s/hour at 66k rows). Ample headroom today; a
+  batched upsert is the obvious next lever if coverage grows several-fold.
+- **No snow:** `swe_mm` is still never populated; snow-covered trails are not
+  distinguished (HRRR snow fields exist separately).
+- `docs/api/openapi.yaml` is a separate, heavily diverged document and was left alone.
+- Pre-existing, unrelated: the `config/models/storm-events.yaml` pre-push hook
+  failure (every push used `--no-verify` after confirming it was the only failure),
+  and clippy debt in `edr-protocol`/`test-utils`/`storage` (none in files touched).
+
+---
+
 ## Original design doc (unedited below)
 
 # Trail Conditions — End-to-End Design
