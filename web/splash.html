@@ -821,8 +821,9 @@
             <div class="examples-section">
                 <p class="card-description">
                     OSM-sourced trail geometry (one feature per trail segment, not merged per system),
-                    the raw HRRR soil/snow ingredients, and &mdash; for a Boulder-area pilot region so far,
-                    with more terrain coverage on the way &mdash; real terrain-downscaled soil moisture,
+                    the raw HRRR soil/snow ingredients, and &mdash; for the Front Range foothills (Fort Collins
+                    to Colorado Springs) so far, with more terrain coverage on the way &mdash; real terrain-downscaled soil moisture,
+                    degree of saturation and a per-trail hourly forecast series,
                     physics validated against ground-truth data at two independent research sites. This is
                     an advisory signal, not a rideability judgment or a closure authority.
                     See the <a href="/edr" style="color: var(--primary-light);">API docs</a> for the endpoints, or
@@ -858,7 +859,7 @@
                         </div>
                     </a>
 
-                    <!-- Downscaled trail conditions (WS1 pilot coverage) -->
+                    <!-- Downscaled trail conditions (WS1 Front Range coverage) -->
                     <a href="/edr/collections/trails/items?bbox=-105.42,39.93,-105.36,39.98&conditions=latest&limit=5" target="_blank" class="edr-example-item">
                         <div class="edr-example-header">
                             <span class="location-icon">&#128167;</span>
@@ -872,17 +873,42 @@
   <span class="key">"name"</span>: <span class="string">"Forsythe Canyon Trail"</span>,
   <span class="key">"feature_class"</span>: <span class="string">"mtb_trail"</span>,
   <span class="key">"conditions"</span>: {
-    <span class="key">"valid_time"</span>: <span class="string">"2026-09-27T18:00:00Z"</span>,
+    <span class="key">"valid_time"</span>: <span class="string">"2026-10-05T22:00:00Z"</span>,
     <span class="key">"soil_moisture"</span>: <span class="number">0.184</span>,
+    <span class="key">"saturation"</span>: <span class="number">0.42</span>,
     <span class="key">"frozen_fraction"</span>: <span class="number">0.0</span>,
     <span class="key">"confidence"</span>: <span class="number">1.0</span>
   }
 }</pre>
                         </div>
                         <div class="edr-example-info">
-                            <div class="edr-example-title">Downscaled Soil Moisture (pilot region)</div>
-                            <div class="edr-example-desc"><code>&amp;conditions=latest</code> merges terrain-downscaled soil moisture into any trails query. <code>confidence</code> is the fraction of this segment actually covered by real terrain data today (1.0 here; 0.0 or absent outside the pilot region) &mdash; see <a href="/science.html" style="color: var(--primary-light);">the validation</a> behind the physics itself</div>
+                            <div class="edr-example-title">Downscaled Soil Moisture &amp; Saturation (Front Range)</div>
+                            <div class="edr-example-desc"><code>&amp;conditions=latest</code> merges terrain-downscaled soil moisture and a 0&ndash;1 degree of saturation into any trails query. <code>confidence</code> is the fraction of this segment actually covered by real terrain data (1.0 here); outside the Front Range there is no <code>conditions</code> block at all &mdash; see <a href="/science.html" style="color: var(--primary-light);">the validation</a> behind the physics itself</div>
                             <div class="edr-example-endpoint">GET /edr/collections/trails/items?bbox=...&amp;conditions=latest</div>
+                        </div>
+                    </a>
+
+                    <!-- Per-trail forecast series -->
+                    <a href="/edr/collections/trails/items/956937928/conditions" target="_blank" class="edr-example-item">
+                        <div class="edr-example-header">
+                            <span class="location-icon">&#128200;</span>
+                            <span class="location-name">Forsythe Canyon Trail</span>
+                            <span class="location-id">/conditions</span>
+                        </div>
+                        <div class="edr-response-container">
+                            <pre class="edr-response"><span class="key">"feature_id"</span>: <span class="number">956937928</span>,
+<span class="key">"conditions"</span>: [
+  { <span class="key">"valid_time"</span>: <span class="string">"2026-10-05T17:00:00Z"</span>,
+    <span class="key">"saturation"</span>: <span class="number">0.40</span>,
+    <span class="key">"frozen_fraction"</span>: <span class="number">0.0</span>, ... },
+  { <span class="key">"valid_time"</span>: <span class="string">"2026-10-05T18:00:00Z"</span>, ... },
+  ...
+]</pre>
+                        </div>
+                        <div class="edr-example-info">
+                            <div class="edr-example-title">Hourly Forecast Series (per trail)</div>
+                            <div class="edr-example-desc">One point per hour from a few hours ago through the end of the forecast (about a day), each from the newest model run that has it &mdash; the data behind a per-trail forecast chart</div>
+                            <div class="edr-example-endpoint">GET /edr/collections/trails/items/{feature_id}/conditions</div>
                         </div>
                     </a>
 
