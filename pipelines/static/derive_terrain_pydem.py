@@ -260,20 +260,38 @@ def _print_layer_stats(name: str, path: Path, stride: int = 8) -> None:
           f"min={valid.min():.3f} max={valid.max():.3f}")
 
 
-def seam_report(twi_path: str, tile_size: int = DEFAULT_TILE_SIZE, band: int = 3) -> None:
-    """Spot-check tile seams in a finished TWI layer: compare the mean
-    absolute difference between adjacent cells ACROSS each interior tile
-    boundary against the same statistic ALONG ordinary rows/cols nearby.
-    A seam artifact (margin too small) shows up as a boundary-adjacent
-    jump much larger than the background roughness."""
+def seam_stats(twi_path: str, tile_size: int = DEFAULT_TILE_SIZE, band: int = 3) -> list[dict]:
+    """Seam spot-check of a finished TWI layer, for BOTH tile-boundary
+    directions. At each interior tile boundary compare the mean absolute
+    difference between adjacent cells ACROSS the boundary against the same
+    statistic one cell over (ordinary roughness right next to it). A seam
+    artifact (margin too small) shows up as a boundary jump well above the
+    background; a ratio near 1.0 means the seam is invisible. Returns one
+    dict per seam: {"axis", "index", "across", "background", "ratio"}.
+
+    (Session 14 first version checked only row seams -- the horizontal
+    boundaries -- and so said nothing about the vertical ones; both are tile
+    boundaries.)"""
+    out = []
     with rasterio.open(twi_path) as src:
         height, width = src.height, src.width
-        rows = range(tile_size, height, tile_size)
-        for r in rows:
+        for r in range(tile_size, height, tile_size):
             strip = src.read(1, window=Window(0, r - band, width, 2 * band))
-            across = np.nanmean(np.abs(strip[band] - strip[band - 1]))
-            background = np.nanmean(np.abs(strip[1] - strip[0]))
-            print(f"  row seam {r}: across={across:.4f} background={background:.4f} ratio={across / background:.2f}")
+            out.append(_seam_row("row", r, np.abs(strip[band] - strip[band - 1]), np.abs(strip[1] - strip[0])))
+        for c in range(tile_size, width, tile_size):
+            strip = src.read(1, window=Window(c - band, 0, 2 * band, height))
+            out.append(_seam_row("col", c, np.abs(strip[:, band] - strip[:, band - 1]), np.abs(strip[:, 1] - strip[:, 0])))
+    return out
+
+
+def _seam_row(axis: str, index: int, across: np.ndarray, background: np.ndarray) -> dict:
+    a, b = float(np.nanmean(across)), float(np.nanmean(background))
+    return {"axis": axis, "index": index, "across": a, "background": b, "ratio": a / b if b else float("nan")}
+
+
+def seam_report(twi_path: str, tile_size: int = DEFAULT_TILE_SIZE, band: int = 3) -> None:
+    for st in seam_stats(twi_path, tile_size, band):
+        print(f"  {st['axis']} seam {st['index']}: across={st['across']:.4f} background={st['background']:.4f} ratio={st['ratio']:.2f}")
 
 
 def main():

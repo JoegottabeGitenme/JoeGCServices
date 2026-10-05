@@ -26,6 +26,59 @@ Wall-clock: DEM ~7s, TWI+slope+aspect ~2min, soil ~17s, assembly ~seconds
 Output size: ~470MB of intermediates + Zarr (not committed -- see below)
 ```
 
+## Status (Session 14): Front Range foothills built and verified (20x the pilot)
+
+The pilot's chain was re-run for the Front Range foothills corridor
+(Fort Collins to Colorado Springs, `grid_spec.FRONT_RANGE_BBOX_WGS84`) --
+**tiled and banded**, because the pilot's monolithic approach does not scale
+to it. Every number below is from the real run.
+
+```
+Grid: EPSG:5070, 10m, 13,770 x 25,096 = 345,571,920 cells  (pilot: 17.1M, ~20x)
+Valid cells: ~80% (the rest are Albers-rotation nodata corners, as in the pilot)
+Elevation: 1389 - 4342 m   TWI: mean 8.87 std 1.79   theta_s: 0.339 - 0.476
+Coarse HRRR-cell lambda_bar: 3,196 distinct HRRR cells (pilot: 186)
+WGS84 envelope: (-106.249, 38.4993, -104.3485, 40.848)  -> 66,424 active trail segments
+Wall-clock: DEM ~1.5 min, tiled TWI/slope/aspect ~45 min (28 tiles), coarse TWI ~1.2 min,
+            POLARIS + soil ~3 min, Zarr assembly ~30 s
+Output: 3.6 GB Zarr (intermediates ~5 GB; not committed)
+```
+
+**Why monolithic does not work (measured):** pyDEM peaks at ~180-200 bytes
+per cell (3.39 GB at the pilot's 17.1M cells; 12.3 GB at 68.3M; linear). The
+Front Range would need ~62-68 GB on a 31 GB machine -- a 154M-cell trial run
+died mid-flight. Runtime scales linearly (~146-150K cells/s); memory is the
+limit. So `derive_terrain_pydem.py` processes 4096-cell core tiles with a
+250-cell margin of real DEM around each, then crops to the core. The margin
+is measured, not assumed (see that module's docstring): on the real pilot, a
+core recomputed from a padded crop matches the monolithic TWI to mean|d|
+0.0000 at 100 cells (<=0.07% of cells differ by >0.1), and 250 is 2.5x that.
+
+**Verification of the finished stack** (`validate_stack.py`):
+
+- *Seams:* across-seam roughness / background roughness at all 9 interior tile
+  boundaries (6 horizontal, 3 vertical) is 0.97-1.07 -- no visible artifact.
+- *Independent cross-check:* the Front Range stack contains the live pilot
+  region, so the pilot is an independent reference (same DEM and validated
+  method, but derived monolithically, on a grid with a different origin).
+  Over 13.9k shared random points: elevation r=1.0000 (mean|d| 0.06 m),
+  TWI r=0.993 (median|d| 0.04 TWI units; means 8.807 vs 8.793), slope
+  r=0.9997, theta_s/theta_wilt identical, and all 186 pilot HRRR cells' lambda_bar
+  agree (median|d| 0.009). Not bit-identical, as expected -- the grids are offset
+  by a sub-cell shift, and TWI is sensitive to that at the single-cell level.
+- *The other steps match the live pilot bit-for-bit:* the banded coarse-TWI and
+  soil rewrites reproduce `pilot_twi_bar.npz` and `pilot_theta_s/theta_wilt.tif`
+  exactly (regression tests against the real files).
+
+**Known limitation -- partially covered HRRR cells.** lambda_bar for an HRRR
+cell the stack only partly covers is the mean over just the covered fine
+cells (as few as 69 of a full cell's ~90,000), so it is a local mean, not the
+cell mean the equation assumes. These sit on the periphery: **7% of the Front
+Range's HRRR cells are <90% covered, vs 25% of the pilot's** (already live
+and validated), so the larger stack is less exposed, not more. Not changed
+here -- altering it would deviate from the validated configuration -- but a
+minimum-coverage cutoff for lambda_bar is a candidate refinement.
+
 ## Why a pilot, not statewide, first
 
 Per the user's own decision: prove the full chain (fetch → TWI → Zarr →
@@ -49,16 +102,18 @@ scale but likely would be at 100x the cell count).
 ```bash
 pip install -r requirements.txt  # on top of services/trail-physics/requirements.txt
 
-python3 build_dem.py --output ./data/static/pilot_dem.tif
-python3 derive_terrain_pydem.py --dem-path ./data/static/pilot_dem.tif --output-dir ./data/static
-python3 derive_coarse_twi.py --twi-path ./data/static/pilot_twi.tif --output ./data/static/pilot_twi_bar.npz
-python3 fetch_polaris.py --output-dir ./data/static
-python3 derive_soil_params.py --sand-path ./data/static/pilot_sand_pct.tif --clay-path ./data/static/pilot_clay_pct.tif --output-dir ./data/static
-python3 assemble_static_stack.py --data-dir ./data/static --output ./data/static/colorado-10m-pilot.zarr
+REGION=pilot   # or front-range (grid_spec.REGION_BBOXES_WGS84)
+python3 build_dem.py --region $REGION
+python3 derive_terrain_pydem.py --region $REGION --seam-report   # tiled + resumable
+python3 derive_coarse_twi.py --region $REGION
+python3 fetch_polaris.py --region $REGION
+python3 derive_soil_params.py --region $REGION
+python3 assemble_static_stack.py --region $REGION
+python3 validate_stack.py ./data/static/colorado-10m-$REGION.zarr --against ./data/static/colorado-10m-pilot.zarr
 
 # Requires real SSH access to the production NUC (not available in this
 # sandboxed environment -- see upload_static_stack.sh's own header):
-./upload_static_stack.sh ./data/static/colorado-10m-pilot.zarr colorado-10m/pilot
+./upload_static_stack.sh ./data/static/colorado-10m-$REGION.zarr colorado-10m/$REGION
 ```
 
 1. **`grid_spec.py`** — the pinned grid definition (EPSG:5070, 10m, the

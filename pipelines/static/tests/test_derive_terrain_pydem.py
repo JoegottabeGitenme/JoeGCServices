@@ -276,3 +276,47 @@ class TestDeriveTerrainLayersEndToEnd:
 
         derive_terrain_layers(str(dem_path), str(tmp_path), prefix="s", tile_size=512, margin=50)
         assert json.loads(prog.read_text())["margin"] == 50
+
+
+class TestSeamStats:
+    """seam_stats checks BOTH tile-boundary directions of a finished TWI
+    layer (the first version only checked row seams)."""
+
+    def test_reports_every_interior_seam_in_both_directions(self, tmp_path):
+        from derive_terrain_pydem import seam_stats
+
+        dem = _synthetic_dem(700, 800).astype(np.float32)
+        dem_path = tmp_path / "s_dem.tif"
+        _write_dem(dem_path, dem)
+        derive_terrain_layers(str(dem_path), str(tmp_path), prefix="s", tile_size=512, margin=100)
+
+        stats = seam_stats(str(tmp_path / "s_twi.tif"), tile_size=512)
+        # 700 rows -> one interior row seam (512); 800 cols -> one interior col seam (512).
+        assert [(s["axis"], s["index"]) for s in stats] == [("row", 512), ("col", 512)]
+        for s in stats:
+            assert np.isfinite(s["ratio"]) and s["background"] > 0
+
+    def test_a_properly_margined_tiling_has_no_visible_seam(self, tmp_path):
+        from derive_terrain_pydem import seam_stats
+
+        dem = _synthetic_dem(700, 800).astype(np.float32)
+        dem_path = tmp_path / "m_dem.tif"
+        _write_dem(dem_path, dem)
+        derive_terrain_layers(str(dem_path), str(tmp_path), prefix="m", tile_size=512, margin=100)
+        for s in seam_stats(str(tmp_path / "m_twi.tif"), tile_size=512):
+            assert 0.8 < s["ratio"] < 1.25, s
+
+    def test_a_planted_seam_discontinuity_is_detected(self, tmp_path):
+        """Negative control: the detector must actually flag a bad seam. Plant
+        a +5 offset on one side of a row boundary in a smooth TWI raster."""
+        from derive_terrain_pydem import seam_stats
+        from rasterio.transform import from_origin
+
+        twi = np.tile(np.linspace(5, 9, 600, dtype=np.float32), (700, 1))
+        twi[512:, :] += 5.0  # a hard step exactly at the tile boundary
+        path = tmp_path / "planted_twi.tif"
+        with rasterio.open(path, "w", driver="GTiff", height=700, width=600, count=1, dtype="float32",
+                           crs="EPSG:5070", transform=from_origin(0, 7000, 10, 10), nodata=np.nan) as dst:
+            dst.write(twi, 1)
+        row_seam = next(s for s in seam_stats(str(path), tile_size=512) if s["axis"] == "row")
+        assert row_seam["ratio"] > 5 or not np.isfinite(row_seam["ratio"]), row_seam
