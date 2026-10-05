@@ -81,9 +81,19 @@ def get_pending_forecast_hours(
     by the NOT EXISTS clause; this is a cheap, bounded query in steady
     state, not an unbounded historical scan.
 
-    Ordered oldest-first so an interrupted cycle (service restart mid-run)
-    resumes roughly where it left off rather than jumping to the newest
-    data and leaving a gap.
+    **Ordered newest run first** (earliest forecast hours first within a
+    run), so the freshest data lands first -- Session 14. This was
+    oldest-first (Session 12) on the reasoning that an interrupted cycle
+    should "resume where it left off rather than jump to the newest data and
+    leave a gap". The ledger already guarantees nothing is skipped or
+    repeated whatever the order, and `upsert_segment_conditions` only lets an
+    equal-or-newer run overwrite a row, so processing order no longer affects
+    correctness at all. What order DOES affect is what a user sees during any
+    backlog or backfill (first deployment, a restart after downtime, or
+    reprocessing after the static stack's coverage grows): oldest-first
+    delivered the current hour -- the thing `?conditions=latest` serves --
+    LAST, after hours of stale data. Newest-first delivers it first, then
+    fills the forecast horizon, then history.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -110,7 +120,7 @@ def get_pending_forecast_hours(
                     AND p.forecast_hour = s.forecast_hour
                     AND p.model_version = %(model_version)s
               )
-            ORDER BY s.reference_time ASC, s.forecast_hour ASC
+            ORDER BY s.reference_time DESC, s.forecast_hour ASC
             """,
             {
                 "model": model,

@@ -91,16 +91,20 @@ class TestGetPendingForecastHours:
         assert params["model_version"] == "trail-physics-v2"
         assert params["lookback_hours"] == 48
 
-    def test_ordered_oldest_first(self):
-        """So a restart resumes near where it left off rather than
-        jumping to the newest data and leaving a gap -- confirmed by
-        checking the SQL text asks for ascending order (result parsing
-        itself can't prove ordering since FakeCursor just returns
-        whatever list it's given)."""
+    def test_orders_newest_run_first_then_earliest_forecast_hour(self):
+        """Newest run first so `?conditions=latest` (the current hour) is
+        served from fresh data as soon as possible during any backlog or
+        backfill; earliest forecast hours first within a run so the current
+        hour lands before the far horizon. Safe because processing order no
+        longer affects correctness (see get_pending_forecast_hours'
+        docstring + the run_time guard in upsert_segment_conditions).
+        Checked via the SQL text -- FakeCursor just returns whatever list
+        it's given, so result parsing can't prove ordering."""
         cursor = FakeCursor()
         conn = FakeConnection(cursor)
         db.get_pending_forecast_hours(conn)
-        assert "ORDER BY s.reference_time ASC, s.forecast_hour ASC" in cursor.executed_sql
+        assert "ORDER BY s.reference_time DESC, s.forecast_hour ASC" in cursor.executed_sql
+        assert "ORDER BY s.reference_time ASC" not in cursor.executed_sql
 
 
 class TestMarkForecastHourProcessed:

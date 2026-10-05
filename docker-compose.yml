@@ -355,28 +355,28 @@ services:
     restart: unless-stopped
 
   trail-physics:
-    # Session 13: gate removed -- started by default now. The pilot static
-    # stack is uploaded to this NUC's MinIO (colorado-10m/pilot), and the
-    # first live cycle against real production Postgres/MinIO/HRRR data
-    # has been run and verified: real segment_conditions rows with
-    # physically sane soil_moisture, confidence=1.0 for covered points,
-    # and the live EDR ?conditions=latest endpoint returning real data
-    # for real trails (Meyer's Homestead Trail, Lazy Z Road, Gross
-    # Reservoir Road). That first live cycle also caught and fixed a real
-    # bug (forcing.py's storage_path case/underscore mismatch against the
-    # Rust ingester's actual naming convention -- see that file's module
-    # docstring) that had silently made every forecast hour fail to read
-    # until found. Coverage is still pilot-scoped (Boulder-area only, see
-    # pipelines/static/README.md) -- everywhere else falls back to raw,
-    # undownscaled HRRR with confidence=0.0, not an error state. On this
-    # first-ever deployment the job ledger (db.py's trail_physics_progress)
-    # started with a real ~323-forecast-hour backlog (every pending
-    # (reference_time, forecast_hour) within TRAIL_PHYSICS_LOOKBACK_HOURS
-    # that predates this service ever running), processed oldest-first at
-    # roughly 4 minutes/hour (~21h to fully clear) -- so ?conditions=latest
-    # will lag real-time by up to that long until the backlog catches up;
-    # this is a one-time catch-up cost, not a steady-state characteristic
-    # (steady state is a handful of new forecast hours per 60s poll).
+    # Runs by default (Session 13 removed the profile gate after the first
+    # live cycle against real production Postgres/MinIO/HRRR data was
+    # verified). Ingest-keyed job worker: every (reference_time,
+    # forecast_hour) where SOILW and TSOIL have both landed is processed
+    # once, tracked in the trail_physics_progress ledger.
+    #
+    # Session 14: the first production run took ~21h to clear its initial
+    # backlog because the static terrain stack was re-read per segment, then
+    # per forecast hour (~4 min/hour vs HRRR's ~24 hours/hour arrival rate --
+    # it could never catch up). Now time-invariant inputs are computed once
+    # per cycle and sampling is vectorized + banded: ~5 s/hour at the Front
+    # Range's ~66k segments (measured; ~4 s of that is the DB upsert).
+    # Pending hours are processed NEWEST RUN FIRST, so after any backlog or
+    # coverage change ?conditions=latest is fresh first (db.py explains why
+    # that is now safe).
+    #
+    # Coverage = the static stack's own extent (TRAIL_PHYSICS_STATIC_STACK_
+    # PATH below). Trails outside it are not processed at all. When that path
+    # changes to a LARGER stack, the new segments have no rows for hours
+    # already in the ledger -- clear the ledger rows for the recent window
+    # (see docs/trail-conditions-design.md, Session 14) so they are
+    # reprocessed against the new coverage.
     build:
       context: services/trail-physics
       dockerfile: Dockerfile
