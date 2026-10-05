@@ -75,6 +75,7 @@ mod tests {
                 valid_range: None,
             }],
             run_mode: RunMode::default(),
+            conditions_coverage: None,
         }
     }
 

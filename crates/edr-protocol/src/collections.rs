@@ -71,6 +71,30 @@ pub struct Collection {
     /// Parameters available in this collection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameter_names: Option<HashMap<String, Parameter>>,
+
+    /// Where this collection's optional per-feature `conditions` data
+    /// exists (EDR extension member). Absent for collections that have no
+    /// such data. See [`ConditionsCoverage`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conditions_coverage: Option<ConditionsCoverage>,
+}
+
+/// Where a feature collection's optional `conditions` enrichment exists.
+///
+/// A coarse, machine-readable hint so a client can grey out or hide the
+/// "conditions" UI for features outside the covered region without first
+/// fetching them. It is deliberately a *rectangle*: the real coverage can
+/// have nodata pockets (e.g. the rotated-grid corners), so the
+/// authoritative per-feature signal is whether a feature actually carries a
+/// `conditions` block and what its `confidence` is.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConditionsCoverage {
+    /// `[minLon, minLat, maxLon, maxLat]` in CRS:84.
+    pub bbox: [f64; 4],
+
+    /// Human-readable note about what the coverage means / its limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 impl Collection {
@@ -87,6 +111,7 @@ impl Collection {
             crs: None,
             output_formats: None,
             parameter_names: None,
+            conditions_coverage: None,
         }
     }
 
@@ -99,6 +124,13 @@ impl Collection {
     /// Set the description.
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    /// Set the conditions coverage (feature collections with optional
+    /// per-feature `conditions` data).
+    pub fn with_conditions_coverage(mut self, coverage: ConditionsCoverage) -> Self {
+        self.conditions_coverage = Some(coverage);
         self
     }
 
@@ -484,6 +516,36 @@ impl Instance {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conditions_coverage_is_serialized_when_set() {
+        let c = Collection::new("trails").with_conditions_coverage(ConditionsCoverage {
+            bbox: [-106.0, 38.5, -104.3, 40.8],
+            description: Some("Front Range".to_string()),
+        });
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(
+            v["conditions_coverage"]["bbox"],
+            serde_json::json!([-106.0, 38.5, -104.3, 40.8])
+        );
+        assert_eq!(v["conditions_coverage"]["description"], "Front Range");
+    }
+
+    #[test]
+    fn conditions_coverage_is_omitted_when_absent() {
+        // Every other collection's response must be byte-for-byte unchanged
+        // by this additive member -- no `"conditions_coverage": null`.
+        let v = serde_json::to_value(Collection::new("hrrr-surface")).unwrap();
+        assert!(v.get("conditions_coverage").is_none());
+    }
+
+    #[test]
+    fn collection_without_conditions_coverage_still_deserializes() {
+        // Older serialized collections (no such member) must still parse.
+        let c: Collection =
+            serde_json::from_str(r#"{"id":"x","links":[]}"#).expect("must deserialize");
+        assert!(c.conditions_coverage.is_none());
+    }
+
     use super::*;
 
     #[test]

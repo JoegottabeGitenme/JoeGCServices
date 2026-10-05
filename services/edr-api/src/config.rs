@@ -293,6 +293,24 @@ pub struct CollectionDefinition {
     /// Run mode (instances or latest).
     #[serde(default)]
     pub run_mode: RunMode,
+
+    /// Feature collections with optional per-feature `conditions` data
+    /// (e.g. `trails`): the region where that data exists. Surfaced on the
+    /// collection response so clients can see coverage without fetching
+    /// features.
+    #[serde(default)]
+    pub conditions_coverage: Option<ConditionsCoverageConfig>,
+}
+
+/// Region where a collection's `conditions` enrichment exists. Must be kept
+/// in step with the trail-physics static stack's own extent -- see
+/// `config/edr/trails.yaml`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConditionsCoverageConfig {
+    /// `[minLon, minLat, maxLon, maxLat]`, CRS:84.
+    pub bbox: [f64; 4],
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Filter for selecting levels by type.
@@ -1238,5 +1256,32 @@ collections:
         assert!(param_names.contains(&"frozen_fraction"));
         assert!(param_names.contains(&"confidence"));
         assert!(param_names.contains(&"feature_class"));
+    }
+
+    #[test]
+    fn test_real_trails_config_declares_a_sane_conditions_coverage() {
+        let config = EdrConfig::load_from_dir("../../config/edr")
+            .expect("real config/edr directory must parse without error");
+        let (_model_config, collection) = config.find_collection("trails").unwrap();
+        let coverage = collection
+            .conditions_coverage
+            .as_ref()
+            .expect("trails must declare where its conditions data exists");
+        let [min_lon, min_lat, max_lon, max_lat] = coverage.bbox;
+        assert!(min_lon < max_lon && min_lat < max_lat);
+        // Colorado, and containing the validated Boulder pilot (the
+        // smallest region ever served): the declared coverage may grow but
+        // must never silently shrink below what is live.
+        assert!(min_lon >= -109.06 && max_lon <= -102.04 + 1.0);
+        assert!(min_lon <= -105.640 && max_lon >= -105.062);
+        assert!(min_lat <= 39.8129 && max_lat >= 40.1869);
+        assert!(coverage.description.is_some());
+    }
+
+    #[test]
+    fn test_collections_without_conditions_coverage_default_to_none() {
+        let config = EdrConfig::load_from_dir("../../config/edr").unwrap();
+        let (_m, hrrr) = config.find_collection("hrrr-soil").unwrap();
+        assert!(hrrr.conditions_coverage.is_none());
     }
 }

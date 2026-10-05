@@ -137,7 +137,10 @@ pub async fn trail_radius_handler(
         HashMap::new()
     };
 
-    geojson_response(features_to_collection(features, &conditions))
+    geojson_response(
+        features_to_collection(features, &conditions),
+        cache_max_age_secs(wants_latest_conditions(&params.conditions)),
+    )
 }
 
 /// Area (bbox) query for the trails collection.
@@ -172,7 +175,10 @@ pub async fn trail_area_handler(
         HashMap::new()
     };
 
-    geojson_response(features_to_collection(features, &conditions))
+    geojson_response(
+        features_to_collection(features, &conditions),
+        cache_max_age_secs(wants_latest_conditions(&params.conditions)),
+    )
 }
 
 /// Items query (OGC-Features-style) for the trails collection.
@@ -229,7 +235,10 @@ pub async fn trail_items_handler(
     let mut collection = features_to_collection(features, &conditions);
     collection["numberReturned"] = json!(returned);
     collection["timeStamp"] = json!(chrono::Utc::now().to_rfc3339());
-    geojson_response(collection)
+    geojson_response(
+        collection,
+        cache_max_age_secs(wants_latest_conditions(&params.conditions)),
+    )
 }
 
 /// Per-feature forecast timeseries: the full analysis + forecast-hour
@@ -540,12 +549,32 @@ fn parse_bbox(coords: &str) -> Result<(f64, f64, f64, f64), String> {
     Err("Invalid bbox. Use minLon,minLat,maxLon,maxLat".to_string())
 }
 
-fn geojson_response(value: Value) -> Response {
+/// Cache lifetime for a trails GeoJSON response. Trail geometry changes
+/// weekly (OSM sync), so a geometry-only response can be cached for an
+/// hour; a response carrying `conditions` reflects model output that
+/// changes hourly, so caching it for an hour would let a browser/CDN show
+/// conditions up to an hour staler than the API itself has. 5 minutes
+/// matches `json_response` (the timeseries endpoint).
+const GEOMETRY_CACHE_MAX_AGE_SECS: u32 = 3600;
+const CONDITIONS_CACHE_MAX_AGE_SECS: u32 = 300;
+
+fn cache_max_age_secs(with_conditions: bool) -> u32 {
+    if with_conditions {
+        CONDITIONS_CACHE_MAX_AGE_SECS
+    } else {
+        GEOMETRY_CACHE_MAX_AGE_SECS
+    }
+}
+
+fn geojson_response(value: Value, max_age_secs: u32) -> Response {
     match serde_json::to_string(&value) {
         Ok(json) => Response::builder()
             .status(StatusCode::OK)
             .header(axum::http::header::CONTENT_TYPE, "application/geo+json")
-            .header(axum::http::header::CACHE_CONTROL, "max-age=3600")
+            .header(
+                axum::http::header::CACHE_CONTROL,
+                format!("max-age={}", max_age_secs),
+            )
             .body(json.into())
             .unwrap(),
         Err(e) => internal_error(format!("Serialization failed: {}", e)),
@@ -789,5 +818,29 @@ mod tests {
         let conditions = &geojson["properties"]["conditions"];
         assert!(conditions.get("saturation").is_some());
         assert_eq!(conditions["saturation"], Value::Null);
+    }
+
+    #[test]
+    fn conditions_responses_get_a_short_cache_geometry_only_keeps_the_long_one() {
+        assert_eq!(cache_max_age_secs(true), 300);
+        assert_eq!(cache_max_age_secs(false), 3600);
+    }
+
+    #[test]
+    fn geojson_response_sets_the_requested_cache_control_header() {
+        let resp = geojson_response(json!({"type": "FeatureCollection", "features": []}), 300);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CACHE_CONTROL)
+                .unwrap(),
+            "max-age=300"
+        );
+        let resp = geojson_response(json!({}), 3600);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CACHE_CONTROL)
+                .unwrap(),
+            "max-age=3600"
+        );
     }
 }

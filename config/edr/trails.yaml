@@ -81,6 +81,20 @@ collections:
         levels: [surface]
       - name: confidence # 0-1, fraction of sampled vertices with real WS1 terrain downscaling (vs. raw HRRR fallback); only present with ?conditions=latest
         levels: [surface]
+    # Where `conditions` data exists, surfaced on the collection response as
+    # `conditions_coverage` so a client can grey out the conditions UI for
+    # trails outside it without fetching them. **Must be kept in step with the
+    # trail-physics static stack** (TRAIL_PHYSICS_STATIC_STACK_PATH): this is
+    # the WGS84 envelope of that stack's grid -- compute it with
+    # `StaticStack.wgs84_bbox()` (or pipelines/static/grid_spec.py's
+    # region_grid_spec(...) corners -> EPSG:4326). It is the SAME rectangle
+    # trail-physics uses to choose which trails to process, and is wider than
+    # the requested region bbox because a lon/lat box becomes a rotated
+    # rectangle in the stack's Albers CRS (the corners are nodata -- hence the
+    # per-feature `confidence` is the authoritative signal, not this box).
+    conditions_coverage:
+      bbox: [-106.249, 38.4993, -104.3485, 40.848]
+      description: "Front Range foothills (Fort Collins to Colorado Springs). A coarse rectangle: its corners may lack terrain data. Per-trail `confidence` and the presence of a `conditions` block are authoritative. Outside it, trails have geometry only."
     run_mode: latest
 
 settings:

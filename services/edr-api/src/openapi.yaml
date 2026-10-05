@@ -23,6 +23,13 @@ info:
     - **Corridor** - Buffered path queries
     - **Cube** - Bounding box with vertical/temporal extent
     
+    ## Trail conditions
+    
+    The `trails` collection serves OpenStreetMap trail geometry and, optionally, a
+    physics-based soil-moisture advisory per trail segment. See the `/items` and
+    `/items/{featureId}/conditions` operations. Coverage is currently a Front Range
+    pilot region; outside it a trail has geometry but no `conditions`.
+    
   contact:
     name: Weather WMS Support
   license:
@@ -154,6 +161,7 @@ paths:
         - $ref: '#/components/parameters/datetime'
         - $ref: '#/components/parameters/parameter-name'
         - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/trailConditions'
         - $ref: '#/components/parameters/f'
         - $ref: '#/components/parameters/width'
         - $ref: '#/components/parameters/height'
@@ -218,6 +226,7 @@ paths:
         - $ref: '#/components/parameters/datetime'
         - $ref: '#/components/parameters/parameter-name'
         - $ref: '#/components/parameters/crs'
+        - $ref: '#/components/parameters/trailConditions'
         - $ref: '#/components/parameters/f'
       responses:
         '200':
@@ -345,6 +354,120 @@ paths:
           description: Invalid request parameters
         '404':
           description: Collection not found
+
+  /collections/{collectionId}/items:
+    get:
+      operationId: getItems
+      summary: Feature items (trails, storm events)
+      description: |
+        GeoJSON feature collections. Supported for feature-type collections:
+        `trails` (OSM trail/track/bridleway centerlines) and the storm-event collections.
+        
+        ### `trails`
+        
+        One GeoJSON `LineString` feature per OSM way. Use `bbox` for the map-viewport
+        query, or `q` to find a trail by name (`q` takes precedence over `bbox`).
+        
+        Add **`conditions=latest`** to merge each trail's most current physics-based
+        condition into `properties.conditions` (see `TrailConditions`). Features with no
+        condition data simply have no `conditions` key -- there is never a
+        `"conditions": null`.
+        
+        For a forecast time series for one trail (e.g. "firm until 10am"), use
+        `/collections/{collectionId}/items/{featureId}/conditions`.
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - name: bbox
+          in: query
+          required: false
+          description: |
+            `minLon,minLat,maxLon,maxLat` (WGS84). Omitted = the whole world (capped by `limit`).
+          schema:
+            type: string
+            example: '-105.42,39.93,-105.36,39.98'
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive name search (trails only). Takes precedence over `bbox`.
+          schema:
+            type: string
+            example: apex
+        - name: class
+          in: query
+          required: false
+          description: Filter by `feature_class` (trails only).
+          schema:
+            type: string
+            enum: [mtb_trail, hiking_trail, track, bridleway]
+        - name: limit
+          in: query
+          required: false
+          description: Maximum features returned (clamped to 1-5000 for trails).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+            default: 1000
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - $ref: '#/components/parameters/trailConditions'
+        - name: datetime
+          in: query
+          required: false
+          description: Storm-event collections only; ignored for trails.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: GeoJSON FeatureCollection
+          content:
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/TrailFeatureCollection'
+        '400':
+          description: Invalid request parameters, or the collection does not support /items
+        '404':
+          description: Collection not found
+
+  /collections/{collectionId}/items/{featureId}/conditions:
+    get:
+      operationId: getTrailConditionsTimeseries
+      summary: Forecast conditions time series for one trail
+      description: |
+        The full analysis + forecast-hour series from the most recent model run for one
+        trail, in ascending `valid_time` order -- the data behind a per-trail forecast chart.
+        
+        - **404** if `featureId` is not a known trail.
+        - **200 with an empty `conditions` array** for a known trail with no condition data
+          (e.g. outside the coverage region). This is normal, not an error.
+        
+        Only the `trails` collection supports this operation.
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - name: featureId
+          in: path
+          required: true
+          description: OSM way id (the `feature_id` / GeoJSON `id` of a trail feature).
+          schema:
+            type: integer
+            format: int64
+            example: 956937928
+      responses:
+        '200':
+          description: Condition time series
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrailConditionsTimeseries'
+        '400':
+          description: Collection is not a linear-features collection
+        '404':
+          description: Collection or trail not found
 
   /collections/{collectionId}/instances:
     get:
@@ -669,6 +792,18 @@ components:
         enum: [8, 16]
         default: 16
 
+    trailConditions:
+      name: conditions
+      in: query
+      required: false
+      description: |
+        Linear-feature (`trails`) collections only. `latest` merges each feature's most
+        current condition into `properties.conditions`. Any other value is ignored (the
+        response is geometry-only), not an error.
+      schema:
+        type: string
+        enum: [latest]
+
   schemas:
     LandingPage:
       type: object
@@ -854,3 +989,189 @@ components:
           type: array
           items:
             type: object
+
+    TrailConditions:
+      type: object
+      description: |
+        Physics-based soil-moisture advisory for one trail segment at one valid time.
+        
+        **This is an advisory physical signal, not a rideability verdict or closure
+        authority.** The downscaling physics is validated against ground-truth soil moisture
+        at independent research sites; it has not yet been validated against rider-reported
+        trail conditions.
+        
+        Present only where the model has produced a value; absent (never `null`) otherwise.
+      required: [run_time, valid_time, forecast_hour, model_version]
+      properties:
+        run_time:
+          type: string
+          format: date-time
+          description: Model initialization time (HRRR run) this value derives from.
+        valid_time:
+          type: string
+          format: date-time
+          description: |
+            The hour this value describes. With `conditions=latest` this is the most recent
+            hour at or before "now" for which a value exists (never a future forecast hour).
+        forecast_hour:
+          type: integer
+          description: Hours from `run_time` to `valid_time` (0 = analysis).
+        soil_moisture:
+          type: number
+          nullable: true
+          description: |
+            Volumetric soil moisture, m3/m3 (4 cm depth), mean over the segment's vertices.
+            Topographically downscaled from HRRR's 3 km value where `confidence` > 0.
+            Hard to interpret without the soil's porosity -- prefer `saturation` for display.
+        saturation:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+          description: |
+            Degree of saturation: `soil_moisture / theta_s`, the fraction of the soil's pore
+            space holding water (0 = dry, 1 = saturated), mean over the segment's vertices.
+            Unitless and directly color-rampable. `null` where there is no terrain/soil data
+            (outside coverage) -- no porosity is guessed.
+        frozen_fraction:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+          description: |
+            Fraction of the segment's vertices where HRRR soil temperature is at or below
+            273.15 K. A fraction, not a boolean, so a partly frozen segment stays
+            representable.
+        confidence:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+          description: |
+            Fraction of the segment's vertices that received real terrain-informed
+            downscaling. **1.0** = fully downscaled; **0.0** = raw, undownscaled 3 km HRRR
+            everywhere (outside coverage); in between = the segment straddles the coverage
+            edge. `null` = no valid model reading at all. This is a data-coverage measure,
+            not a statistical error bar.
+        model_version:
+          type: string
+          description: |
+            Version of the physics that produced the value (e.g. `trail-physics-v1`). A new
+            version means the methodology changed; do not compare values across versions.
+          example: trail-physics-v1
+
+    TrailFeature:
+      type: object
+      required: [type, id, geometry, properties]
+      properties:
+        type:
+          type: string
+          enum: [Feature]
+        id:
+          type: integer
+          format: int64
+          description: OSM way id (same as `properties.feature_id`).
+        geometry:
+          type: object
+          description: GeoJSON LineString, CRS:84 (lon, lat).
+        properties:
+          type: object
+          properties:
+            feature_id:
+              type: integer
+              format: int64
+            feature_class:
+              type: string
+              enum: [mtb_trail, hiking_trail, track, bridleway]
+            name:
+              type: string
+              nullable: true
+            system:
+              type: string
+              nullable: true
+              description: Trail-system grouping from OSM tags. Frequently null.
+            region:
+              type: string
+            active:
+              type: boolean
+            updated_at:
+              type: string
+              format: date-time
+            tags:
+              type: object
+              description: Raw OSM tags (e.g. `surface`, `mtb:scale`); not normalized.
+              additionalProperties: true
+            conditions:
+              $ref: '#/components/schemas/TrailConditions'
+
+    TrailFeatureCollection:
+      type: object
+      required: [type, features]
+      properties:
+        type:
+          type: string
+          enum: [FeatureCollection]
+        features:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrailFeature'
+        numberReturned:
+          type: integer
+        timeStamp:
+          type: string
+          format: date-time
+
+    TrailConditionsTimeseriesPoint:
+      type: object
+      description: One hour of a trail's forecast series. Same field semantics as `TrailConditions`.
+      required: [valid_time, forecast_hour, model_version]
+      properties:
+        valid_time:
+          type: string
+          format: date-time
+        forecast_hour:
+          type: integer
+        soil_moisture:
+          type: number
+          nullable: true
+        saturation:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+        frozen_fraction:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+        confidence:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+        model_version:
+          type: string
+
+    TrailConditionsTimeseries:
+      type: object
+      required: [feature_id, conditions]
+      properties:
+        feature_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          nullable: true
+        run_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Model run the whole series comes from. `null` when `conditions` is empty.
+        model_version:
+          type: string
+          nullable: true
+        conditions:
+          type: array
+          description: Ascending by `valid_time`; empty when the trail has no condition data.
+          items:
+            $ref: '#/components/schemas/TrailConditionsTimeseriesPoint'

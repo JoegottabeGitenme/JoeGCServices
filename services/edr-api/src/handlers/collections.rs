@@ -7,7 +7,7 @@ use axum::{
 };
 use edr_protocol::{
     parameters::Parameter, responses::ExceptionResponse, Collection, CollectionList,
-    CustomDimension, DataQueries, Extent, TemporalExtent, VerticalExtent,
+    ConditionsCoverage, CustomDimension, DataQueries, Extent, TemporalExtent, VerticalExtent,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -434,6 +434,17 @@ fn build_linear_feature_collection(
     let spatial_bbox = [-109.06, 36.99, -102.04, 41.00];
     let extent = Extent::with_spatial(spatial_bbox, None);
     collection = collection.with_extent(extent);
+
+    // Where the optional per-feature `conditions` data exists -- distinct
+    // from `extent` above, which is where trail GEOMETRY exists (all of
+    // Colorado). A client uses this to grey out the conditions UI for
+    // trails outside the covered region without fetching them first.
+    if let Some(coverage) = &collection_def.conditions_coverage {
+        collection = collection.with_conditions_coverage(ConditionsCoverage {
+            bbox: coverage.bbox,
+            description: coverage.description.clone(),
+        });
+    }
 
     let mut params = HashMap::new();
     for param_name in available_params {

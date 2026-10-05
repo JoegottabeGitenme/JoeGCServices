@@ -37,7 +37,9 @@ pub mod responses;
 pub mod types;
 
 // Re-export commonly used types
-pub use collections::{Collection, CollectionList, DataQueries, Instance, InstanceList};
+pub use collections::{
+    Collection, CollectionList, ConditionsCoverage, DataQueries, Instance, InstanceList,
+};
 pub use coverage_json::{
     Axis, CoverageCollection, CoverageJson, Domain, DomainType, NdArray, ReferenceSystem,
     ReferenceSystemConnection,

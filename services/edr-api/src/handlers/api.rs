@@ -48,3 +48,42 @@ pub async fn api_html_handler() -> Response {
         .body(html.into())
         .unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::OPENAPI_SPEC;
+
+    /// The served OpenAPI spec once had no mention of the trails collection
+    /// at all, even though `/items`, `conditions=latest` and the timeseries
+    /// endpoint were live. Keep the contract a frontend team reads in step
+    /// with the routes `main.rs` actually registers.
+    #[test]
+    fn spec_documents_the_trail_conditions_contract() {
+        for needle in [
+            "/collections/{collectionId}/items:",
+            "/collections/{collectionId}/items/{featureId}/conditions:",
+            "operationId: getTrailConditionsTimeseries",
+            "trailConditions:",
+            "TrailConditions:",
+            "TrailConditionsTimeseries:",
+            "saturation:",
+            "frozen_fraction:",
+            "confidence:",
+            "model_version:",
+        ] {
+            assert!(
+                OPENAPI_SPEC.contains(needle),
+                "openapi.yaml is missing `{}`",
+                needle
+            );
+        }
+    }
+
+    #[test]
+    fn spec_is_valid_yaml_with_a_paths_section() {
+        let value: serde_yaml::Value =
+            serde_yaml::from_str(OPENAPI_SPEC).expect("openapi.yaml must parse");
+        assert!(value.get("paths").is_some());
+        assert!(value.get("components").is_some());
+    }
+}
