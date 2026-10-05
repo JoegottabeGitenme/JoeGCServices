@@ -293,6 +293,16 @@ def upsert_segment_conditions(conn, rows: list[dict]) -> int:
     every other upsert in this codebase's pattern (linear_features,
     trail_reports) -- a re-run of the same cycle overwrites rather than
     duplicates.
+
+    **Only an equal-or-newer model run may overwrite** (`WHERE
+    segment_conditions.run_time <= EXCLUDED.run_time`, Session 14). Several
+    runs predict the same valid hour (run 18z's fh 3 and run 19z's fh 2 are
+    the same clock time), and the unique key means they share one row --
+    the freshest forecast should win. Without the guard, whichever run is
+    *processed last* wins, and a late-arriving hour of an OLDER run (HRRR
+    hours trickle in over a run's ingest) would silently replace a fresher
+    run's value with a staler one. Equal run_time still updates, so
+    re-processing the same run stays idempotent.
     """
     count = 0
     with conn.cursor() as cur:
@@ -321,6 +331,7 @@ def upsert_segment_conditions(conn, rows: list[dict]) -> int:
                     confidence = EXCLUDED.confidence,
                     raw = EXCLUDED.raw,
                     ingested_at = NOW()
+                WHERE segment_conditions.run_time <= EXCLUDED.run_time
                 """,
                 {
                     "model_version": "trail-physics-v0",

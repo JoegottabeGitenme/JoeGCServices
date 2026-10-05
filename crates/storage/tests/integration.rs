@@ -630,3 +630,107 @@ async fn test_segment_conditions_latest_for_features_batch_applies_same_semantic
     assert_eq!(results[0].feature_id, feature_a);
     assert_eq!(results[0].soil_moisture, Some(0.33));
 }
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_segment_conditions_timeseries_is_one_row_per_hour_newest_run_wins() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = connected_catalog(&infra).await;
+    let pool = catalog.pool_clone();
+    let feature_id: i64 = 999_020;
+    let now = Utc::now();
+    let hour = |h: i64| now + Duration::hours(h);
+
+    // Same valid hour (now+2h), two model versions with DIFFERENT run
+    // times -- the only way two rows can share a valid_time under the
+    // table's UNIQUE(feature_id, valid_time, model_version). The series must
+    // keep exactly one, from the newer run.
+    insert_condition_row(
+        &pool,
+        feature_id,
+        hour(-5),
+        hour(2),
+        0.11,
+        "trail-physics-v1",
+    )
+    .await;
+    insert_condition_row(
+        &pool,
+        feature_id,
+        hour(-1),
+        hour(2),
+        0.22,
+        "trail-physics-v2",
+    )
+    .await;
+    // An hour only the older run reaches must still appear (stable horizon).
+    insert_condition_row(
+        &pool,
+        feature_id,
+        hour(-5),
+        hour(30),
+        0.33,
+        "trail-physics-v1",
+    )
+    .await;
+    // A different feature must never leak in.
+    insert_condition_row(
+        &pool,
+        feature_id + 1,
+        hour(-1),
+        hour(2),
+        0.99,
+        "trail-physics-v1",
+    )
+    .await;
+
+    let series = SegmentConditionsCatalog::new(pool)
+        .get_timeseries_for_feature(feature_id)
+        .await
+        .expect("query failed");
+
+    assert_eq!(series.len(), 2);
+    assert!(series.iter().all(|c| c.feature_id == feature_id));
+    assert!(
+        series[0].valid_time < series[1].valid_time,
+        "ascending valid_time"
+    );
+    assert_eq!(series[0].soil_moisture, Some(0.22)); // newer run wins the shared hour
+    assert_eq!(series[1].soil_moisture, Some(0.33)); // horizon extends to the older run's last hour
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_segment_conditions_timeseries_excludes_history_older_than_the_window() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = connected_catalog(&infra).await;
+    let pool = catalog.pool_clone();
+    let feature_id: i64 = 999_021;
+    let now = Utc::now();
+
+    insert_condition_row(
+        &pool,
+        feature_id,
+        now - Duration::hours(40),
+        now - Duration::hours(30),
+        0.10,
+        "trail-physics-v1",
+    )
+    .await;
+    insert_condition_row(
+        &pool,
+        feature_id,
+        now - Duration::hours(3),
+        now - Duration::hours(2),
+        0.20,
+        "trail-physics-v1",
+    )
+    .await;
+
+    let series = SegmentConditionsCatalog::new(pool)
+        .get_timeseries_for_feature(feature_id)
+        .await
+        .expect("query failed");
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0].soil_moisture, Some(0.20));
+}

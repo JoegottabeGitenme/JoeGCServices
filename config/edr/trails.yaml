@@ -43,11 +43,14 @@
 # All three accept `&conditions=latest` to merge in trail-physics' single
 # most-current reading.
 #
-# - /collections/trails/items/{feature_id}/conditions - the FULL forecast
-#   timeseries (analysis + every forecast hour) from trail-physics' most
-#   recent run for one trail, plain JSON (not GeoJSON -- no geometry).
-#   404 if feature_id isn't a known trail; a known trail with no coverage
-#   yet returns 200 with an empty `conditions` array, not an error.
+# - /collections/trails/items/{feature_id}/conditions - the best-available
+#   hourly series for one trail: from a few hours ago through the end of the
+#   forecast horizon, ONE point per hour taken from the newest model run
+#   that has it (so it's stitched across runs; each point carries its own
+#   run_time). Plain JSON (not GeoJSON -- no geometry). A stable horizon, not
+#   "whatever the latest run happens to cover". 404 if feature_id isn't a
+#   known trail; a known trail with no coverage yet returns 200 with an
+#   empty `conditions` array, not an error.
 #
 # Trailheads (point locations, not linear features) are served separately
 # through the shared `locations` collection with `location_type=trailhead`

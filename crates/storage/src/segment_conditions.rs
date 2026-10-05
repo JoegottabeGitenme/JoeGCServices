@@ -13,6 +13,11 @@ use sqlx::PgPool;
 
 use wms_common::{WmsError, WmsResult};
 
+/// How many hours of recent past `get_timeseries_for_feature` includes
+/// before "now". Enough context for a chart to show the recent trend
+/// without shipping days of history.
+pub const TIMESERIES_HISTORY_HOURS: i32 = 6;
+
 /// A single segment's condition at one valid time.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct SegmentCondition {
@@ -109,30 +114,41 @@ impl SegmentConditionsCatalog {
         })
     }
 
-    /// Full timeseries (analysis + forecast hours) for one feature from the
-    /// most recent model run -- the per-segment detail-view query.
+    /// Best-available time series for one feature: for every `valid_time`
+    /// from `HISTORY_HOURS` ago onward, the value from the **newest model
+    /// run that has one** -- the per-hour freshest estimate, stitched across
+    /// runs. The per-trail forecast-chart query.
+    ///
+    /// **Why not "all rows of the latest run"** (this method's first
+    /// version, Session 14): the horizon then depends on which run happens
+    /// to be newest *at that moment*. Measured on production: recent runs
+    /// hold 5-41 forecast hours (the newest run is partial while it ingests;
+    /// hourly HRRR runs are shorter than the 6-hourly synoptic ones), so a
+    /// "firm until 10am" chart would have a 5-hour horizon one minute and
+    /// 18 the next. Stitching by valid_time gives a stable horizon (the
+    /// furthest hour ANY recent run reaches) and the freshest value for
+    /// each hour. Each point carries its own `run_time`.
+    ///
+    /// Includes a few hours of recent past so a chart can show "what
+    /// happened" as well as "what's coming".
     pub async fn get_timeseries_for_feature(
         &self,
         feature_id: i64,
     ) -> WmsResult<Vec<SegmentCondition>> {
         sqlx::query_as::<_, SegmentCondition>(
             r#"
-            WITH latest_run AS (
-                SELECT run_time FROM segment_conditions
-                WHERE feature_id = $1
-                ORDER BY run_time DESC
-                LIMIT 1
-            )
-            SELECT feature_id, run_time, valid_time, forecast_hour,
+            SELECT DISTINCT ON (valid_time)
+                   feature_id, run_time, valid_time, forecast_hour,
                    soil_moisture, saturation, frozen_fraction, frost_depth_m, swe_mm,
                    softness_index, confidence, model_version
             FROM segment_conditions
             WHERE feature_id = $1
-              AND run_time = (SELECT run_time FROM latest_run)
-            ORDER BY valid_time ASC
+              AND valid_time >= NOW() - make_interval(hours => $2)
+            ORDER BY valid_time ASC, run_time DESC
             "#,
         )
         .bind(feature_id)
+        .bind(TIMESERIES_HISTORY_HOURS)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {

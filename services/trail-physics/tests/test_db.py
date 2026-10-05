@@ -155,6 +155,15 @@ class TestUpsertSegmentConditionsSaturation:
         _, params = self._run(self._row(saturation=0.5))
         assert params["saturation"] == 0.5
 
+    def test_only_an_equal_or_newer_run_may_overwrite_an_existing_row(self):
+        """The freshest model run must win a shared (feature, valid_time)
+        row regardless of PROCESSING order -- see upsert_segment_conditions'
+        docstring for the late-arriving-older-run race this guards."""
+        sql, _ = self._run(self._row(saturation=0.5))
+        assert "WHERE segment_conditions.run_time <= EXCLUDED.run_time" in sql
+        # ...and the guard belongs to the DO UPDATE branch, not the INSERT.
+        assert sql.index("DO UPDATE SET") < sql.index("WHERE segment_conditions.run_time")
+
     def test_row_without_saturation_key_defaults_to_null_not_a_keyerror(self):
         _, params = self._run(self._row())
         assert params["saturation"] is None

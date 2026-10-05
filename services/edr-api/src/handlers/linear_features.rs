@@ -241,10 +241,12 @@ pub async fn trail_items_handler(
     )
 }
 
-/// Per-feature forecast timeseries: the full analysis + forecast-hour
-/// series from trail-physics' most recent run for one trail, e.g. the data
-/// a "firm until 10am" chart on a trail detail page needs -- not exposed by
-/// `?conditions=latest`, which only ever returns a single row.
+/// Per-feature best-available time series: for each valid hour (from a few
+/// hours ago onward) the value from the NEWEST model run that has one --
+/// e.g. the data a "firm until 10am" chart on a trail detail page needs.
+/// Not exposed by `?conditions=latest`, which only ever returns one row.
+/// See `SegmentConditionsCatalog::get_timeseries_for_feature` for why this
+/// is stitched across runs rather than "all rows of the latest run".
 ///
 /// `GET /edr/collections/:collection_id/items/:feature_id/conditions`
 ///
@@ -295,14 +297,20 @@ fn timeseries_to_json(
     feature_id: i64,
     rows: &[SegmentCondition],
 ) -> Value {
-    let run_time = rows.first().map(|r| r.run_time.to_rfc3339());
-    let model_version = rows.first().map(|r| r.model_version.clone());
+    // The series is stitched across model runs (newest run per valid_time),
+    // so there is no single run it "comes from": top-level `run_time` /
+    // `model_version` describe the NEWEST run contributing to it, and every
+    // point carries its own `run_time`.
+    let newest = rows.iter().max_by_key(|r| r.run_time);
+    let run_time = newest.map(|r| r.run_time.to_rfc3339());
+    let model_version = newest.map(|r| r.model_version.clone());
     let conditions: Vec<Value> = rows
         .iter()
         .map(|c| {
             json!({
                 "valid_time": c.valid_time.to_rfc3339(),
                 "forecast_hour": c.forecast_hour,
+                "run_time": c.run_time.to_rfc3339(),
                 "soil_moisture": c.soil_moisture,
                 "saturation": c.saturation,
                 "frozen_fraction": c.frozen_fraction,
@@ -841,6 +849,40 @@ mod tests {
                 .get(axum::http::header::CACHE_CONTROL)
                 .unwrap(),
             "max-age=3600"
+        );
+    }
+
+    #[test]
+    fn timeseries_stitched_across_runs_reports_each_points_own_run_and_newest_overall() {
+        // The series takes each hour from the newest run that has it, so
+        // points come from DIFFERENT runs: each must carry its own run_time,
+        // and the top-level run_time/model_version describe the newest.
+        let feature = sample_feature(11);
+        let mut older = sample_condition_at(11, 5, 12, 0.10);
+        older.run_time = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
+        older.model_version = "trail-physics-v1".to_string();
+        let mut newer = sample_condition_at(11, 1, 1, 0.30);
+        newer.run_time = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
+        newer.model_version = "trail-physics-v2".to_string();
+
+        // Returned in valid_time order (newer run's hour comes first here).
+        let result = timeseries_to_json(&feature, 11, &[newer, older]);
+        assert_eq!(result["run_time"], json!("2026-01-15T12:00:00+00:00"));
+        assert_eq!(result["model_version"], json!("trail-physics-v2"));
+        let points = result["conditions"].as_array().unwrap();
+        assert_eq!(points[0]["run_time"], json!("2026-01-15T12:00:00+00:00"));
+        assert_eq!(points[1]["run_time"], json!("2026-01-15T00:00:00+00:00"));
+        assert_eq!(points[0]["model_version"], json!("trail-physics-v2"));
+        assert_eq!(points[1]["model_version"], json!("trail-physics-v1"));
+    }
+
+    #[test]
+    fn timeseries_points_always_include_run_time() {
+        let feature = sample_feature(12);
+        let result = timeseries_to_json(&feature, 12, &[sample_condition_at(12, 0, 0, 0.2)]);
+        assert_eq!(
+            result["conditions"][0]["run_time"],
+            json!("2026-01-15T12:00:00+00:00")
         );
     }
 }

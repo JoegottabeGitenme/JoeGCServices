@@ -439,8 +439,18 @@ paths:
       operationId: getTrailConditionsTimeseries
       summary: Forecast conditions time series for one trail
       description: |
-        The full analysis + forecast-hour series from the most recent model run for one
-        trail, in ascending `valid_time` order -- the data behind a per-trail forecast chart.
+        The best-available hourly series for one trail, in ascending `valid_time` order --
+        the data behind a per-trail forecast chart. Covers from a few hours ago (recent
+        past, for context) through the end of the forecast horizon.
+        
+        **One point per hour, each from the newest model run that has a value for that hour**
+        (so the series is stitched across runs, and each point carries its own `run_time`).
+        The horizon is therefore stable -- it does not shrink and grow depending on which run
+        happens to have just finished ingesting. Read the horizon from the response (it is
+        the last `valid_time`), do not assume a fixed number of hours.
+        
+        To find "now" in the series, use `valid_time`; `forecast_hour` is relative to each
+        point's own `run_time`.
         
         - **404** if `featureId` is not a known trail.
         - **200 with an empty `conditions` array** for a known trail with no condition data
@@ -1124,13 +1134,18 @@ components:
     TrailConditionsTimeseriesPoint:
       type: object
       description: One hour of a trail's forecast series. Same field semantics as `TrailConditions`.
-      required: [valid_time, forecast_hour, model_version]
+      required: [valid_time, forecast_hour, run_time, model_version]
       properties:
         valid_time:
           type: string
           format: date-time
         forecast_hour:
           type: integer
+          description: Hours from this point's own `run_time` to its `valid_time`.
+        run_time:
+          type: string
+          format: date-time
+          description: The model run THIS point comes from (newest run with a value for this hour).
         soil_moisture:
           type: number
           nullable: true
@@ -1166,10 +1181,13 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: Model run the whole series comes from. `null` when `conditions` is empty.
+          description: |
+            The NEWEST model run contributing to the series (the series is stitched across
+            runs; each point has its own `run_time`). `null` when `conditions` is empty.
         model_version:
           type: string
           nullable: true
+          description: Version of the newest contributing run; each point carries its own.
         conditions:
           type: array
           description: Ascending by `valid_time`; empty when the trail has no condition data.
