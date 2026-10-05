@@ -7,6 +7,7 @@ pub mod astro;
 pub mod availability;
 pub mod config;
 pub mod content_negotiation;
+pub mod freshness;
 pub mod handlers;
 pub mod limits;
 pub mod location_cache;

@@ -1,140 +1,246 @@
-# Trail Conditions — Frontend Handoff (Session 1: ingredients + geometry)
+# Trail Conditions API — Frontend Handoff
 
-All endpoints live at `https://folkweather.com/edr`. See
-`docs/trail-conditions-design.md` for the full design and what's deferred.
+Everything here is served from `https://folkweather.com/edr` (CORS is open to
+any origin, including preflight). The machine-readable contract is the
+OpenAPI spec at `https://folkweather.com/edr/api` — this document is the
+human guide: what the numbers mean, what they don't, and how to build on them.
 
-**Important framing for the UI:** nothing shipped this session computes or
-judges rideability. This is geometry + raw weather ingredients. The app is
-expected to combine them (query the grid along the trail's own geometry,
-apply your own thresholds/coloring) until a validated server-side condition
-parameter exists — see the design doc's validation section for why that's a
-deliberate sequencing choice, not a missing feature.
+For the physics and validation behind the numbers, see
+`docs/trail-conditions-design.md` and the public explainer at `/science.html`.
 
-## 1. Trail geometry — `trails` collection
+## 1. What you get
 
-One feature per OSM way (not merged per trail system) — so a rider can see
-one part of a trail rideable and another not, once your app layers condition
-data on top.
+For each trail segment (one OpenStreetMap way) in the covered region, an
+**hourly, terrain-aware soil-moisture estimate** and a frozen-ground signal,
+available as:
 
+- **current conditions** merged into any trail query (`?conditions=latest`), and
+- a **per-trail hourly series** — recent past plus the forecast — for charts.
+
+Coarse weather-model soil moisture (HRRR, ~3 km) can't tell a creek-bottom
+trail from a ridge trail 500 m away. We downscale it with 10 m terrain and
+soil data, so the wet drainage and the dry ridge get different values.
+
+### What this is **not** — read before designing the UI
+
+- **Not a rideability verdict.** There is no "good / marginal / closed" field,
+  deliberately. Soil moisture and ground state are physical *inputs* to a
+  judgment about a trail, not the judgment. A trail can be dry and still be
+  closed (wildlife, fire, ownership); a wet one may ride fine (rock, sand).
+- **Not an observation.** These are modeled values (a weather-model nowcast),
+  not sensor readings at the trail.
+- **Validated for the physics, not yet for rider outcomes.** The downscaling
+  is validated against real ground-truth soil moisture at independent
+  research sites; it has **not** been checked against rider-reported trail
+  conditions. Label it an advisory estimate in your UI.
+- **Surface matters and is not modeled.** Sand, rock and hardpack respond to
+  moisture very differently from clay. We give you soil *wetness*, not a
+  trail-surface response.
+
+## 2. Quick start
+
+```bash
+# 1. Trails in a map viewport, with current conditions
+curl 'https://folkweather.com/edr/collections/trails/items?bbox=-105.42,39.93,-105.36,39.98&conditions=latest&limit=200'
+
+# 2. Find a trail by name
+curl 'https://folkweather.com/edr/collections/trails/items?q=forsythe&conditions=latest'
+
+# 3. Forecast series for one trail (feature_id from the responses above)
+curl 'https://folkweather.com/edr/collections/trails/items/956937928/conditions'
+
+# 4. Where do conditions exist at all?  (see "Coverage")
+curl 'https://folkweather.com/edr/collections/trails' | jq .conditions_coverage
 ```
-GET /edr/collections/trails/items?bbox=-105.3,39.6,-105.1,39.8
-GET /edr/collections/trails/items?q=apex
-GET /edr/collections/trails/items?q=apex&class=mtb_trail
-GET /edr/collections/trails/area?coords=-105.3,39.6,-105.1,39.8
-GET /edr/collections/trails/radius?coords=POINT(-105.2 39.7)&within=5&within-units=km
-```
 
-Response is a standard GeoJSON `FeatureCollection` of `LineString` features:
-
-```json
-{
-  "type": "Feature",
-  "id": 123456789,
-  "geometry": { "type": "LineString", "coordinates": [[-105.21, 39.73], ...] },
-  "properties": {
-    "feature_id": 123456789,
-    "feature_class": "mtb_trail",
-    "name": "Enchanted Forest",
-    "system": null,
-    "region": "colorado",
-    "active": true,
-    "updated_at": "2026-09-20T04:12:33Z",
-    "tags": { "highway": "path", "surface": "dirt", "mtb:scale": "2", "...": "..." }
-  }
+```js
+const res = await fetch(
+  "https://folkweather.com/edr/collections/trails/items" +
+  `?bbox=${west},${south},${east},${north}&conditions=latest&limit=1000`
+);
+const { features } = await res.json();          // GeoJSON FeatureCollection
+for (const f of features) {
+  const c = f.properties.conditions;            // may be absent -- see below
+  const color = c?.saturation != null ? ramp(c.saturation) : GREY;
 }
 ```
 
-- **`feature_class`**: `mtb_trail` | `hiking_trail` | `track` | `bridleway` — derived from OSM tags (see design doc for the exact rule). Not user-curated; expect occasional misclassification on ambiguous OSM tagging.
-- **`system`**: usually `null`. OSM doesn't reliably tag trail-system grouping at the way level; don't build UI that depends on it being populated.
-- **`active`**: `false` means the way was missing from the most recent weekly sync (deleted/retagged/redrawn upstream). Not currently filterable out of `bbox`/`radius`/`area` results — **only `?q=` and `bbox` items queries currently return active-only** (bbox/area/radius all filter `active=true` server-side already; this note is just to flag that the field exists in properties for your own use, e.g. graying out a feature that just went inactive rather than having it vanish instantly).
-- **`?q=`** does substring/prefix name search (same normalization as city search — accent/punctuation-insensitive), ranked exact > prefix > substring. Takes precedence over `bbox` when both are given.
-- **No `datetime`, no temporal extent** — trails aren't time-series data.
-- **Limits**: default 1000 features per response, max 5000. Bump `?limit=` if a bbox query gets truncated.
-- **No `/locations` endpoint on this collection** (a pre-existing EDR-API limitation, not new to trails — storm events have the same gap despite documenting `/locations` in their config comments). Use `/items` for everything.
+## 3. Endpoints
 
-## 2. Trailheads — the shared `locations` registry
+| Request | Returns |
+|---|---|
+| `GET /collections/trails/items?bbox=…` | Trails in a viewport (GeoJSON `LineString` features) |
+| `GET /collections/trails/items?q=<name>` | Name search; takes precedence over `bbox` |
+| `GET /collections/trails/area?coords=minLon,minLat,maxLon,maxLat` | Same as bbox, EDR style |
+| `GET /collections/trails/radius?coords=POINT(lon lat)&within=5&within-units=km` | Trails near a point |
+| `GET /collections/trails/items/{feature_id}/conditions` | Hourly series for one trail (plain JSON) |
+| `GET /collections/trails` | Collection metadata incl. `conditions_coverage` |
 
-Trailheads are points, stored alongside populated places/ZIPs/airports in the
-same registry, with `location_type=trailhead` and id `TH<osm_node_id>`.
+All three list endpoints accept `&conditions=latest`. Other `items` params:
+`class=mtb_trail\|hiking_trail\|track\|bridleway`, `limit` (default 1000, max
+5000), `offset`.
 
-```
-GET /edr/locations                              # includes trailheads, unfiltered listing
-GET /edr/locations/TH123456?collections=hrrr-soil,hrrr-snow   # forecast proxy
-```
+## 4. The `conditions` block
 
-- **Name search (`?q=`) is NOT wired for trailheads** in this session — only
-  the unfiltered listing and direct-by-id lookup work. If you need "type a
-  trailhead name, get a match," that's a small fast-follow (see design doc's
-  "Known gaps"), not yet built. For now, get trailhead ids from a `trails`
-  bbox query area you already know, or from the unfiltered `/edr/locations`
-  list client-side.
-- The `/edr/locations/{id}?collections=...` forecast-proxy works exactly
-  like it does for any other location type (airports, cities) — no code
-  change was needed, it's generic. Pass whatever `hrrr-*` collections you want.
+With `?conditions=latest`, each feature that has data gets
+`properties.conditions`:
 
-## 3. Weather ingredients — `hrrr-soil` and `hrrr-snow`
-
-**All values are native SI units — convert client-side** (same house rule as every other collection in this API).
-
-### `hrrr-soil` (extended this session)
-
-| Parameter | Units | Levels (`z`, cm below ground) |
-|---|---|---|
-| `TSOIL` (soil temperature) | Kelvin | 0, 4, 10, 30, 100 |
-| `SOILW` (volumetric soil moisture) | fraction 0–1 | 0, 1, 4, 10, 30 |
-
-Note the two parameters have **different depth sets** — don't assume `z=100`
-works for `SOILW` (it doesn't; max is 30 for that parameter).
-
-**Frozen-state proxy** (soil ice fraction isn't available from HRRR — see
-design doc): treat `TSOIL <= 273.15` (0°C) at the shallow depths (`z=0` or
-`z=4`) as frozen. This is what a future server-side condition class will
-also be built on, so it's a reasonable client-side approximation today.
-
-```
-GET /edr/collections/hrrr-soil/position?coords=POINT(-105.2 39.7)&parameter-name=SOILW&z=4
-GET /edr/collections/hrrr-soil/position?coords=POINT(-105.2 39.7)&parameter-name=TSOIL&z=4&datetime=2026-09-22T00Z/2026-09-24T00Z
+```json
+"conditions": {
+  "run_time":        "2026-10-05T19:00:00+00:00",
+  "valid_time":      "2026-10-05T21:00:00+00:00",
+  "forecast_hour":   2,
+  "soil_moisture":   0.184,
+  "saturation":      0.42,
+  "frozen_fraction": 0.0,
+  "confidence":      1.0,
+  "model_version":   "trail-physics-v1"
+}
 ```
 
-### `hrrr-snow` (new this session)
+| Field | Meaning |
+|---|---|
+| `saturation` | **Use this for display.** 0–1: the fraction of the soil's pore space holding water (0 dry → 1 saturated). Unitless, so a color ramp on it means the same thing in sandy and clay soils. `null` where there is no terrain/soil data (no porosity is guessed). |
+| `soil_moisture` | Volumetric soil moisture, m³/m³, ~4 cm depth. Physically meaningful but hard to read without the soil's porosity (0.20 is nearly saturated in one soil, bone dry in another). Provided for analysis, not for coloring. |
+| `frozen_fraction` | 0–1: fraction of the segment's vertices where soil temperature is ≤ 273.15 K (0 °C). A *fraction*, not a boolean, so a partly frozen segment (shaded north side) stays representable. |
+| `confidence` | 0–1: the fraction of the segment's vertices that received real terrain-informed downscaling. **1.0** = fully downscaled. **0.0** = raw 3 km model value, no terrain applied. Between = the segment straddles the edge of coverage. This is a *data-coverage* measure, not a statistical error bar — it does not say how accurate the number is. |
+| `valid_time` | The hour the values describe. For `latest`, the most recent hour at or before now that has data — never a future forecast hour. |
+| `run_time`, `forecast_hour` | The model run (HRRR initialization) the value came from, and hours from it. Mostly useful for showing "as of". |
+| `model_version` | Version of the physics. A new version means the methodology changed: **do not compare values across versions**, and don't cache across them. |
 
-| Parameter | Units | Notes |
-|---|---|---|
-| `WEASD` | kg/m² | Numerically equals mm of snow water equivalent |
-| `SNOD` | m | Snow depth |
-| `PRATE` | kg/m²/s | Numerically equals mm/s; multiply by 3600 for mm/hr |
-| `CRAIN` | 0 or 1 | Categorical rain flag |
-| `CSNOW` | 0 or 1 | Categorical snow flag |
-| `CFRZR` | 0 or 1 | Categorical freezing rain flag |
-| `CICEP` | 0 or 1 | Categorical ice pellets flag |
-| `DLWRF` | W/m² | Downward longwave radiation (already had `DSWRF` on `hrrr-surface`) |
+**Absent vs. null.** `conditions` is *absent* (never `null`) on trails with no
+data. Within it, `saturation`/`soil_moisture`/etc. can be `null` when
+unavailable. Always check both.
 
-All at `surface` level (no `z` param needed — omit it).
+## 5. Coverage
+
+Conditions currently exist for the **Front Range foothills** only (Fort
+Collins to Colorado Springs, plains edge up through the foothills). Trails
+elsewhere in Colorado have geometry but no `conditions`.
+
+`GET /collections/trails` returns `conditions_coverage.bbox`
+(`[minLon, minLat, maxLon, maxLat]`) — use it to hide or grey out the
+conditions UI for out-of-region viewports **without fetching them first**.
+
+It is deliberately a *rectangle* and is wider than the region's real edge (the
+underlying grid is rotated, so its corners have no terrain data). **The
+authoritative per-trail signal is the data itself**: no `conditions` block, or
+`confidence: 0`, means "no terrain-informed estimate here." Treat
+`confidence < 1` as "partial — show it differently, don't hide it."
+
+Coverage will grow. Build against the field, not a hard-coded box.
+
+## 6. Freshness and caching
+
+- The model updates **hourly**; the service picks up each new forecast hour
+  within about a minute of it landing.
+- `latest` is a *model nowcast for the current hour*, so `valid_time` is
+  normally within the last hour or so. If the upstream feed stalls it will
+  fall behind — show `valid_time`, and treat a `valid_time` more than ~3 hours
+  old as stale.
+- Responses with `conditions` are cacheable for **5 minutes**
+  (`Cache-Control: max-age=300`); geometry-only responses for 1 hour (trail
+  geometry changes weekly). Don't cache conditions longer than that.
+
+## 7. The per-trail series
+
+`GET /collections/trails/items/{feature_id}/conditions`
+
+```json
+{
+  "feature_id": 956937928,
+  "name": "Forsythe Canyon Trail",
+  "run_time": "2026-10-05T19:00:00+00:00",
+  "model_version": "trail-physics-v1",
+  "conditions": [
+    { "valid_time": "2026-10-05T17:00:00+00:00", "forecast_hour": 3,
+      "run_time": "2026-10-05T14:00:00+00:00",
+      "soil_moisture": 0.176, "saturation": 0.40, "frozen_fraction": 0.0,
+      "confidence": 1.0, "model_version": "trail-physics-v1" },
+    "…"
+  ]
+}
+```
+
+- **One point per hour**, ascending `valid_time`, from a few hours ago through
+  the end of the forecast horizon. Each point is taken from the **newest
+  model run that has a value for that hour** — so the series is stitched
+  across runs and each point carries its own `run_time`.
+- **The horizon is whatever the data reaches** — read the last `valid_time`;
+  don't assume a fixed number of hours. (Typically about a day, more when the
+  longer 6-hourly model runs are available.)
+- To mark "now" on a chart, use `valid_time`, not `forecast_hour` (which is
+  relative to each point's own run).
+- Unknown `feature_id` → **404**. A known trail with no data (outside
+  coverage) → **200 with `"conditions": []`**. Handle both.
+
+## 8. Suggested UI patterns
+
+- **Color trails by `saturation`** with a sequential ramp (dry → wet). Pick
+  your own thresholds and **say they're yours** ("wetter than ~60%"), since the
+  API intentionally supplies none.
+- **Overlay frozen ground** when `frozen_fraction > 0` (hatching or an icon).
+  Frozen-and-firm and thawed-and-soft are very different trail states that the
+  same saturation can hide — it's why this is a separate field.
+- **De-emphasize low `confidence`** (dashed or translucent line), don't hide it.
+- **No `conditions` → neutral grey**, labeled "no conditions data here."
+- **Show "as of `valid_time`"** and the advisory caveat from §1 near the legend.
+- **Gate by zoom.** A bbox query for 5000 trails with geometry and conditions is
+  a large payload. Fetch conditions at viewport zoom levels where individual
+  trails are legible; use the series endpoint only on a selected trail.
+
+## 9. Operational notes
+
+- **Errors** are JSON exception bodies with standard HTTP codes: `400` bad
+  params, `404` unknown collection/trail, `500` server error.
+- **Paging:** `limit` + `offset` on `items`. Bbox results are not guaranteed to
+  be spatially sorted.
+- **Stability:** new fields may be added to `conditions` at any time — ignore
+  fields you don't know. Existing fields won't change meaning without a new
+  `model_version`.
+- **No auth, no key**, currently no published rate limit — be reasonable, and
+  tell us before building something that polls aggressively.
+
+## 10. Trail metadata and its gaps
+
+Each feature also carries OSM-derived properties: `feature_id`, `feature_class`
+(`mtb_trail` \| `hiking_trail` \| `track` \| `bridleway`), `name`, `system`,
+`region`, `active`, `updated_at`, and raw OSM `tags`.
+
+- `feature_class` is derived from OSM tags; expect occasional misclassification
+  on ambiguous tagging.
+- `system` (trail-system grouping) is usually `null` — OSM doesn't reliably tag
+  it per way. Don't depend on it.
+- **Surface, difficulty and length are not parsed or normalized.** If OSM has
+  them they are inside the raw `tags` (`surface`, `mtb:scale`, …); we don't
+  clean or compute them.
+- One feature per OSM way, **not merged per named trail** — a long trail is
+  many features. This is intentional (part of a trail can be wet while another
+  part is dry), but a "trail" in your UI is probably a group of features you'll
+  need to assemble by `name`.
+- `active: false` means the way vanished from the latest weekly OSM sync.
+
+## 11. Raw weather ingredients (optional)
+
+If you want to build your own logic instead of (or beside) the trail
+conditions, the underlying HRRR fields are queryable at any point:
 
 ```
-GET /edr/collections/hrrr-snow/position?coords=POINT(-105.2 39.7)&parameter-name=SNOD
-GET /edr/collections/hrrr-snow/position?coords=POINT(-105.2 39.7)&parameter-name=PRATE&datetime=2026-09-22T00Z/2026-09-24T00Z
+GET /collections/hrrr-soil/position?coords=POINT(-105.2 39.7)&parameter-name=SOILW&z=4
+GET /collections/hrrr-soil/position?coords=POINT(-105.2 39.7)&parameter-name=TSOIL&z=4
+GET /collections/hrrr-snow/position?coords=POINT(-105.2 39.7)&parameter-name=SNOD
 ```
 
-- **Horizon**: 48h forecast, hourly, same cadence/query contract as `hrrr-surface`/`hrrr-soil`.
-- The precip-type flags are mutually exclusive per HRRR's own diagnostic scheme — you generally only need to check which one is `1`.
+All values are native SI units (`TSOIL` Kelvin, `SOILW` fraction 0–1, `SNOD`
+metres, `WEASD` kg/m² ≈ mm SWE, `PRATE` kg/m²/s). These are the **raw 3 km**
+values — the trail `conditions` above are these, downscaled with terrain.
 
-## 4. Recommended app pattern: color a trail by querying along its geometry
+## 12. Not available yet (don't build against it)
 
-Since there's no per-segment precompute yet, the intended pattern is:
-
-1. `GET /edr/collections/trails/items?bbox=<viewport>` → get LineString features in view.
-2. For each feature (or a sampled midpoint if you want to batch fewer requests — HRRR is 3km native, so adjacent points on the same way will usually return identical values anyway), query `hrrr-soil`/`hrrr-snow` at that point.
-3. Apply your own thresholds (e.g. `TSOIL < 273.15` → frozen, `SOILW > X` → wet) and color the LineString accordingly.
-
-This is explicitly how the design intends v1 to work — see
-`docs/trail-conditions-design.md`'s "Scope corrections" section for why
-server-side per-segment precompute was deliberately deferred rather than
-missed.
-
-## 5. What's coming later (not yet available, don't build against it)
-
-- Any `condition_class`, `softness_index`, `firm_until`/`firm_from` parameter — gated on physics validation (design doc §8).
-- Trail-system grouping (multiple ways under one named system).
-- Trailhead name search.
-- Any statewide precomputed condition grid.
+- A rideability / condition class, or "firm until X" times — gated on
+  validation against rider reports.
+- Snow depth/cover per trail (the raw `hrrr-snow` fields exist; a per-trail
+  product does not).
+- Coverage beyond the Front Range foothills.
+- Trailhead *name search* (trailheads exist as `location_type=trailhead` in
+  `/edr/locations`, but `?q=` isn't wired for them).

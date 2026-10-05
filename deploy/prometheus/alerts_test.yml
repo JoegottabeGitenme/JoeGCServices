@@ -1,0 +1,102 @@
+# Unit tests for alerts.yml -- run with:
+#   docker run --rm -v "$PWD:/r" --entrypoint promtool prom/prometheus test rules /r/alerts_test.yml
+# Proves the rules fire when they should AND stay quiet when they shouldn't.
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Healthy: the newest hour runs a steady 1h behind the clock and advances in
+  # real time (+60s of timestamp per 60s of wall clock) -> age is a constant 1h,
+  # well under the 3h threshold -> nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'trail_conditions_latest_valid_timestamp_seconds'
+        values: '-3600+60x300'
+      - series: 'trail_physics_last_processed_timestamp_seconds'
+        values: '-600+60x300'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: TrailConditionsStale
+        exp_alerts: []
+      - eval_time: 200m
+        alertname: TrailPhysicsWorkerSilent
+        exp_alerts: []
+      - eval_time: 200m
+        alertname: TrailConditionsMetricMissing
+        exp_alerts: []
+
+  # Stalled: the timestamp stops advancing (value constant at 0 = "stale since the
+  # epoch" relative to the eval clock). After the 3h threshold + 15m 'for', it must fire.
+  - interval: 1m
+    input_series:
+      - series: 'trail_conditions_latest_valid_timestamp_seconds'
+        values: '0x400'
+      - series: 'trail_physics_last_processed_timestamp_seconds'
+        values: '0x400'
+    alert_rule_test:
+      # 2h in: 2h old < 3h threshold -> not yet
+      - eval_time: 120m
+        alertname: TrailConditionsStale
+        exp_alerts: []
+      # 3h10m: past the threshold but inside the 15m 'for' -> still pending, not firing
+      - eval_time: 190m
+        alertname: TrailConditionsStale
+        exp_alerts: []
+      # 3h20m: threshold + for satisfied -> FIRING
+      - eval_time: 200m
+        alertname: TrailConditionsStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Trail conditions are stale"
+              description: "The newest trail-conditions hour (what ?conditions=latest reports) is 3h 20m 0s old. Normally it is within about an hour. Check the trail-physics worker and the HRRR ingest."
+      - eval_time: 200m
+        alertname: TrailPhysicsWorkerSilent
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "trail-physics has not processed a forecast hour recently"
+              description: "The worker last finished a forecast hour 3h 20m 0s ago. If TrailConditionsStale is also firing, the worker is down or crashing (docker logs weather-wms-trail-physics-1); if not, check the HRRR ingest."
+
+  # Worker dead but data still fresh upstream-wise is impossible to distinguish
+  # here; what matters: ONLY the worker rule fires when only the worker metric stalls.
+  - interval: 1m
+    input_series:
+      - series: 'trail_conditions_latest_valid_timestamp_seconds'
+        values: '-3600+60x400'
+      - series: 'trail_physics_last_processed_timestamp_seconds'
+        values: '0x400'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: TrailConditionsStale
+        exp_alerts: []
+      - eval_time: 200m
+        alertname: TrailPhysicsWorkerSilent
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "trail-physics has not processed a forecast hour recently"
+              description: "The worker last finished a forecast hour 3h 20m 0s ago. If TrailConditionsStale is also firing, the worker is down or crashing (docker logs weather-wms-trail-physics-1); if not, check the HRRR ingest."
+
+  # The monitor itself: no series at all (edr-api down / metric never exported) must alert.
+  - interval: 1m
+    input_series:
+      - series: 'some_unrelated_metric'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: TrailConditionsMetricMissing
+        exp_alerts: []   # inside the 10m 'for'
+      - eval_time: 15m
+        alertname: TrailConditionsMetricMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Trail-conditions freshness metric is missing"
+              description: "edr-api is not exporting trail_conditions_latest_valid_timestamp_seconds (edr-api down, the metric endpoint unscraped, or no condition rows exist), so the staleness alerts cannot fire."

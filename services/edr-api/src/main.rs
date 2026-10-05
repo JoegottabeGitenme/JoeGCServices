@@ -91,6 +91,10 @@ async fn run_server(args: Args) {
         }
     };
 
+    // Export trail-conditions freshness (see freshness.rs for why these are
+    // timestamps, not ages) so a silently-stalled worker is visible.
+    edr_api::freshness::spawn(state.clone());
+
     // Build router
     let app = Router::new()
         // Landing page

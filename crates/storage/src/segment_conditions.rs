@@ -168,6 +168,39 @@ impl SegmentConditionsCatalog {
         Ok(count.0)
     }
 
+    /// The most recent `valid_time` that is not in the future -- i.e. the
+    /// hour a `?conditions=latest` query would currently report. The
+    /// freshness a USER sees: if this stops advancing, `latest` is stale
+    /// regardless of why (worker down, HRRR ingest stalled, DB trouble).
+    /// Uses `idx_segment_conditions_valid_time`, so it's cheap enough to
+    /// poll every few seconds, unlike `MAX(ingested_at)` (no index -> a
+    /// scan of a table that grows without bound by design).
+    pub async fn latest_valid_time(&self) -> WmsResult<Option<DateTime<Utc>>> {
+        let row: (Option<DateTime<Utc>>,) = sqlx::query_as(
+            "SELECT MAX(valid_time) FROM segment_conditions WHERE valid_time <= NOW()",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get latest valid time failed: {}", e)))?;
+        Ok(row.0)
+    }
+
+    /// When the `trail-physics` worker last finished a forecast hour, from
+    /// its own progress ledger (a small table, so a cheap query). Distinguishes
+    /// "the worker is dead" from "the worker is fine but upstream HRRR ingest
+    /// stopped": both make `latest_valid_time` go stale, but only one is
+    /// the worker's fault.
+    pub async fn last_worker_progress(&self) -> WmsResult<Option<DateTime<Utc>>> {
+        let row: (Option<DateTime<Utc>>,) =
+            sqlx::query_as("SELECT MAX(processed_at) FROM trail_physics_progress")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| {
+                    WmsError::DatabaseError(format!("Get last worker progress failed: {}", e))
+                })?;
+        Ok(row.0)
+    }
+
     /// Most recent `ingested_at` across the whole table -- the staleness
     /// signal ("has trail-physics run in the last N hours?").
     pub async fn most_recent_ingest(&self) -> WmsResult<Option<DateTime<Utc>>> {

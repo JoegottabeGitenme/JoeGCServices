@@ -1,0 +1,62 @@
+# Alert rules for the trail-conditions pipeline.
+#
+# The trail-physics worker runs unattended and its output is what the public
+# trails API serves, so a silent stall has to be visible without anyone
+# noticing stale colors on a map.
+#
+# NOTE: there is no Alertmanager in this deployment yet, so these rules
+# EVALUATE and are visible (Prometheus -> Alerts, and Grafana's Prometheus
+# alert view) but do not notify anyone. Wiring a notification channel is a
+# separate decision; the rules are what make it a 5-line change later.
+#
+# Metrics are exported as TIMESTAMPS by edr-api (src/freshness.rs), so the
+# age is computed here as `time() - <metric>`. That way a stalled exporter
+# makes the age GROW (alert fires) instead of freezing at its last value.
+
+groups:
+  - name: trail-conditions
+    rules:
+      # What users see: ?conditions=latest has stopped advancing. Fires for
+      # ANY cause (worker down, HRRR ingest stalled, DB trouble) -- the
+      # worker-specific rule below says whose fault it is.
+      - alert: TrailConditionsStale
+        expr: time() - trail_conditions_latest_valid_timestamp_seconds > 3 * 3600
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Trail conditions are stale"
+          description: >-
+            The newest trail-conditions hour (what ?conditions=latest reports) is
+            {{ $value | humanizeDuration }} old. Normally it is within about an hour.
+            Check the trail-physics worker and the HRRR ingest.
+
+      # Is the WORKER alive? It processes a new forecast hour whenever HRRR lands one,
+      # i.e. at least hourly. Both this and the rule above firing = worker problem;
+      # only the rule above = upstream ingest problem.
+      - alert: TrailPhysicsWorkerSilent
+        expr: time() - trail_physics_last_processed_timestamp_seconds > 3 * 3600
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "trail-physics has not processed a forecast hour recently"
+          description: >-
+            The worker last finished a forecast hour {{ $value | humanizeDuration }} ago.
+            If TrailConditionsStale is also firing, the worker is down or crashing
+            (docker logs weather-wms-trail-physics-1); if not, check the HRRR ingest.
+
+      # The monitor itself: if the metric disappears (edr-api down, or the DB
+      # unreachable since startup), the two rules above would silently never
+      # fire. `absent` turns "no data" into an alert.
+      - alert: TrailConditionsMetricMissing
+        expr: absent(trail_conditions_latest_valid_timestamp_seconds)
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Trail-conditions freshness metric is missing"
+          description: >-
+            edr-api is not exporting trail_conditions_latest_valid_timestamp_seconds
+            (edr-api down, the metric endpoint unscraped, or no condition rows exist),
+            so the staleness alerts cannot fire.
