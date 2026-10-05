@@ -48,7 +48,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from hrrr_grid import HrrrGrid
 from physics.redistribution import redistribute_podpac
 from static_stack import StaticStack
 
@@ -88,27 +87,32 @@ class DownscaleResult:
 
 
 def sample_static_inputs(
-    static_stack: StaticStack, hrrr_grid: HrrrGrid, points_lat_lon: list[tuple[float, float]]
+    static_stack: StaticStack,
+    lats: np.ndarray,
+    lons: np.ndarray,
+    hrrr_rows: np.ndarray,
+    hrrr_cols: np.ndarray,
 ) -> StaticSamples:
-    """The real I/O: exactly 3 static-stack windowed reads (twi, theta_s,
-    theta_wilt), covering ALL given points in one call each. Call this
-    ONCE per forecast hour with every point from every segment being
-    processed that hour -- calling it once per segment instead is the
-    Session 13 performance bug this function's introduction (Session 14)
-    fixes; see this module's own docstring."""
-    rows_cols = [static_stack.lonlat_to_rowcol(lon, lat) for lat, lon in points_lat_lon]
-    twi = static_stack.sample_layer("twi", rows_cols)
-    theta_s = static_stack.sample_layer("theta_s", rows_cols)
-    theta_wilt = static_stack.sample_layer("theta_wilt", rows_cols)
+    """The real I/O: exactly 3 (banded) static-stack layer reads (twi,
+    theta_s, theta_wilt) covering ALL given points, plus the in-memory
+    lambda_bar lookup.
 
-    # HrrrGrid.geo_to_grid returns (i, j); row=j, col=i -- the same
-    # convention forcing.sample_points already established (no flip
-    # needed, south-origin grid). This lookup is a pure in-memory dict
-    # read (static_stack.py's own docstring: ~186 entries for the pilot),
-    # not I/O -- fine to leave per-point.
-    hrrr_ij = [hrrr_grid.geo_to_grid(lat, lon) for lat, lon in points_lat_lon]
-    twi_bar = np.array([static_stack.hrrr_twi_bar(hrrr_row=j, hrrr_col=i) for i, j in hrrr_ij])
+    **Time-invariant -- call once per cycle, not once per forecast hour**
+    (Session 14). The static stack and the trail geometry don't change
+    between forecast hours, so these values don't either; `main.py`
+    computes them once per cycle in `build_segment_batch` and reuses them
+    for every pending hour. (Session 14 first fixed the per-SEGMENT call
+    pattern -- thousands of tiny reads -- then, for the 20x-larger Front
+    Range stack, the per-HOUR repetition of this whole pass.)
 
+    `hrrr_rows`/`hrrr_cols` are the points' fractional HRRR grid indices
+    (j and i from `HrrrGrid.geo_to_grid_array`), which `main.py` has
+    already computed for forcing sampling -- passed in, not recomputed."""
+    rows, cols = static_stack.lonlat_to_rowcol_array(lons, lats)
+    twi = static_stack.sample_layer_array("twi", rows, cols)
+    theta_s = static_stack.sample_layer_array("theta_s", rows, cols)
+    theta_wilt = static_stack.sample_layer_array("theta_wilt", rows, cols)
+    twi_bar = static_stack.hrrr_twi_bar_array(hrrr_rows, hrrr_cols)
     return StaticSamples(twi=twi, theta_s=theta_s, theta_wilt=theta_wilt, twi_bar=twi_bar)
 
 

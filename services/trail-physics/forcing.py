@@ -123,6 +123,38 @@ def bilinear_sample(array: np.ndarray, row: float, col: float) -> BilinearSample
     )
 
 
+def bilinear_sample_array(array: np.ndarray, rows: np.ndarray, cols: np.ndarray) -> np.ndarray:
+    """Vectorized `bilinear_sample`: values at arrays of fractional
+    (row, col) positions. Identical semantics to the scalar version --
+    out-of-range requests clip to the grid, NaN neighbors are dropped and
+    the remaining weights renormalized, all-NaN (or zero total weight)
+    gives NaN -- which `test_forcing.py` asserts point-by-point against it.
+
+    Added Session 14: the scalar version in a Python loop is the dominant
+    cost of the worker at Front Range scale (~700k vertices per forecast
+    hour, several passes); this is the same arithmetic on whole arrays.
+    Returns values only (callers never used `fraction_nan_neighbors`)."""
+    ny, nx = array.shape
+    rows = np.clip(np.asarray(rows, dtype=np.float64), 0.0, ny - 1.0001)
+    cols = np.clip(np.asarray(cols, dtype=np.float64), 0.0, nx - 1.0001)
+
+    r0 = np.floor(rows).astype(np.intp)
+    c0 = np.floor(cols).astype(np.intp)
+    r1, c1 = r0 + 1, c0 + 1
+    fr, fc = rows - r0, cols - c0
+
+    values = np.stack([array[r0, c0], array[r0, c1], array[r1, c0], array[r1, c1]]).astype(np.float64)
+    weights = np.stack([(1 - fr) * (1 - fc), (1 - fr) * fc, fr * (1 - fc), fr * fc])
+
+    valid = ~np.isnan(values)
+    weights = np.where(valid, weights, 0.0)
+    values = np.where(valid, values, 0.0)
+    total = weights.sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = (weights * values).sum(axis=0) / total
+    return np.where(total > 0.0, out, np.nan)
+
+
 def open_level0_array(store, group_path: str) -> np.ndarray:
     """Open a Zarr v3 group written by write_multiscale and return pyramid
     level 0 (native resolution) as a plain in-memory numpy array.

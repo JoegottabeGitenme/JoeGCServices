@@ -142,3 +142,51 @@ def test_sample_points_batch():
     results = sample_points(array, hrrr, points)
     assert len(results) == 2
     assert all(r.value == pytest.approx(0.15) for r in results)
+
+
+# --- Vectorized bilinear (Session 14) ----------------------------------------
+
+from forcing import bilinear_sample_array  # noqa: E402
+
+
+def _scalar_reference(array, rows, cols):
+    return np.array([bilinear_sample(array, row=float(r), col=float(c)).value for r, c in zip(rows, cols)])
+
+
+class TestBilinearSampleArray:
+    def test_matches_scalar_on_random_points_with_nans_and_out_of_range(self):
+        """The array version is a performance rewrite, not new semantics:
+        it must agree with the scalar version point-by-point, including
+        NaN-neighbor renormalization, all-NaN -> NaN, and out-of-range
+        clipping."""
+        rng = np.random.default_rng(11)
+        array = rng.uniform(0.0, 0.5, (40, 55))
+        array[rng.uniform(size=array.shape) < 0.15] = np.nan  # scattered NaNs
+        array[10:14, 20:24] = np.nan  # an all-NaN pocket
+        rows = np.concatenate([rng.uniform(-3, 43, 500), [0.0, 39.0, 38.9999, 10.0, 12.0]])
+        cols = np.concatenate([rng.uniform(-3, 58, 500), [0.0, 54.0, 53.9999, 21.0, 22.0]])
+
+        got = bilinear_sample_array(array, rows, cols)
+        want = _scalar_reference(array, rows, cols)
+        np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12, equal_nan=True)
+
+    def test_exact_grid_point_returns_that_cell(self):
+        # Interior points of a 3x3 grid (the last row/col clips to
+        # ny-1.0001 in the scalar version too, so edge cells read a hair off
+        # their exact value -- reproduced faithfully, asserted by the
+        # point-by-point scalar comparison above).
+        array = np.arange(9.0).reshape(3, 3)
+        got = bilinear_sample_array(array, np.array([0.0, 1.0, 0.0]), np.array([0.0, 1.0, 1.0]))
+        np.testing.assert_allclose(got, [0.0, 4.0, 1.0])
+
+    def test_midpoint_averages_all_four(self):
+        array = np.array([[1.0, 2.0], [3.0, 4.0]])
+        assert bilinear_sample_array(array, np.array([0.5]), np.array([0.5]))[0] == pytest.approx(2.5)
+
+    def test_all_nan_neighborhood_gives_nan(self):
+        array = np.full((4, 4), np.nan)
+        assert np.isnan(bilinear_sample_array(array, np.array([1.5]), np.array([1.5]))[0])
+
+    def test_empty_input_gives_empty_output(self):
+        out = bilinear_sample_array(np.zeros((5, 5)), np.array([]), np.array([]))
+        assert out.shape == (0,)

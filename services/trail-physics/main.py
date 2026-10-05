@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import timedelta, timezone
 
 import numpy as np
@@ -44,8 +45,8 @@ import numpy as np
 import db
 from aggregate import build_segment_condition_row
 from config import Config
-from downscale import downscale_soil_moisture, sample_static_inputs
-from forcing import open_level0_array, sample_points, storage_path
+from downscale import StaticSamples, downscale_soil_moisture, sample_static_inputs
+from forcing import bilinear_sample_array, open_level0_array, storage_path
 from hrrr_grid import HrrrGrid
 from physics.snow import is_frozen_ground
 from static_stack import StaticStack
@@ -95,6 +96,64 @@ def open_static_stack(config: Config) -> StaticStack | None:
     except Exception as e:  # noqa: BLE001 -- log and fall back, don't crash the cycle
         log.warning("Could not open static stack at %s: %s -- skipping segment processing this cycle", config.static_stack_path, e)
         return None
+
+
+@dataclass
+class SegmentBatch:
+    """Everything about the segments being processed this cycle that does
+    NOT change from one forecast hour to the next, computed once.
+
+    Session 14 (Front Range scale): the trail geometry, each vertex's HRRR
+    grid position, and the static terrain/soil samples at each vertex are
+    all time-invariant. The first production version recomputed them every
+    forecast hour; at the pilot's 9,029 segments that was tolerable, at the
+    Front Range's ~58,000 segments (~700k vertices) re-reading three
+    1.4 GB-class layers and re-running per-point projections for every one
+    of ~49 hourly steps would dominate the whole job. Per forecast hour,
+    only the two HRRR forcing grids actually change."""
+
+    feature_order: list[int]
+    offsets: dict[int, tuple[int, int]]  # feature_id -> [start, end) into the flat arrays
+    hrrr_rows: np.ndarray  # fractional HRRR row (j) per vertex
+    hrrr_cols: np.ndarray  # fractional HRRR col (i) per vertex
+    static_samples: StaticSamples | None  # None when no static stack
+
+    @property
+    def n_points(self) -> int:
+        return len(self.hrrr_rows)
+
+
+def build_segment_batch(feature_ids, feature_geometries: dict, static_stack) -> SegmentBatch:
+    """Flatten every segment's vertices into one batch and precompute the
+    time-invariant per-vertex inputs. Features with no geometry are
+    skipped (e.g. deleted between the id query and the geometry query)."""
+    feature_order: list[int] = []
+    offsets: dict[int, tuple[int, int]] = {}
+    lons_parts: list[np.ndarray] = []
+    lats_parts: list[np.ndarray] = []
+    cursor = 0
+    for feature_id in feature_ids:
+        vertices = feature_geometries.get(feature_id)
+        if not vertices:
+            continue
+        arr = np.asarray(vertices, dtype=np.float64)  # geometry is (lon, lat) per vertex
+        lons_parts.append(arr[:, 0])
+        lats_parts.append(arr[:, 1])
+        offsets[feature_id] = (cursor, cursor + len(arr))
+        feature_order.append(feature_id)
+        cursor += len(arr)
+
+    if not feature_order:
+        empty = np.empty(0)
+        return SegmentBatch([], {}, empty, empty, None)
+
+    lons = np.concatenate(lons_parts)
+    lats = np.concatenate(lats_parts)
+    i, j = HRRR_GRID.geo_to_grid_array(lats, lons)  # (i=col, j=row), south-origin: no flip
+    static_samples = (
+        sample_static_inputs(static_stack, lats, lons, hrrr_rows=j, hrrr_cols=i) if static_stack is not None else None
+    )
+    return SegmentBatch(feature_order, offsets, hrrr_rows=j, hrrr_cols=i, static_samples=static_samples)
 
 
 def run_cycle(config: Config, conn) -> int:
@@ -156,17 +215,23 @@ def run_cycle(config: Config, conn) -> int:
     # Session 12's per-forecast-hour-per-feature query).
     feature_geometries = db.get_feature_geometries(conn, feature_ids)
 
+    # Everything time-invariant, once per cycle (see SegmentBatch).
+    t_batch = time.time()
+    batch = build_segment_batch(feature_ids, feature_geometries, static_stack)
+    log.info(
+        "Prepared %d segments / %d vertices (static terrain sampled once for all %d pending hours) in %.1fs",
+        len(batch.feature_order), batch.n_points, len(pending), time.time() - t_batch,
+    )
+
     rows_written_total = 0
     for job in pending:
-        rows_written_total += _process_forecast_hour(config, conn, feature_ids, feature_geometries, static_stack, job)
+        rows_written_total += _process_forecast_hour(config, conn, batch, job)
 
     log.info("Cycle complete: wrote %d segment_conditions rows total", rows_written_total)
     return rows_written_total
 
 
-def _process_forecast_hour(
-    config: Config, conn, feature_ids, feature_geometries: dict, static_stack, job: db.PendingForecastHour
-) -> int:
+def _process_forecast_hour(config: Config, conn, batch: SegmentBatch, job: db.PendingForecastHour) -> int:
     ref_path_str = reference_time_to_path_str(job.reference_time)
     soilw_path = storage_path("hrrr", ref_path_str, "SOILW", "4 cm below ground", job.forecast_hour)
     tsoil_path = storage_path("hrrr", ref_path_str, "TSOIL", "4 cm below ground", job.forecast_hour)
@@ -189,68 +254,32 @@ def _process_forecast_hour(
     reference_time_utc = job.reference_time.replace(tzinfo=timezone.utc)
     valid_time = reference_time_utc + timedelta(hours=job.forecast_hour)
 
-    # Session 14 perf fix: flatten every processed segment's vertices into
-    # ONE batch and sample the static stack exactly once for the whole
-    # forecast hour -- see downscale.py's own module docstring for why a
-    # naive per-segment call pattern (this loop's previous shape) was
-    # measured live to cost several minutes per forecast hour, slower than
-    # HRRR's own ingest rate, entirely from S3 request-count overhead.
-    feature_order: list[int] = []
-    all_points: list[tuple[float, float]] = []
-    offsets: dict[int, tuple[int, int]] = {}
-    for feature_id in feature_ids:
-        vertices = feature_geometries.get(feature_id)
-        if not vertices:
-            continue
-        points_lat_lon = [(lat, lon) for lon, lat in vertices]  # geometry is (lon,lat); grid wants (lat,lon)
-        start = len(all_points)
-        all_points.extend(points_lat_lon)
-        offsets[feature_id] = (start, len(all_points))
-        feature_order.append(feature_id)
-
-    if not all_points:
-        rows_written = 0
-        db.mark_forecast_hour_processed(
-            conn,
-            reference_time=job.reference_time,
-            forecast_hour=job.forecast_hour,
-            rows_written=rows_written,
-            model_version=config.model_version,
-        )
-        log.info(
-            "Run %s forecast hour %d: wrote %d segment_conditions rows",
-            job.reference_time, job.forecast_hour, rows_written,
-        )
-        return rows_written
-
-    soilw_all = np.array([s.value for s in sample_points(soilw_grid, HRRR_GRID, all_points)])
-    tsoil_all = np.array([s.value for s in sample_points(tsoil_grid, HRRR_GRID, all_points)])
-    static_samples_all = (
-        sample_static_inputs(static_stack, HRRR_GRID, all_points) if static_stack is not None else None
-    )
-
     rows = []
-    for feature_id in feature_order:
-        start, end = offsets[feature_id]
-        soilw_samples = soilw_all[start:end]
-        tsoil_samples = tsoil_all[start:end]
-        seg_static = static_samples_all.slice(start, end) if static_samples_all is not None else None
+    if batch.feature_order:
+        # The only per-hour work that touches every vertex: sample the two
+        # HRRR grids at the (precomputed) fractional indices, vectorized.
+        soilw_all = bilinear_sample_array(soilw_grid, batch.hrrr_rows, batch.hrrr_cols)
+        tsoil_all = bilinear_sample_array(tsoil_grid, batch.hrrr_rows, batch.hrrr_cols)
 
-        result = downscale_soil_moisture(seg_static, soilw_samples)
-        frozen_flags = is_frozen_ground(tsoil_samples)
+        for feature_id in batch.feature_order:
+            start, end = batch.offsets[feature_id]
+            seg_static = batch.static_samples.slice(start, end) if batch.static_samples is not None else None
 
-        rows.append(
-            build_segment_condition_row(
-                feature_id=feature_id,
-                run_time=reference_time_utc,
-                valid_time=valid_time,
-                forecast_hour=job.forecast_hour,
-                soil_moisture_samples=result.predicted,
-                frozen_flags=frozen_flags,
-                confidence=result.confidence,
-                model_version=config.model_version,
+            result = downscale_soil_moisture(seg_static, soilw_all[start:end])
+            frozen_flags = is_frozen_ground(tsoil_all[start:end])
+
+            rows.append(
+                build_segment_condition_row(
+                    feature_id=feature_id,
+                    run_time=reference_time_utc,
+                    valid_time=valid_time,
+                    forecast_hour=job.forecast_hour,
+                    soil_moisture_samples=result.predicted,
+                    frozen_flags=frozen_flags,
+                    confidence=result.confidence,
+                    model_version=config.model_version,
+                )
             )
-        )
 
     rows_written = db.upsert_segment_conditions(conn, rows) if rows else 0
     db.mark_forecast_hour_processed(

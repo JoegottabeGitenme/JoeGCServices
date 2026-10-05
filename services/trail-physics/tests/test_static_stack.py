@@ -178,3 +178,101 @@ class TestWgs84Bbox:
         assert -105.2 < max_lon < -105.0
         assert 39.8 < min_lat < 39.9
         assert 40.1 < max_lat < 40.2
+
+
+# =============================================================================
+# Vectorized + banded paths (Session 14)
+# =============================================================================
+
+
+class TestVectorizedMatchesScalar:
+    def _big_stack(self, tmp_path):
+        # 200 cols x 300 rows: many 16-row bands, so banding is really exercised.
+        return _build_synthetic_stack(tmp_path, xmin=0.0, ymin=0.0, xmax=2000.0, ymax=3000.0)
+
+    def test_banded_sample_layer_array_matches_per_point_reference(self, tmp_path):
+        """Ground truth = the scalar bilinear_sample on the whole source
+        array, point by point. Banded reading must change memory, never
+        values -- including points near band boundaries, near grid edges,
+        and outside the grid entirely."""
+        from forcing import bilinear_sample
+
+        store_path, twi, _, _ = self._big_stack(tmp_path)
+        stack = StaticStack(store_path)
+        rng = np.random.default_rng(5)
+        rows = np.concatenate([rng.uniform(0, 299, 300), [15.99, 16.0, 16.01, 31.999, 0.0, 298.9], [-4.0, 400.0]])
+        cols = np.concatenate([rng.uniform(0, 199, 300), [5.0, 5.0, 5.0, 5.0, 0.0, 198.9], [10.0, 10.0]])
+
+        want = np.full(len(rows), np.nan)
+        for i, (r, c) in enumerate(zip(rows, cols)):
+            if 0 <= r < 300 and 0 <= c < 200:
+                want[i] = bilinear_sample(twi.astype(np.float64), row=float(r), col=float(c)).value
+
+        for band_rows in (1, 7, 16, 64, 10_000):
+            got = stack.sample_layer_array("twi", rows, cols, band_rows=band_rows)
+            np.testing.assert_allclose(got, want, rtol=1e-6, atol=1e-6, equal_nan=True, err_msg=f"band_rows={band_rows}")
+
+    def test_banded_read_never_loads_more_than_its_band(self, tmp_path):
+        """The point of banding: peak window size is bounded by the band,
+        not the batch's geographic spread. Count the largest window any
+        zarr read requests."""
+        store_path, *_ = self._big_stack(tmp_path)
+        stack = StaticStack(store_path)
+
+        class _Spy:
+            def __init__(self, arr):
+                self.arr, self.max_rows = arr, 0
+
+            def __getitem__(self, key):
+                window = self.arr[key]
+                self.max_rows = max(self.max_rows, window.shape[0])
+                return window
+
+        spy = _Spy(stack.root["twi"])
+        stack.root = {"twi": spy}
+        rows = np.linspace(0.5, 298.5, 200)  # points spread over the WHOLE grid height
+        cols = np.full(200, 50.5)
+        stack.sample_layer_array("twi", rows, cols, band_rows=16)
+        assert spy.max_rows <= 16 + 3  # band + the 1-below/2-above margin
+        spy.max_rows = 0
+        stack.sample_layer_array("twi", rows, cols, band_rows=10_000)
+        assert spy.max_rows > 250  # sanity: unbanded really does read ~everything
+
+    def test_sample_layer_list_api_still_works_and_agrees(self, tmp_path):
+        store_path, *_ = self._big_stack(tmp_path)
+        stack = StaticStack(store_path)
+        pts = [(5.5, 7.25), (120.0, 90.0), (-1.0, 3.0)]
+        via_list = stack.sample_layer("twi", pts)
+        via_array = stack.sample_layer_array("twi", np.array([p[0] for p in pts]), np.array([p[1] for p in pts]))
+        np.testing.assert_array_equal(via_list, via_array)
+
+    def test_lonlat_to_rowcol_array_matches_scalar(self, tmp_path):
+        store_path, *_ = _build_synthetic_stack(tmp_path)
+        stack = StaticStack(store_path)
+        from pyproj import Transformer
+
+        to_wgs84 = Transformer.from_crs("EPSG:5070", "EPSG:4326", always_xy=True)
+        xy = [(0.0, 100.0), (35.0, 62.0), (99.0, 1.0)]
+        lons, lats = zip(*(to_wgs84.transform(x, y) for x, y in xy))
+        rows, cols = stack.lonlat_to_rowcol_array(np.array(lons), np.array(lats))
+        for k, (lon, lat) in enumerate(zip(lons, lats)):
+            r, c = stack.lonlat_to_rowcol(lon, lat)
+            assert rows[k] == pytest.approx(r, abs=1e-9)
+            assert cols[k] == pytest.approx(c, abs=1e-9)
+
+    def test_hrrr_twi_bar_array_matches_scalar_including_misses_and_rounding(self, tmp_path):
+        store_path, *_ = _build_synthetic_stack(tmp_path)  # lookup: (100,200)->7.5, (101,200)->8.0
+        stack = StaticStack(store_path)
+        rows = np.array([100.0, 100.4, 100.6, 101.0, 999.0, 100.5, 101.5, -3.0])
+        cols = np.array([200.0, 200.4, 199.6, 200.0, 999.0, 200.0, 200.0, 200.0])
+        got = stack.hrrr_twi_bar_array(rows, cols)
+        want = np.array([stack.hrrr_twi_bar(r, c) for r, c in zip(rows, cols)])
+        np.testing.assert_array_equal(got, want)  # incl. NaN positions (assert_array_equal treats NaN==NaN)
+        assert got[0] == pytest.approx(7.5) and np.isnan(got[4])
+
+    def test_hrrr_twi_bar_array_with_empty_lookup_is_all_nan_not_an_indexerror(self, tmp_path):
+        store_path, *_ = _build_synthetic_stack(tmp_path)
+        stack = StaticStack(store_path)
+        stack._twi_bar_keys = np.array([], dtype=np.int64)
+        stack._twi_bar_values = np.array([], dtype=np.float64)
+        assert np.isnan(stack.hrrr_twi_bar_array(np.array([100.0, 5.0]), np.array([200.0, 5.0]))).all()

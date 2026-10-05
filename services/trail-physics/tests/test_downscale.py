@@ -19,7 +19,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from downscale import StaticSamples, downscale_soil_moisture, sample_static_inputs  # noqa: E402
-from hrrr_grid import HrrrGrid  # noqa: E402
 
 
 def _static_samples(twi_values, theta_s_values, theta_wilt_values, twi_bar_values) -> StaticSamples:
@@ -89,49 +88,56 @@ class TestDownscaleSoilMoisture:
 
 
 class TestSampleStaticInputs:
-    """The real batched I/O -- exactly 3 `sample_layer` calls total (twi,
-    theta_s, theta_wilt) no matter how many points are in the batch. This
-    is the whole point of the Session 14 fix: call this ONCE per forecast
-    hour across every point from every processed segment, not once per
-    segment (measured live: ~11ms/call x 3 layers x 9,029 segments =~ 5
-    minutes/forecast-hour with the old per-segment pattern, slower than
-    HRRR's own ~24 forecast-hours/hour ingest rate)."""
+    """The real batched I/O -- exactly 3 `sample_layer_array` calls (twi,
+    theta_s, theta_wilt) no matter how many points are in the batch.
+    Session 14: called ONCE PER CYCLE (not per segment, not per forecast
+    hour) -- the static stack and the trail geometry are time-invariant.
+    History: per-segment calls measured ~11ms x 3 layers x 9,029 segments
+    =~ 5 min/forecast-hour in production (slower than HRRR's own ~24
+    forecast-hours/hour ingest rate); then per-hour repetition was removed
+    for the 20x-larger Front Range stack."""
 
     @staticmethod
-    def _fake_stack(twi_values, theta_s_values, theta_wilt_values, twi_bar_value):
+    def _fake_stack(twi_values, theta_s_values, theta_wilt_values, twi_bar_values):
         stack = MagicMock()
-        stack.lonlat_to_rowcol.side_effect = lambda lon, lat: (0.0, 0.0)
+        stack.lonlat_to_rowcol_array.side_effect = lambda lons, lats: (np.zeros(len(lons)), np.zeros(len(lons)))
 
-        def sample_layer(name, points):
+        def sample_layer_array(name, rows, cols):
             values = {"twi": twi_values, "theta_s": theta_s_values, "theta_wilt": theta_wilt_values}[name]
             return np.array(values, dtype=float)
 
-        stack.sample_layer.side_effect = sample_layer
-        stack.hrrr_twi_bar.return_value = twi_bar_value
+        stack.sample_layer_array.side_effect = sample_layer_array
+        stack.hrrr_twi_bar_array.return_value = np.array(twi_bar_values, dtype=float)
         return stack
 
-    def test_calls_sample_layer_exactly_once_per_named_layer_regardless_of_batch_size(self):
-        hrrr = HrrrGrid.hrrr()
-        points = [(39.75, -105.2), (39.80, -105.3), (39.70, -105.1)]
-        stack = self._fake_stack([10.0, 6.0, 5.0], [0.45, 0.45, 0.45], [0.08, 0.08, 0.08], 8.0)
-        sample_static_inputs(stack, hrrr, points)
-        assert stack.sample_layer.call_count == 3  # NOT 3 x len(points)
+    def test_calls_sample_layer_array_exactly_once_per_named_layer_regardless_of_batch_size(self):
+        n = 50
+        stack = self._fake_stack([10.0] * n, [0.45] * n, [0.08] * n, [8.0] * n)
+        zeros = np.zeros(n)
+        sample_static_inputs(stack, lats=zeros + 39.75, lons=zeros - 105.2, hrrr_rows=zeros, hrrr_cols=zeros)
+        assert stack.sample_layer_array.call_count == 3  # NOT 3 x n
 
     def test_returns_arrays_matching_point_count(self):
-        hrrr = HrrrGrid.hrrr()
-        points = [(39.75, -105.2), (39.80, -105.3)]
-        stack = self._fake_stack([10.0, 6.0], [0.45, 0.45], [0.08, 0.08], 8.0)
-        result = sample_static_inputs(stack, hrrr, points)
-        assert len(result.twi) == 2
-        assert len(result.theta_s) == 2
-        assert len(result.theta_wilt) == 2
-        assert len(result.twi_bar) == 2
+        stack = self._fake_stack([10.0, 6.0], [0.45, 0.45], [0.08, 0.08], [8.0, 8.0])
+        z = np.zeros(2)
+        result = sample_static_inputs(stack, lats=z + 39.75, lons=z - 105.2, hrrr_rows=z, hrrr_cols=z)
+        assert len(result.twi) == len(result.theta_s) == len(result.theta_wilt) == len(result.twi_bar) == 2
+
+    def test_passes_the_precomputed_hrrr_indices_to_the_lambda_bar_lookup(self):
+        """main.py already computed each vertex's HRRR position for forcing
+        sampling; it must be reused for lambda_bar, not recomputed (and
+        rows/cols must not be swapped -- hrrr_twi_bar_array(rows, cols))."""
+        stack = self._fake_stack([1.0], [0.4], [0.1], [7.0])
+        sample_static_inputs(
+            stack, lats=np.array([39.75]), lons=np.array([-105.2]), hrrr_rows=np.array([123.0]), hrrr_cols=np.array([456.0])
+        )
+        rows_arg, cols_arg = stack.hrrr_twi_bar_array.call_args.args
+        assert rows_arg[0] == 123.0 and cols_arg[0] == 456.0
 
     def test_empty_batch_returns_empty_arrays(self):
-        hrrr = HrrrGrid.hrrr()
-        stack = self._fake_stack([], [], [], float("nan"))
-        result = sample_static_inputs(stack, hrrr, [])
-        assert len(result) == 0
+        stack = self._fake_stack([], [], [], [])
+        e = np.empty(0)
+        assert len(sample_static_inputs(stack, lats=e, lons=e, hrrr_rows=e, hrrr_cols=e)) == 0
 
 
 class TestStaticSamplesSlice:
