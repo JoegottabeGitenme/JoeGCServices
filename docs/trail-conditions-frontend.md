@@ -133,9 +133,12 @@ Coverage will grow. Build against the field, not a hard-coded box.
 ## 6. Freshness and caching
 
 - The model updates **hourly**; the service picks up each new forecast hour
-  within about a minute of it landing.
+  within about a minute of it landing, and a full pass over the region takes on
+  the order of 20 seconds per forecast hour.
 - `latest` is a *model nowcast for the current hour*, so `valid_time` is
-  normally within the last hour or so. If the upstream feed stalls it will
+  normally within the last hour (measured: 30 minutes behind on a live query).
+  It is **never a future hour** — an earlier build of this API briefly returned
+  forecast hours as "latest"; that was fixed before this contract was published. If the upstream feed stalls it will
   fall behind — show `valid_time`, and treat a `valid_time` more than ~3 hours
   old as stale.
 - Responses with `conditions` are cacheable for **5 minutes**
@@ -167,8 +170,11 @@ Coverage will grow. Build against the field, not a hard-coded box.
   model run that has a value for that hour** — so the series is stitched
   across runs and each point carries its own `run_time`.
 - **The horizon is whatever the data reaches** — read the last `valid_time`;
-  don't assume a fixed number of hours. (Typically about a day, more when the
-  longer 6-hourly model runs are available.)
+  don't assume a fixed number of hours. It is typically **around a day** (we
+  measured 24.5 h ahead on a live trail) and varies with which model runs have
+  landed: the 6-hourly runs reach further than the hourly ones. The far end of
+  the series comes from older runs than the near end — that's expected, and
+  each point's `run_time` says so.
 - To mark "now" on a chart, use `valid_time`, not `forecast_hour` (which is
   relative to each point's own run).
 - Unknown `feature_id` → **404**. A known trail with no data (outside
@@ -200,6 +206,9 @@ Coverage will grow. Build against the field, not a hard-coded box.
   `model_version`.
 - **No auth, no key**, currently no published rate limit — be reasonable, and
   tell us before building something that polls aggressively.
+- **Send a real `User-Agent` from scripts and servers.** The gateway returns
+  `403` to default scripting agents (e.g. Python's `Python-urllib`). Browsers are
+  unaffected; `curl` works as-is.
 
 ## 10. Trail metadata and its gaps
 
@@ -207,6 +216,9 @@ Each feature also carries OSM-derived properties: `feature_id`, `feature_class`
 (`mtb_trail` \| `hiking_trail` \| `track` \| `bridleway`), `name`, `system`,
 `region`, `active`, `updated_at`, and raw OSM `tags`.
 
+- **`name` is often `null`** — a large share of OSM ways are unnamed (spurs,
+  connectors, un-surveyed paths). Don't assume a label; fall back to
+  `feature_class` or the raw `tags`.
 - `feature_class` is derived from OSM tags; expect occasional misclassification
   on ambiguous tagging.
 - `system` (trail-system grouping) is usually `null` — OSM doesn't reliably tag
