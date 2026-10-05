@@ -87,6 +87,51 @@ class TestDownscaleSoilMoisture:
         assert np.isnan(result.predicted[1])
 
 
+class TestPhysicalBounds:
+    """The validated equation is unbounded; the PUBLISHED value must stay
+    within [0, theta_s] (first Front Range run: 66 of 57,920 segments came out
+    negative, min -0.042 m3/m3)."""
+
+    def test_extreme_low_twi_under_dry_coarse_value_is_not_negative(self):
+        # twi far below twi_bar, coarse value near zero: raw equation -> negative.
+        soilw = np.array([0.03])
+        samples = _static_samples([2.0], [0.45], [0.08], [12.0])
+        raw = soilw[0] + (0.45 - 0.08) / 13.0 * (2.0 - 12.0)
+        assert raw < 0  # the unclipped equation really does go negative here
+        result = downscale_soil_moisture(samples, soilw)
+        assert result.predicted[0] == 0.0
+        assert result.saturation[0] == 0.0
+
+    def test_extreme_high_twi_does_not_exceed_porosity(self):
+        soilw = np.array([0.42])
+        samples = _static_samples([15.0], [0.45], [0.08], [6.0])
+        result = downscale_soil_moisture(samples, soilw)
+        assert result.predicted[0] == pytest.approx(0.45)  # capped at theta_s
+        assert result.saturation[0] == pytest.approx(1.0)
+
+    def test_in_range_values_are_untouched_by_the_clip(self):
+        """The clip must be inert wherever the equation is already physical --
+        i.e. it never alters the validated behavior in the normal case."""
+        from physics.redistribution import redistribute_podpac
+
+        soilw = np.array([0.25, 0.20, 0.30])
+        samples = _static_samples([10.0, 6.0, 8.0], [0.45, 0.45, 0.45], [0.08, 0.08, 0.08], [8.0, 8.0, 8.0])
+        expected = redistribute_podpac(
+            theta_coarse=soilw, twi=samples.twi, theta_s=samples.theta_s, theta_wilt=samples.theta_wilt, twi_mean=samples.twi_bar
+        )
+        assert ((expected >= 0) & (expected <= 0.45)).all()
+        result = downscale_soil_moisture(samples, soilw)
+        np.testing.assert_array_equal(result.predicted, expected)
+
+    def test_uncovered_points_keep_their_raw_hrrr_value_unclipped(self):
+        """Fallback points were never run through the equation; their raw HRRR
+        value is passed through as-is (and there is no theta_s to clip to)."""
+        soilw = np.array([0.33])
+        samples = _static_samples([10.0], [np.nan], [0.08], [8.0])
+        result = downscale_soil_moisture(samples, soilw)
+        assert result.predicted[0] == pytest.approx(0.33)
+
+
 class TestSaturation:
     """Session 14: degree of saturation = downscaled soil moisture /
     theta_s, clipped to [0, 1], NaN wherever there's no real theta_s."""

@@ -158,7 +158,16 @@ def downscale_soil_moisture(
             theta_wilt=static_samples.theta_wilt[covered],
             twi_mean=static_samples.twi_bar[covered],
         )
-        predicted[covered] = downscaled
+        # Bound the PUBLISHED value to the physically possible range [0, theta_s].
+        # The validated equation itself is unbounded (theta_coarse + amplitude *
+        # (twi - twi_mean)), so a very low-TWI vertex under a dry HRRR value
+        # comes out negative -- measured on the first Front Range run: 66 of
+        # 57,920 segments (0.11%), min -0.042 m3/m3. The equation is left
+        # exactly as validated; only its output is clipped. This cannot make
+        # the validated accuracy worse: the true soil moisture lies in
+        # [0, theta_s], and clipping a prediction to an interval that contains
+        # the truth never increases its error.
+        predicted[covered] = np.clip(downscaled, 0.0, static_samples.theta_s[covered])
 
     # Clipped: the redistribution equation can push a point slightly above
     # theta_s (or below 0) at extreme TWI; a consumer needs a bounded
