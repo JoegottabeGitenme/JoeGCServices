@@ -128,6 +128,13 @@ authoritative per-trail signal is the data itself**: no `conditions` block, or
 `confidence: 0`, means "no terrain-informed estimate here." Treat
 `confidence < 1` as "partial — show it differently, don't hide it."
 
+**How much of the rectangle is real coverage (measured on the live data):** of
+the ~66,400 trail segments inside it, about **87% have `confidence: 1`**, a few
+hundred are partial, and about **13% have `confidence: 0`** — they sit in the
+rectangle's corners where there is no terrain data, so they carry the raw 3 km
+model value and `saturation: null`. Expect that mix, and render `confidence: 0`
+like "no terrain-informed estimate" rather than as a real reading.
+
 Coverage will grow. Build against the field, not a hard-coded box.
 
 ## 6. Freshness and caching
