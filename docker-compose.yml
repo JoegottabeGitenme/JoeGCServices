@@ -396,12 +396,17 @@ services:
       TRAIL_PHYSICS_POLL_INTERVAL_SECS: ${TRAIL_PHYSICS_POLL_INTERVAL_SECS:-60}
       TRAIL_PHYSICS_MAX_FORECAST_HOUR: ${TRAIL_PHYSICS_MAX_FORECAST_HOUR:-48}
       TRAIL_PHYSICS_REGION: ${TRAIL_PHYSICS_REGION:-colorado}
-      # MinIO object path to the WS1 static stack (Session 11's Boulder-area
-      # pilot). Empty/unset -- or any path that isn't actually present in
-      # MinIO yet -- is handled gracefully (main.py logs a warning and
-      # falls back to raw, undownscaled HRRR values with confidence=0.0
-      # everywhere; see main.py::open_static_stack), not an error state.
-      TRAIL_PHYSICS_STATIC_STACK_PATH: ${TRAIL_PHYSICS_STATIC_STACK_PATH:-static/colorado-10m/pilot}
+      # MinIO object path to the WS1 static stack -- and therefore the
+      # coverage: only trails inside the stack's own extent are processed.
+      # Session 14: the Front Range foothills stack (345.6M cells, 3,196 HRRR
+      # cells; ~66k active trail segments). The Session 11 Boulder-area pilot
+      # (static/colorado-10m/pilot) stays in MinIO as an instant rollback --
+      # switch back by setting this env var, no rebuild needed. Keep
+      # config/edr/trails.yaml's `conditions_coverage` in step with whichever
+      # stack is active. A path that isn't present in MinIO is handled
+      # gracefully (main.py logs a warning and skips segment processing; see
+      # main.py::open_static_stack), not a crash.
+      TRAIL_PHYSICS_STATIC_STACK_PATH: ${TRAIL_PHYSICS_STATIC_STACK_PATH:-static/colorado-10m/front-range}
       # Bumped from the placeholder-physics era's "trail-physics-v0" --
       # this is genuinely different physics (the real Creare/GeoWATCH
       # equation + real terrain, not uniform-zero placeholders), so it
