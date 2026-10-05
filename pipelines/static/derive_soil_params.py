@@ -29,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from rasterio.windows import Window
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "services" / "trail-physics"))
 
@@ -49,17 +50,14 @@ def build_lookup_tables() -> tuple[np.ndarray, np.ndarray]:
     return theta_s_table, theta_wilt_table
 
 
-def derive_soil_params(sand_path: str, clay_path: str, output_dir: str) -> None:
-    with rasterio.open(sand_path) as src:
-        sand = src.read(1)
-        profile = src.profile
-    with rasterio.open(clay_path) as src:
-        clay = src.read(1)
-
+def classify_block(
+    sand: np.ndarray, clay: np.ndarray, theta_s_table: np.ndarray, theta_wilt_table: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """(theta_s, theta_wilt, n_overshoot) for one block of sand%/clay%.
+    Pure function of its inputs -- the per-cell math is exactly what the
+    whole-raster version did (Session 11); the banded driver below just
+    applies it to row bands."""
     valid = ~np.isnan(sand) & ~np.isnan(clay)
-
-    print("Building USDA texture -> Noah SOILPARM.TBL lookup table (5,151 valid sand/clay pairs)...")
-    theta_s_table, theta_wilt_table = build_lookup_tables()
 
     # Fill NaN with a safe placeholder (0) before rounding/casting to int --
     # casting NaN directly to int64 is undefined behavior (produces an
@@ -81,37 +79,104 @@ def derive_soil_params(sand_path: str, clay_path: str, output_dir: str) -> None:
 
     theta_s = np.where(valid, theta_s_table[sand_idx, clay_idx], np.nan).astype(np.float32)
     theta_wilt = np.where(valid, theta_wilt_table[sand_idx, clay_idx], np.nan).astype(np.float32)
+    return theta_s, theta_wilt, int(overshoot[valid].sum())
 
-    n_overshoot = int(overshoot[valid].sum())
-    if n_overshoot:
-        print(f"  NOTE: {n_overshoot} cell(s) had a sand%+clay% rounding overshoot >100 -- clay index clamped down")
 
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    out_profile = dict(profile)
-    out_profile.update(dtype="float32", nodata=np.nan, compress="deflate")
-    for name, arr in [("theta_s", theta_s), ("theta_wilt", theta_wilt)]:
-        out_path = Path(output_dir) / f"pilot_{name}.tif"
-        with rasterio.open(out_path, "w", **out_profile) as dst:
-            dst.write(arr, 1)
+DEFAULT_BAND_ROWS = 512  # matches the output GeoTIFFs' 512-row internal blocks
+
+
+class _RunningStats:
+    """mean/min/max over values streamed in bands -- the whole-raster
+    version printed these from one full array; at 345.6M cells that array
+    (plus its int64 index temporaries) is what made this step memory-bound."""
+
+    def __init__(self):
+        self.n, self.total, self.lo, self.hi = 0, 0.0, np.inf, -np.inf
+
+    def update(self, arr: np.ndarray) -> None:
         v = arr[~np.isnan(arr)]
-        print(f"  wrote {out_path}: mean={v.mean():.3f} min={v.min():.3f} max={v.max():.3f}")
+        if v.size:
+            self.n += int(v.size)
+            self.total += float(v.sum(dtype=np.float64))
+            self.lo = min(self.lo, float(v.min()))
+            self.hi = max(self.hi, float(v.max()))
 
-    # Physical sanity, checked (not just asserted in a docstring): theta_s
-    # (porosity) must exceed theta_wilt everywhere real soil exists.
-    both_valid = ~np.isnan(theta_s) & ~np.isnan(theta_wilt)
-    n_bad = int(np.sum(theta_s[both_valid] <= theta_wilt[both_valid]))
-    if n_bad:
-        raise ValueError(f"{n_bad} cell(s) have theta_s <= theta_wilt -- a real bug, not expected from a valid lookup table")
+    def line(self) -> str:
+        if not self.n:
+            return "NO VALID CELLS"
+        return f"mean={self.total / self.n:.3f} min={self.lo:.3f} max={self.hi:.3f}"
+
+
+def derive_soil_params(
+    sand_path: str, clay_path: str, output_dir: str, prefix: str = "pilot", band_rows: int = DEFAULT_BAND_ROWS
+) -> None:
+    """Processed in row bands (Session 14): read a band of sand/clay, classify
+    it, write the band -- peak memory is a few bands, not several full-grid
+    int64/float arrays (~10+ GB at the Front Range's 345.6M cells)."""
+    print("Building USDA texture -> Noah SOILPARM.TBL lookup table (5,151 valid sand/clay pairs)...")
+    theta_s_table, theta_wilt_table = build_lookup_tables()
+
+    with rasterio.open(sand_path) as sand_src, rasterio.open(clay_path) as clay_src:
+        if (sand_src.height, sand_src.width) != (clay_src.height, clay_src.width):
+            raise ValueError(f"sand {sand_src.shape} and clay {clay_src.shape} grids differ")
+        height, width = sand_src.height, sand_src.width
+        out_profile = dict(sand_src.profile)
+        out_profile.update(
+            dtype="float32", nodata=np.nan, compress="deflate", tiled=True, blockxsize=512, blockysize=512, BIGTIFF="YES"
+        )
+
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        names = ("theta_s", "theta_wilt")
+        out_paths = {n: Path(output_dir) / f"{prefix}_{n}.tif" for n in names}
+        stats = {n: _RunningStats() for n in names}
+        n_overshoot_total = 0
+        n_bad_total = 0
+
+        outs = {n: rasterio.open(out_paths[n], "w", **out_profile) for n in names}
+        try:
+            for r0 in range(0, height, band_rows):
+                win = Window(0, r0, width, min(band_rows, height - r0))
+                theta_s, theta_wilt, n_overshoot = classify_block(
+                    sand_src.read(1, window=win), clay_src.read(1, window=win), theta_s_table, theta_wilt_table
+                )
+                n_overshoot_total += n_overshoot
+
+                # Physical sanity, checked (not just asserted in a docstring):
+                # theta_s (porosity) must exceed theta_wilt everywhere real
+                # soil exists.
+                both_valid = ~np.isnan(theta_s) & ~np.isnan(theta_wilt)
+                n_bad_total += int(np.sum(theta_s[both_valid] <= theta_wilt[both_valid]))
+
+                outs["theta_s"].write(theta_s, 1, window=win)
+                outs["theta_wilt"].write(theta_wilt, 1, window=win)
+                stats["theta_s"].update(theta_s)
+                stats["theta_wilt"].update(theta_wilt)
+        finally:
+            for ds in outs.values():
+                ds.close()
+
+    if n_overshoot_total:
+        print(f"  NOTE: {n_overshoot_total} cell(s) had a sand%+clay% rounding overshoot >100 -- clay index clamped down")
+    for n in names:
+        print(f"  wrote {out_paths[n]}: {stats[n].line()}")
+    if n_bad_total:
+        raise ValueError(f"{n_bad_total} cell(s) have theta_s <= theta_wilt -- a real bug, not expected from a valid lookup table")
     print("  Sanity check passed: theta_s > theta_wilt at every valid cell.")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--sand-path", default="./data/static/pilot_sand_pct.tif")
-    parser.add_argument("--clay-path", default="./data/static/pilot_clay_pct.tif")
+    parser.add_argument("--region", default="pilot")
+    parser.add_argument("--sand-path", default=None, help="default: ./data/static/<region>_sand_pct.tif")
+    parser.add_argument("--clay-path", default=None, help="default: ./data/static/<region>_clay_pct.tif")
     parser.add_argument("--output-dir", default="./data/static")
     args = parser.parse_args()
-    derive_soil_params(args.sand_path, args.clay_path, args.output_dir)
+    derive_soil_params(
+        args.sand_path or f"./data/static/{args.region}_sand_pct.tif",
+        args.clay_path or f"./data/static/{args.region}_clay_pct.tif",
+        args.output_dir,
+        prefix=args.region,
+    )
 
 
 if __name__ == "__main__":

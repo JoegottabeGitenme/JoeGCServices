@@ -58,3 +58,48 @@ def test_grid_covers_colorado(grid):
     i, j = grid.geo_to_grid(39.75, -105.2)
     assert 0 <= i <= grid.nx
     assert 0 <= j <= grid.ny
+
+
+# --- Vectorized geo_to_grid_array (Session 14) -------------------------------
+
+
+def test_array_version_matches_scalar_on_the_rust_cross_reference_points(grid):
+    """The scalar version is bit-for-bit cross-validated against the Rust
+    implementation (tests above); the array version must agree with IT, so
+    it inherits that guarantee instead of being a second implementation to
+    trust independently."""
+    import numpy as np
+
+    pts = [(39.7555, -105.2211), (39.7392, -104.9903)]  # Golden CO, Denver
+    lats = np.array([p[0] for p in pts])
+    lons = np.array([p[1] for p in pts])
+    ii, jj = grid.geo_to_grid_array(lats, lons)
+    for k, (lat, lon) in enumerate(pts):
+        i, j = grid.geo_to_grid(lat, lon)
+        assert ii[k] == pytest.approx(i, abs=1e-9)
+        assert jj[k] == pytest.approx(j, abs=1e-9)
+
+
+def test_array_version_matches_scalar_across_the_front_range_grid(grid):
+    """Dense random sample over the Front Range region the build actually
+    covers (and well beyond, to the continental extremes) -- tolerance is
+    float-rounding only."""
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    lats = np.concatenate([rng.uniform(38.5, 40.9, 400), rng.uniform(25, 49, 200)])
+    lons = np.concatenate([rng.uniform(-106.0, -104.5, 400), rng.uniform(-124, -67, 200)])
+    ii, jj = grid.geo_to_grid_array(lats, lons)
+    for k in range(len(lats)):
+        i, j = grid.geo_to_grid(float(lats[k]), float(lons[k]))
+        assert ii[k] == pytest.approx(i, abs=1e-7), (lats[k], lons[k])
+        assert jj[k] == pytest.approx(j, abs=1e-7), (lats[k], lons[k])
+
+
+def test_array_version_preserves_shape_and_handles_2d_input(grid):
+    import numpy as np
+
+    lats = np.full((3, 4), 40.0)
+    lons = np.full((3, 4), -105.3)
+    ii, jj = grid.geo_to_grid_array(lats, lons)
+    assert ii.shape == (3, 4) and jj.shape == (3, 4)

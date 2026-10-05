@@ -44,6 +44,7 @@ needed per property per depth, matching the same 40N tile-seam pattern
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -55,11 +56,41 @@ from rasterio.windows import from_bounds
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from grid_spec import GridSpec, pilot_grid_spec
+from grid_spec import GridSpec, region_bbox, region_grid_spec
 
 POLARIS_ROOT = "http://hydrology.cee.duke.edu/POLARIS/PROPERTIES/v1.0"
 POLARIS_DEPTHS_CM = [("0_5", 5.0), ("5_15", 10.0), ("15_30", 15.0)]  # (depth label, thickness cm)
-POLARIS_TILES = ["lat3940_lon-106-105", "lat4041_lon-106-105"]  # confirmed live, see module docstring
+POLARIS_TILES = ["lat3940_lon-106-105", "lat4041_lon-106-105"]  # the pilot's tiles, confirmed live, see module docstring
+
+
+def polaris_tiles_for_bbox(min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> list[str]:
+    """POLARIS ships 1-degree tiles named `lat{S}{N}_lon{W}{E}` (e.g.
+    `lat3940_lon-106-105` covers 39-40N, 106-105W). Enumerates every tile
+    overlapping the bbox. `test_polaris_tiles_for_bbox_reproduces_pilot_list`
+    pins that this reproduces the pilot's live-confirmed hardcoded list, so
+    the naming rule isn't an untested guess for new regions -- though the
+    tiles themselves must still be confirmed to exist before a big run
+    (see `verify_tiles_exist`)."""
+    tiles = []
+    for lat in range(math.floor(min_lat), math.ceil(max_lat)):
+        for lon in range(math.floor(min_lon), math.ceil(max_lon)):
+            tiles.append(f"lat{lat}{lat + 1}_lon{lon}{lon + 1}")
+    return tiles
+
+
+def verify_tiles_exist(tiles: list[str], soil_property: str = "sand", depth_label: str = "0_5") -> list[str]:
+    """HEAD-check each tile via GDAL's vsicurl open; returns the missing
+    ones. Cheap (header reads only) and catches a wrong naming guess or a
+    tile POLARIS doesn't publish (e.g. all-ocean) BEFORE a long build, not
+    40 minutes into one."""
+    missing = []
+    for tile in tiles:
+        try:
+            with rasterio.open(polaris_tile_url(soil_property, depth_label, tile)):
+                pass
+        except Exception:  # noqa: BLE001 -- any open failure means "not usable"
+            missing.append(tile)
+    return missing
 
 
 def polaris_tile_url(soil_property: str, depth_label: str, tile: str) -> str:
@@ -132,22 +163,28 @@ def fetch_property_0_30cm(
 
 
 def main():
-    from grid_spec import PILOT_BBOX_WGS84
-
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--region", default="pilot")
     parser.add_argument("--output-dir", default="./data/static")
     args = parser.parse_args()
 
-    grid = pilot_grid_spec()
+    grid = region_grid_spec(args.region)
+    bbox = region_bbox(args.region)
+    tiles = polaris_tiles_for_bbox(*bbox)
+    print(f"Region {args.region}: bbox {bbox} -> POLARIS tiles {tiles}")
+    missing = verify_tiles_exist(tiles)
+    if missing:
+        raise SystemExit(f"POLARIS tiles not reachable: {missing} -- check naming/availability before building")
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     for soil_property in ["sand", "clay"]:
         print(f"Fetching {soil_property}% (0-30cm thickness-weighted)...")
-        arr = fetch_property_0_30cm(soil_property, PILOT_BBOX_WGS84, POLARIS_TILES, grid)
-        out_path = Path(args.output_dir) / f"pilot_{soil_property}_pct.tif"
+        arr = fetch_property_0_30cm(soil_property, bbox, tiles, grid)
+        out_path = Path(args.output_dir) / f"{args.region}_{soil_property}_pct.tif"
         with rasterio.open(
             out_path, "w", driver="GTiff", height=grid.height, width=grid.width, count=1,
             dtype=np.float32, crs=grid.crs, transform=grid.transform, nodata=np.nan, compress="deflate",
+            tiled=True, blockxsize=512, blockysize=512, BIGTIFF="YES",
         ) as dst:
             dst.write(arr.astype(np.float32), 1)
         valid = arr[~np.isnan(arr)]

@@ -81,3 +81,47 @@ def test_to_attrs_dict_is_json_serializable():
 
 def test_resolution_matches_project_default():
     assert STATIC_STACK_RESOLUTION_M == 10.0
+
+
+# =============================================================================
+# Region registry (Session 14)
+# =============================================================================
+
+from grid_spec import FRONT_RANGE_BBOX_WGS84, REGION_BBOXES_WGS84, region_bbox, region_grid_spec  # noqa: E402
+
+
+def test_region_grid_spec_pilot_equals_pilot_grid_spec():
+    assert region_grid_spec("pilot") == pilot_grid_spec()
+
+
+def test_unknown_region_raises_with_known_regions_listed():
+    with pytest.raises(ValueError, match="front-range"):
+        region_bbox("atlantis")
+
+
+def test_every_registered_region_has_a_valid_wgs84_bbox():
+    for name, (min_lon, min_lat, max_lon, max_lat) in REGION_BBOXES_WGS84.items():
+        assert min_lon < max_lon, name
+        assert min_lat < max_lat, name
+        assert -180 <= min_lon and max_lon <= 180, name
+        assert -90 <= min_lat and max_lat <= 90, name
+
+
+def test_front_range_grid_size_is_pinned():
+    """The exact cell count drives the build's memory/time profile (a
+    monolithic pyDEM run needs ~198 bytes/cell -- measured, Session 14 --
+    so ~68 GB here, which is why derive_terrain_pydem tiles). Pin it so a
+    casual bbox tweak can't silently change what the build costs."""
+    spec = region_grid_spec("front-range")
+    assert (spec.width, spec.height) == (13770, 25096)
+    assert spec.width * spec.height == 345_571_920
+
+
+def test_front_range_contains_the_pilot():
+    """The Front Range region must fully contain the pilot -- the pilot is
+    the validated, already-live subset, and moving to the larger stack
+    must not silently drop coverage that exists today."""
+    p_min_lon, p_min_lat, p_max_lon, p_max_lat = PILOT_BBOX_WGS84
+    f_min_lon, f_min_lat, f_max_lon, f_max_lat = FRONT_RANGE_BBOX_WGS84
+    assert f_min_lon <= p_min_lon and p_max_lon <= f_max_lon
+    assert f_min_lat <= p_min_lat and p_max_lat <= f_max_lat

@@ -92,3 +92,58 @@ class TestRealPilotOutput:
         assert data["twi_bar"].min() > 2.9  # fine TWI's own min was 2.924
         assert data["twi_bar"].max() < 14.98  # fine TWI's own max was 14.979
         assert np.all(data["n_fine_cells"] > 0)
+
+
+class TestBandedProcessing:
+    """Session 14: compute_coarse_twi_bar now processes row bands (the
+    whole-raster version needed tens of GB at the Front Range's 345.6M
+    cells). Banding must be a pure memory optimization -- never change the
+    answer."""
+
+    def test_banded_matches_unbanded(self, tmp_path):
+        # A TWI patch big enough to span several bands AND straddle an HRRR
+        # cell boundary near Boulder is hard to guarantee synthetically, so
+        # also use a gradient: every band sees different values, and any
+        # band-boundary double-count/drop would change the means.
+        path = _write_synthetic_twi(
+            tmp_path, lambda r, c: 5.0 + 0.05 * r + 0.02 * c, nrows=300, ncols=300, cellsize=30.0
+        )
+        unbanded = compute_coarse_twi_bar(path, band_rows=10_000)
+        for band_rows in (1, 7, 64, 299):
+            banded = compute_coarse_twi_bar(path, band_rows=band_rows)
+            np.testing.assert_array_equal(banded[0], unbanded[0])
+            np.testing.assert_array_equal(banded[1], unbanded[1])
+            np.testing.assert_array_equal(banded[3], unbanded[3])  # counts: exact
+            np.testing.assert_allclose(banded[2], unbanded[2], rtol=1e-6)
+
+    def test_nan_cells_are_excluded_from_means_and_counts_across_bands(self, tmp_path):
+        path = _write_synthetic_twi(tmp_path, lambda r, c: np.where(r % 2 == 0, np.nan, 4.0), nrows=40, ncols=40)
+        rows, cols, twi_bar, counts = compute_coarse_twi_bar(path, band_rows=3)
+        assert counts.sum() == 20 * 40  # only the odd rows
+        assert twi_bar[0] == pytest.approx(4.0)
+
+    def test_fully_nodata_raster_yields_empty_result_not_a_crash(self, tmp_path):
+        path = _write_synthetic_twi(tmp_path, lambda r, c: np.full_like(r, np.nan), nrows=20, ncols=20)
+        rows, cols, twi_bar, counts = compute_coarse_twi_bar(path)
+        assert len(rows) == len(cols) == len(twi_bar) == len(counts) == 0
+
+
+class TestRealPilotRegression:
+    DATA_DIR = Path(__file__).parent.parent / "data" / "static"
+
+    def test_reproduces_the_original_unbanded_pilot_lookup_exactly(self):
+        """`pilot_twi_bar.npz` was produced (Session 11) by the ORIGINAL
+        whole-raster, per-cell-scalar-loop implementation and is what the
+        live production stack serves today. The banded/vectorized rewrite
+        must reproduce it bit-for-bit -- verified in Session 14: identical
+        186 HRRR cells, identical per-cell counts, max twi_bar diff 0.0."""
+        twi = self.DATA_DIR / "pilot_twi.tif"
+        ref = self.DATA_DIR / "pilot_twi_bar.npz"
+        if not (twi.exists() and ref.exists()):
+            pytest.skip("real pilot outputs not built locally (see README.md)")
+        old = np.load(ref)
+        rows, cols, twi_bar, counts = compute_coarse_twi_bar(str(twi))
+        np.testing.assert_array_equal(rows, old["hrrr_row"])
+        np.testing.assert_array_equal(cols, old["hrrr_col"])
+        np.testing.assert_array_equal(counts, old["n_fine_cells"])
+        np.testing.assert_array_equal(twi_bar, old["twi_bar"])

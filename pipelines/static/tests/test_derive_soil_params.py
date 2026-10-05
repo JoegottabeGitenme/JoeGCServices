@@ -109,3 +109,72 @@ class TestRealPilotOutputs:
         assert theta_wilt[valid].min() < 0.05
         assert theta_wilt[valid].max() < 0.20
         assert np.all(theta_s[valid] > theta_wilt[valid])
+
+
+def _write_grid(path, arr):
+    transform = rasterio.transform.from_origin(0, arr.shape[0], 1.0, 1.0)
+    with rasterio.open(
+        path, "w", driver="GTiff", height=arr.shape[0], width=arr.shape[1], count=1,
+        dtype=np.float32, crs="EPSG:5070", transform=transform, nodata=np.nan,
+    ) as dst:
+        dst.write(arr.astype(np.float32), 1)
+
+
+class TestBandedProcessing:
+    """Session 14: derive_soil_params streams row bands instead of holding
+    several full-grid int64/float arrays (~10+ GB at the Front Range's
+    345.6M cells). Banding must change memory, never the answer."""
+
+    def _varied_grids(self, ny=70, nx=45):
+        rng = np.random.default_rng(3)
+        sand = rng.uniform(5, 85, (ny, nx)).astype(np.float32)
+        clay = (rng.uniform(0, 1, (ny, nx)) * (100 - sand)).astype(np.float32)  # keeps sand+clay <= 100
+        r = ny // 5
+        sand[r:r + 4, 2:6] = np.nan  # real nodata pocket straddling band edges
+        clay[ny // 2, :] = np.nan
+        return sand, clay
+
+    @pytest.mark.parametrize("band_rows", [1, 7, 16, 69, 10_000])
+    def test_any_band_size_gives_identical_output(self, tmp_path, band_rows):
+        sand, clay = self._varied_grids()
+        _write_grid(tmp_path / "sand.tif", sand)
+        _write_grid(tmp_path / "clay.tif", clay)
+
+        derive_soil_params(str(tmp_path / "sand.tif"), str(tmp_path / "clay.tif"), str(tmp_path / "ref"), prefix="p", band_rows=10_000)
+        derive_soil_params(str(tmp_path / "sand.tif"), str(tmp_path / "clay.tif"), str(tmp_path / "out"), prefix="p", band_rows=band_rows)
+
+        for name in ("theta_s", "theta_wilt"):
+            with rasterio.open(tmp_path / "ref" / f"p_{name}.tif") as a, rasterio.open(tmp_path / "out" / f"p_{name}.tif") as b:
+                np.testing.assert_array_equal(a.read(1), b.read(1))
+
+    def test_prefix_controls_output_filenames(self, tmp_path):
+        sand, clay = self._varied_grids(12, 12)
+        _write_grid(tmp_path / "sand.tif", sand)
+        _write_grid(tmp_path / "clay.tif", clay)
+        derive_soil_params(str(tmp_path / "sand.tif"), str(tmp_path / "clay.tif"), str(tmp_path), prefix="front-range")
+        assert (tmp_path / "front-range_theta_s.tif").exists()
+        assert (tmp_path / "front-range_theta_wilt.tif").exists()
+
+    def test_mismatched_sand_clay_grids_are_rejected(self, tmp_path):
+        _write_grid(tmp_path / "sand.tif", np.full((10, 10), 50.0))
+        _write_grid(tmp_path / "clay.tif", np.full((10, 11), 20.0))
+        with pytest.raises(ValueError, match="differ"):
+            derive_soil_params(str(tmp_path / "sand.tif"), str(tmp_path / "clay.tif"), str(tmp_path))
+
+
+class TestRealPilotRegression:
+    DATA_DIR = Path(__file__).parent.parent / "data" / "static"
+
+    def test_reproduces_the_live_pilot_soil_layers_bit_for_bit(self, tmp_path):
+        """pilot_theta_s/theta_wilt.tif are what the live production stack
+        serves (Session 11, original whole-raster code). The banded rewrite
+        must reproduce them exactly -- verified Session 14."""
+        needed = ["pilot_sand_pct.tif", "pilot_clay_pct.tif", "pilot_theta_s.tif", "pilot_theta_wilt.tif"]
+        if not all((self.DATA_DIR / n).exists() for n in needed):
+            pytest.skip("real pilot outputs not built locally (see README.md)")
+        derive_soil_params(
+            str(self.DATA_DIR / "pilot_sand_pct.tif"), str(self.DATA_DIR / "pilot_clay_pct.tif"), str(tmp_path), prefix="pilot"
+        )
+        for name in ("theta_s", "theta_wilt"):
+            with rasterio.open(self.DATA_DIR / f"pilot_{name}.tif") as a, rasterio.open(tmp_path / f"pilot_{name}.tif") as b:
+                np.testing.assert_array_equal(a.read(1), b.read(1))

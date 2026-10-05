@@ -29,27 +29,33 @@ import numpy as np
 import rasterio
 import zarr
 
-from grid_spec import pilot_grid_spec
+from fetch_3dep import tiles_for_bbox
+from grid_spec import region_bbox, region_grid_spec
 
-LAYER_FILES = {
-    "elevation": "pilot_dem.tif",
-    "twi": "pilot_twi.tif",
-    "slope": "pilot_slope.tif",
-    "aspect": "pilot_aspect.tif",
-    "theta_s": "pilot_theta_s.tif",
-    "theta_wilt": "pilot_theta_wilt.tif",
+# layer name -> filename suffix; the full filename is `<region>_<suffix>`
+# (e.g. `pilot_dem.tif`, `front-range_dem.tif`).
+LAYER_SUFFIXES = {
+    "elevation": "dem.tif",
+    "twi": "twi.tif",
+    "slope": "slope.tif",
+    "aspect": "aspect.tif",
+    "theta_s": "theta_s.tif",
+    "theta_wilt": "theta_wilt.tif",
 }
+# The pilot's file map, kept as a stable name for existing callers/tests.
+LAYER_FILES = {name: f"pilot_{suffix}" for name, suffix in LAYER_SUFFIXES.items()}
 
 CHUNK_SIZE = 512
 
 
-def assemble(data_dir: str, output_path: str) -> None:
-    grid = pilot_grid_spec()
+def assemble(data_dir: str, output_path: str, region: str = "pilot") -> None:
+    grid = region_grid_spec(region)
     data_dir = Path(data_dir)
+    layer_files = {name: f"{region}_{suffix}" for name, suffix in LAYER_SUFFIXES.items()}
 
     root = zarr.open_group(store=output_path, mode="w")
 
-    for name, filename in LAYER_FILES.items():
+    for name, filename in layer_files.items():
         path = data_dir / filename
         if not path.exists():
             raise FileNotFoundError(f"{path} not found -- run the corresponding derive/fetch script first")
@@ -67,7 +73,7 @@ def assemble(data_dir: str, output_path: str) -> None:
         valid = arr[~np.isnan(arr)]
         print(f"  {name}: {arr.shape}, {valid.size}/{arr.size} valid cells, mean={valid.mean():.3f}")
 
-    twi_bar_path = data_dir / "pilot_twi_bar.npz"
+    twi_bar_path = data_dir / f"{region}_twi_bar.npz"
     if not twi_bar_path.exists():
         raise FileNotFoundError(f"{twi_bar_path} not found -- run derive_coarse_twi.py first")
     npz = np.load(twi_bar_path)
@@ -78,9 +84,10 @@ def assemble(data_dir: str, output_path: str) -> None:
 
     provenance = {
         "assembled_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "region": "colorado-10m-pilot-boulder-foothills",
+        "region": f"colorado-10m-{region}",
+        "region_bbox_wgs84": list(region_bbox(region)),
         "sources": {
-            "elevation": "USGS 3DEP 1/3 arc-second (tiles n40w106, n41w106), "
+            "elevation": f"USGS 3DEP 1/3 arc-second (tiles {', '.join(tiles_for_bbox(*region_bbox(region)))}), "
             "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/current/",
             "twi_slope_aspect": "Derived from elevation via pyDEM (Ueckermann et al. 2018) "
             "with apply_twi_limits=True (Horn's method for slope/aspect) -- the exact "
@@ -107,10 +114,11 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--region", default="pilot")
     parser.add_argument("--data-dir", default="./data/static")
-    parser.add_argument("--output", default="./data/static/colorado-10m-pilot.zarr")
+    parser.add_argument("--output", default=None, help="default: ./data/static/colorado-10m-<region>.zarr")
     args = parser.parse_args()
-    assemble(args.data_dir, args.output)
+    assemble(args.data_dir, args.output or f"./data/static/colorado-10m-{args.region}.zarr", region=args.region)
 
 
 if __name__ == "__main__":

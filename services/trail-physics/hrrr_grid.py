@@ -146,6 +146,37 @@ class HrrrGrid:
         j = (y - y0) / self.dy
         return i, j
 
+    def geo_to_grid_array(self, lat_deg, lon_deg):
+        """Vectorized `geo_to_grid`: arrays of (lat, lon) in degrees ->
+        arrays (i, j) of fractional grid indices.
+
+        Added Session 14 (Front Range build): the scalar version called
+        once per fine-grid cell in a Python loop is ~14M calls for the
+        pilot (tolerable) but ~287M for the Front Range (hours). Same
+        formulas, numpy instead of `math`; `test_hrrr_grid.py` asserts it
+        agrees with the scalar version -- itself cross-validated bit-for-bit
+        against the Rust implementation -- so it inherits that guarantee
+        rather than being an independent reimplementation to trust.
+        """
+        import numpy as np
+
+        lat = np.radians(np.asarray(lat_deg, dtype=np.float64))
+        lon = np.radians(np.asarray(lon_deg, dtype=np.float64))
+
+        two_pi = 2.0 * math.pi
+        dlon = (lon - self.lon0 + math.pi) % two_pi - math.pi
+        rho = self.earth_radius * self.f / np.tan(math.pi / 4.0 + lat / 2.0) ** self.n
+        theta = self.n * dlon
+        x = rho * np.sin(theta)
+        y = self.rho0 - rho * np.cos(theta)
+
+        dlon0 = self._normalize_dlon(self.lon1 - self.lon0)
+        theta0 = self.n * dlon0
+        x0 = self.rho0 * math.sin(theta0)
+        y0 = self.rho0 - self.rho0 * math.cos(theta0)
+
+        return (x - x0) / self.dx, (y - y0) / self.dy
+
     def grid_to_geo(self, i: float, j: float) -> tuple[float, float]:
         """(i, j) fractional grid indices -> (lat, lon) in degrees."""
         dlon0 = self._normalize_dlon(self.lon1 - self.lon0)

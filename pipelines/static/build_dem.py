@@ -32,7 +32,7 @@ import rasterio
 from rasterio.merge import merge
 from rasterio.warp import Resampling, calculate_default_transform, reproject
 
-from grid_spec import STATIC_STACK_CRS, GridSpec, pilot_grid_spec
+from grid_spec import STATIC_STACK_CRS, GridSpec, region_bbox, region_grid_spec
 
 BUCKET_URL = "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/TIFF/current"
 
@@ -122,6 +122,11 @@ def build_pilot_dem(bbox_wgs84: tuple[float, float, float, float], tiles: list[s
     with rasterio.open(
         output_path, "w", driver="GTiff", height=grid.height, width=grid.width, count=1,
         dtype=np.float32, crs=grid.crs, transform=grid.transform, nodata=np.nan, compress="deflate",
+        # Tiled (not striped): derive_terrain_pydem reads ~4600x4600 windows,
+        # and a striped full-width deflate GeoTIFF would force decompressing
+        # every strip across the whole grid width for each one. BIGTIFF so a
+        # 345M-cell layer never depends on compression to stay under 4 GB.
+        tiled=True, blockxsize=512, blockysize=512, BIGTIFF="YES",
     ) as dst:
         dst.write(dest, 1)
 
@@ -130,14 +135,18 @@ def build_pilot_dem(bbox_wgs84: tuple[float, float, float, float], tiles: list[s
 
 
 def main():
-    from grid_spec import PILOT_3DEP_TILES, PILOT_BBOX_WGS84
+    from fetch_3dep import tiles_for_bbox
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", default="./data/static/pilot_dem.tif")
+    parser.add_argument("--region", default="pilot")
+    parser.add_argument("--output", default=None, help="default: ./data/static/<region>_dem.tif")
     args = parser.parse_args()
 
-    grid = pilot_grid_spec()
-    build_pilot_dem(PILOT_BBOX_WGS84, PILOT_3DEP_TILES, args.output, grid)
+    bbox = region_bbox(args.region)
+    tiles = tiles_for_bbox(*bbox)
+    print(f"Region {args.region}: bbox {bbox} -> 3DEP tiles {tiles}")
+    grid = region_grid_spec(args.region)
+    build_pilot_dem(bbox, tiles, args.output or f"./data/static/{args.region}_dem.tif", grid)
 
 
 if __name__ == "__main__":

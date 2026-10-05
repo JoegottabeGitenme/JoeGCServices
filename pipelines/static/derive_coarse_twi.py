@@ -31,66 +31,95 @@ from pathlib import Path
 import numpy as np
 import rasterio
 from pyproj import Transformer
+from rasterio.windows import Window
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "services" / "trail-physics"))
 
 from hrrr_grid import HrrrGrid  # noqa: E402
 
 
-def compute_coarse_twi_bar(twi_path: str, hrrr_grid: HrrrGrid | None = None):
+DEFAULT_BAND_ROWS = 512
+
+
+def compute_coarse_twi_bar(twi_path: str, hrrr_grid: HrrrGrid | None = None, band_rows: int = DEFAULT_BAND_ROWS):
     """Returns (hrrr_rows, hrrr_cols, twi_bar_values, counts) -- one entry
-    per DISTINCT HRRR cell that the fine TWI grid actually overlaps."""
+    per DISTINCT HRRR cell that the fine TWI grid actually overlaps.
+
+    **Processed in row bands (Session 14)**, accumulating per-HRRR-cell
+    sums/counts across bands, because the original whole-raster version
+    built full-grid int64 `meshgrid` index arrays plus float64 coordinate
+    arrays -- tens of GB at the Front Range's 345.6M cells (it was fine at
+    the pilot's 17M). It also looped over every fine cell in Python calling
+    the scalar `geo_to_grid` (~287M calls for the Front Range); this uses
+    `HrrrGrid.geo_to_grid_array` (vectorized, tested against the scalar
+    version) instead. The number of distinct HRRR cells is small (186 for
+    the pilot, a few thousand for the Front Range), so the cross-band
+    accumulator is a plain dict.
+
+    Results match the unbanded computation up to float summation order
+    (see `test_banded_matches_unbanded`)."""
     if hrrr_grid is None:
         hrrr_grid = HrrrGrid.hrrr()
 
+    sums: dict[int, float] = {}
+    counts: dict[int, int] = {}
+
     with rasterio.open(twi_path) as src:
-        twi = src.read(1)
         crs = src.crs
         transform = src.transform
+        nrows, ncols = src.height, src.width
+        if transform.b != 0 or transform.d != 0:
+            raise ValueError("compute_coarse_twi_bar assumes a north-up, unrotated grid transform")
+        to_wgs84 = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
 
-    nrows, ncols = twi.shape
-    rows_idx, cols_idx = np.meshgrid(np.arange(nrows), np.arange(ncols), indexing="ij")
-    # Cell-center coordinates in the fine grid's own CRS.
-    xs, ys = rasterio.transform.xy(transform, rows_idx.ravel(), cols_idx.ravel())
-    xs = np.asarray(xs)
-    ys = np.asarray(ys)
+        # Cell-center x never changes between bands.
+        col_x = transform.c + (np.arange(ncols) + 0.5) * transform.a
 
-    valid = ~np.isnan(twi.ravel())
-    xs, ys = xs[valid], ys[valid]
-    twi_valid = twi.ravel()[valid]
+        for r0 in range(0, nrows, band_rows):
+            nr = min(band_rows, nrows - r0)
+            band = src.read(1, window=Window(0, r0, ncols, nr))
+            valid = ~np.isnan(band)
+            if not valid.any():
+                continue
 
-    to_wgs84 = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
-    lons, lats = to_wgs84.transform(xs, ys)
+            row_y = transform.f + (np.arange(r0, r0 + nr) + 0.5) * transform.e
+            xs = np.broadcast_to(col_x, (nr, ncols))[valid]
+            ys = np.broadcast_to(row_y[:, None], (nr, ncols))[valid]
+            twi_valid = band[valid].astype(np.float64)
 
-    hrrr_rows = np.empty(len(lons), dtype=np.int32)
-    hrrr_cols = np.empty(len(lons), dtype=np.int32)
-    for idx, (lat, lon) in enumerate(zip(lats, lons)):
-        i, j = hrrr_grid.geo_to_grid(lat, lon)
-        hrrr_cols[idx] = round(i)
-        hrrr_rows[idx] = round(j)
+            lons, lats = to_wgs84.transform(xs, ys)
+            ii, jj = hrrr_grid.geo_to_grid_array(lats, lons)
+            # np.round and Python's round() both round half to even, so this
+            # matches the original scalar version's `round(i)` exactly.
+            keys = np.round(jj).astype(np.int64) * hrrr_grid.nx + np.round(ii).astype(np.int64)
 
-    # Aggregate: mean TWI per distinct (hrrr_row, hrrr_col) pair.
-    keys = hrrr_rows.astype(np.int64) * hrrr_grid.nx + hrrr_cols.astype(np.int64)
-    unique_keys, inverse, counts = np.unique(keys, return_inverse=True, return_counts=True)
-    sums = np.zeros(len(unique_keys))
-    np.add.at(sums, inverse, twi_valid)
-    means = sums / counts
+            unique_keys, inverse, key_counts = np.unique(keys, return_inverse=True, return_counts=True)
+            key_sums = np.bincount(inverse, weights=twi_valid, minlength=len(unique_keys))
+            for k, sm, ct in zip(unique_keys.tolist(), key_sums.tolist(), key_counts.tolist()):
+                sums[k] = sums.get(k, 0.0) + sm
+                counts[k] = counts.get(k, 0) + ct
 
-    out_rows = (unique_keys // hrrr_grid.nx).astype(np.int32)
-    out_cols = (unique_keys % hrrr_grid.nx).astype(np.int32)
-    return out_rows, out_cols, means.astype(np.float32), counts.astype(np.int32)
+    ordered = sorted(sums)
+    out_rows = np.array([k // hrrr_grid.nx for k in ordered], dtype=np.int32)
+    out_cols = np.array([k % hrrr_grid.nx for k in ordered], dtype=np.int32)
+    means = np.array([sums[k] / counts[k] for k in ordered], dtype=np.float32)
+    out_counts = np.array([counts[k] for k in ordered], dtype=np.int32)
+    return out_rows, out_cols, means, out_counts
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--twi-path", default="./data/static/pilot_twi.tif")
-    parser.add_argument("--output", default="./data/static/pilot_twi_bar.npz")
+    parser.add_argument("--region", default="pilot")
+    parser.add_argument("--twi-path", default=None, help="default: ./data/static/<region>_twi.tif")
+    parser.add_argument("--output", default=None, help="default: ./data/static/<region>_twi_bar.npz")
     args = parser.parse_args()
+    args.twi_path = args.twi_path or f"./data/static/{args.region}_twi.tif"
+    args.output = args.output or f"./data/static/{args.region}_twi_bar.npz"
 
     rows, cols, twi_bar, counts = compute_coarse_twi_bar(args.twi_path)
     np.savez(args.output, hrrr_row=rows, hrrr_col=cols, twi_bar=twi_bar, n_fine_cells=counts)
     print(
-        f"Wrote {args.output}: {len(rows)} distinct HRRR cells covered by the pilot region "
+        f"Wrote {args.output}: {len(rows)} distinct HRRR cells covered by the {args.region} region "
         f"(twi_bar range {twi_bar.min():.3f}-{twi_bar.max():.3f}, "
         f"fine cells per HRRR cell: {counts.min()}-{counts.max()})"
     )

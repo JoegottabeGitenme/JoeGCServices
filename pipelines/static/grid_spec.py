@@ -136,9 +136,45 @@ def _ceil_to_multiple(value: float, multiple: float) -> float:
     return math.ceil(value / multiple) * multiple
 
 
+# Front Range foothills corridor (Session 14): Fort Collins down to Colorado
+# Springs, plains edge up through the foothills. Chosen by the user over a
+# wider mountain-parks extent: 57,900 active trail segments (counted live
+# against the production linear_features table via ST_Intersects on the
+# lon/lat box) -- the overwhelming majority of Front Range trail traffic.
+#
+# **Size, computed not estimated**: this bbox becomes a 13,770 x 25,096 =
+# 345.6M-cell grid in EPSG:5070 (~20x the pilot's 17.1M). A lon/lat box
+# reprojects to a larger *rotated* rectangle in Albers, so the grid is
+# bigger than a naive lon/lat area estimate suggests (and, like the pilot,
+# has real nodata corners). A monolithic pyDEM TWI run at this size needs
+# ~68 GB (measured ~198 bytes/cell on the pilot) -- not feasible, so
+# `derive_terrain_pydem.py` tiles it (see that module's docstring).
+FRONT_RANGE_BBOX_WGS84 = (-105.95, 38.60, -104.60, 40.75)
+
+# Region name -> WGS84 bbox. The region name is also the file prefix every
+# derive/fetch script uses for its outputs (`pilot_dem.tif`,
+# `front-range_dem.tif`, ...), so adding a region is a one-line change here.
+REGION_BBOXES_WGS84 = {
+    "pilot": PILOT_BBOX_WGS84,
+    "front-range": FRONT_RANGE_BBOX_WGS84,
+}
+
+
+def region_bbox(region: str) -> tuple[float, float, float, float]:
+    try:
+        return REGION_BBOXES_WGS84[region]
+    except KeyError:
+        raise ValueError(f"Unknown region {region!r}; known regions: {sorted(REGION_BBOXES_WGS84)}") from None
+
+
+def region_grid_spec(region: str) -> GridSpec:
+    """The pinned grid spec for a named region -- the one source of truth
+    for that region's exact extent. Call this (or `pilot_grid_spec`), never
+    `bbox_wgs84_to_grid_spec` with a hand-typed bbox."""
+    return bbox_wgs84_to_grid_spec(*region_bbox(region))
+
+
 def pilot_grid_spec() -> GridSpec:
-    """The pinned pilot region's grid spec -- call this, not
-    `bbox_wgs84_to_grid_spec` directly with a hand-typed bbox, everywhere
-    else in this package, so there is exactly one source of truth for the
-    pilot region's exact extent."""
-    return bbox_wgs84_to_grid_spec(*PILOT_BBOX_WGS84)
+    """The pinned pilot region's grid spec (kept as a stable alias --
+    existing callers and tests use this name)."""
+    return region_grid_spec("pilot")
