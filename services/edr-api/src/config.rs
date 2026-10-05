@@ -1234,6 +1234,7 @@ collections:
             .map(|p| p.name.as_str())
             .collect();
         assert!(param_names.contains(&"soil_moisture"));
+        assert!(param_names.contains(&"saturation"));
         assert!(param_names.contains(&"frozen_fraction"));
         assert!(param_names.contains(&"confidence"));
         assert!(param_names.contains(&"feature_class"));

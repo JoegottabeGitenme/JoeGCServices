@@ -2311,6 +2311,15 @@ CREATE INDEX IF NOT EXISTS idx_trail_reports_feature ON trail_reports(feature_id
 /// "keep the full segment timeseries indefinitely (small, and it is your
 /// training set)"), same posture as `storm_events` and `trail_reports`.
 ///
+/// **`saturation` (Session 14)**: degree of saturation, `soil_moisture /
+/// theta_s` clipped to [0, 1] -- a unitless "how full is the soil" number a
+/// UI can color-ramp directly (raw m3/m3 soil moisture means little without
+/// the soil's own porosity). NULL outside static-stack coverage, where no
+/// theta_s exists. The trailing `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
+/// is what adds it to deployments created before this column existed
+/// (`CREATE TABLE IF NOT EXISTS` alone never alters an existing table);
+/// it is a no-op on fresh installs, which get the column from the CREATE.
+///
 /// v1 caveat: as of this session, only `soil_moisture` (Eq. 1 +
 /// reconstructed Eq. 2/7 relaxation) and `frozen_fraction` (the TSOIL<=273.15K
 /// proxy, since HRRR has no soil-ice-fraction field) have an implemented
@@ -2326,6 +2335,7 @@ CREATE TABLE IF NOT EXISTS segment_conditions (
     valid_time TIMESTAMPTZ NOT NULL,
     forecast_hour INT NOT NULL,
     soil_moisture REAL,
+    saturation REAL,
     frozen_fraction REAL,
     frost_depth_m REAL,
     swe_mm REAL,
@@ -2342,7 +2352,8 @@ CREATE INDEX IF NOT EXISTS idx_segment_conditions_feature_valid
 CREATE INDEX IF NOT EXISTS idx_segment_conditions_valid_time
     ON segment_conditions(valid_time);
 CREATE INDEX IF NOT EXISTS idx_segment_conditions_run_time
-    ON segment_conditions(run_time)
+    ON segment_conditions(run_time);
+ALTER TABLE segment_conditions ADD COLUMN IF NOT EXISTS saturation REAL
 "#;
 
 /// Schema for `trail_physics_progress` -- the durable work ledger the

@@ -87,6 +87,52 @@ class TestDownscaleSoilMoisture:
         assert np.isnan(result.predicted[1])
 
 
+class TestSaturation:
+    """Session 14: degree of saturation = downscaled soil moisture /
+    theta_s, clipped to [0, 1], NaN wherever there's no real theta_s."""
+
+    def test_saturation_is_downscaled_moisture_over_theta_s(self):
+        soilw = np.array([0.25, 0.25])
+        samples = _static_samples([10.0, 6.0], [0.45, 0.50], [0.08, 0.08], [8.0, 8.0])
+        result = downscale_soil_moisture(samples, soilw)
+        np.testing.assert_allclose(result.saturation, result.predicted / np.array([0.45, 0.50]))
+
+    def test_wetter_terrain_is_more_saturated_than_drier_at_same_coarse_value(self):
+        """Same coarse HRRR value, same soil: the high-TWI point must read
+        MORE saturated than the low-TWI one -- the whole point of the
+        topographic downscaling, surfaced in the user-facing number."""
+        soilw = np.array([0.25, 0.25])
+        samples = _static_samples([10.0, 6.0], [0.45, 0.45], [0.08, 0.08], [8.0, 8.0])
+        result = downscale_soil_moisture(samples, soilw)
+        assert result.saturation[0] > result.saturation[1]
+
+    def test_clipped_to_unit_interval(self):
+        # theta_s tiny relative to the predicted value forces an overshoot;
+        # theta_s huge forces ~0.
+        soilw = np.array([0.40, 0.001])
+        samples = _static_samples([14.0, 2.0], [0.10, 5.0], [0.02, 0.02], [8.0, 8.0])
+        result = downscale_soil_moisture(samples, soilw)
+        assert (result.saturation >= 0.0).all() and (result.saturation <= 1.0).all()
+        assert result.saturation[0] == 1.0
+
+    def test_uncovered_points_have_nan_saturation_not_a_fabricated_value(self):
+        soilw = np.array([0.25, 0.25])
+        samples = _static_samples([10.0, 6.0], [0.45, np.nan], [0.08, 0.08], [8.0, 8.0])  # 2nd point: no theta_s
+        result = downscale_soil_moisture(samples, soilw)
+        assert not np.isnan(result.saturation[0])
+        assert np.isnan(result.saturation[1])
+
+    def test_no_static_samples_gives_all_nan_saturation(self):
+        result = downscale_soil_moisture(None, np.array([0.25, 0.30]))
+        assert np.isnan(result.saturation).all()
+        assert result.saturation.shape == (2,)
+
+    def test_nan_hrrr_reading_gives_nan_saturation(self):
+        samples = _static_samples([10.0], [0.45], [0.08], [8.0])
+        result = downscale_soil_moisture(samples, np.array([np.nan]))
+        assert np.isnan(result.saturation).all()
+
+
 class TestSampleStaticInputs:
     """The real batched I/O -- exactly 3 `sample_layer_array` calls (twi,
     theta_s, theta_wilt) no matter how many points are in the batch.

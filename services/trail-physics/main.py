@@ -275,6 +275,7 @@ def _process_forecast_hour(config: Config, conn, batch: SegmentBatch, job: db.Pe
                     valid_time=valid_time,
                     forecast_hour=job.forecast_hour,
                     soil_moisture_samples=result.predicted,
+                    saturation_samples=result.saturation,
                     frozen_flags=frozen_flags,
                     confidence=result.confidence,
                     model_version=config.model_version,

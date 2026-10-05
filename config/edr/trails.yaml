@@ -75,6 +75,8 @@ collections:
         levels: [surface]
       - name: soil_moisture # fractional volumetric (m3/m3); only present with ?conditions=latest
         levels: [surface]
+      - name: saturation # 0-1 degree of saturation = soil_moisture / theta_s (fraction of the soil's pore space holding water), terrain-downscaled; null outside static-stack coverage (no theta_s there); only present with ?conditions=latest
+        levels: [surface]
       - name: frozen_fraction # 0-1, fraction of sampled vertices with TSOIL<=273.15K; only present with ?conditions=latest
         levels: [surface]
       - name: confidence # 0-1, fraction of sampled vertices with real WS1 terrain downscaling (vs. raw HRRR fallback); only present with ?conditions=latest
@@ -91,7 +93,7 @@ settings:
     png_max_age: 3600
 
 limits:
-  max_parameters_per_request: 5
+  max_parameters_per_request: 6
   max_time_steps: 1
   max_vertical_levels: 1
   max_response_size_mb: 50

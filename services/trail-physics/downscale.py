@@ -84,6 +84,13 @@ class DownscaleResult:
     # valid HRRR readings at all (matches aggregate.py's own "no data"
     # convention -- None, not 0.0 or NaN).
     confidence: float | None
+    # Degree of saturation per point: downscaled soil moisture / theta_s
+    # (the fraction of the soil's pore space holding water), clipped to
+    # [0, 1]. NaN wherever the point didn't get real terrain/soil data --
+    # there is no theta_s outside the static stack's coverage, and
+    # inventing one (e.g. a generic porosity) would be a fabricated
+    # number presented as a measurement. Same convention as `confidence`.
+    saturation: np.ndarray
 
 
 def sample_static_inputs(
@@ -130,9 +137,10 @@ def downscale_soil_moisture(
     valid_soilw = ~np.isnan(soilw_samples)
     n_valid = int(valid_soilw.sum())
 
+    no_saturation = np.full(predicted.shape, np.nan)
     if static_samples is None or n_valid == 0:
         confidence = 0.0 if n_valid > 0 else None
-        return DownscaleResult(predicted=predicted, confidence=confidence)
+        return DownscaleResult(predicted=predicted, confidence=confidence, saturation=no_saturation)
 
     covered = (
         valid_soilw
@@ -152,5 +160,14 @@ def downscale_soil_moisture(
         )
         predicted[covered] = downscaled
 
+    # Clipped: the redistribution equation can push a point slightly above
+    # theta_s (or below 0) at extreme TWI; a consumer needs a bounded
+    # 0-1 quantity, and "fully saturated" is the honest reading of an
+    # overshoot.
+    saturation = no_saturation
+    if covered.any():
+        saturation = no_saturation.copy()
+        saturation[covered] = np.clip(predicted[covered] / static_samples.theta_s[covered], 0.0, 1.0)
+
     confidence = float(covered.sum()) / n_valid
-    return DownscaleResult(predicted=predicted, confidence=confidence)
+    return DownscaleResult(predicted=predicted, confidence=confidence, saturation=saturation)

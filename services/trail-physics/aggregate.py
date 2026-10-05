@@ -57,6 +57,7 @@ def build_segment_condition_row(
     swe_samples: np.ndarray | None = None,
     confidence: float | None = None,
     model_version: str | None = None,
+    saturation_samples: np.ndarray | None = None,
 ) -> dict:
     """Build one row dict ready for db.upsert_segment_conditions.
 
@@ -73,6 +74,11 @@ def build_segment_condition_row(
     simpler, and immediately useful notion of confidence rather than
     leaving it unpopulated until triple-collocation exists.
 
+    `saturation_samples` (Session 14): per-vertex degree of saturation
+    (soil_moisture / theta_s, see `downscale.DownscaleResult.saturation`);
+    aggregated as a NaN-ignoring mean, None when no vertex had real
+    terrain/soil data (i.e. outside static-stack coverage).
+
     `softness_index` is left as None (S6, blocked on restricted Army FASST
     coefficients -- see design doc).
     """
@@ -82,6 +88,9 @@ def build_segment_condition_row(
         "valid_time": valid_time,
         "forecast_hour": forecast_hour,
         "soil_moisture": aggregate_mean_ignoring_nan(soil_moisture_samples),
+        "saturation": (
+            aggregate_mean_ignoring_nan(saturation_samples) if saturation_samples is not None else None
+        ),
         "frozen_fraction": (
             aggregate_frozen_fraction(frozen_flags) if frozen_flags is not None else None
         ),

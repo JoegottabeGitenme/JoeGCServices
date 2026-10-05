@@ -124,6 +124,42 @@ class TestMarkForecastHourProcessed:
         conn.commit.assert_called_once()
 
 
+class TestUpsertSegmentConditionsSaturation:
+    """Session 14: the saturation column must be written on insert AND
+    refreshed on conflict (a re-run of the same hour overwrites, doesn't
+    keep a stale value)."""
+
+    def _run(self, row):
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        db.upsert_segment_conditions(conn, [row])
+        return cursor.execute.call_args[0]
+
+    def _row(self, **extra):
+        t = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+        return dict(
+            feature_id=1, run_time=t, valid_time=t, forecast_hour=0, soil_moisture=0.2, frozen_fraction=0.0,
+            frost_depth_m=None, swe_mm=None, softness_index=None, confidence=1.0, **extra,
+        )
+
+    def test_sql_inserts_and_updates_saturation(self):
+        sql, _ = self._run(self._row(saturation=0.5))
+        assert "saturation" in sql.split("VALUES")[0]  # column list
+        assert "%(saturation)s" in sql
+        assert "saturation = EXCLUDED.saturation" in sql
+
+    def test_value_is_passed_through(self):
+        _, params = self._run(self._row(saturation=0.5))
+        assert params["saturation"] == 0.5
+
+    def test_row_without_saturation_key_defaults_to_null_not_a_keyerror(self):
+        _, params = self._run(self._row())
+        assert params["saturation"] is None
+
+
 class TestGetActiveFeatureIdsInBbox:
     """Session 13: the coverage-filter query that keeps trail-physics from
     attempting all ~135,000 active Colorado trails every cycle."""

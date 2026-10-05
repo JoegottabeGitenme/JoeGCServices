@@ -286,8 +286,8 @@ def get_feature_geometries(conn, feature_ids: list[int]) -> dict[int, list[tuple
 def upsert_segment_conditions(conn, rows: list[dict]) -> int:
     """Batch upsert into segment_conditions. Each row dict must have keys
     matching the schema: feature_id, run_time, valid_time, forecast_hour,
-    soil_moisture, frozen_fraction, frost_depth_m, swe_mm, softness_index,
-    confidence, model_version (optional, defaults server-side).
+    soil_moisture, saturation, frozen_fraction, frost_depth_m, swe_mm,
+    softness_index, confidence, model_version (optional, defaults server-side).
 
     ON CONFLICT (feature_id, valid_time, model_version) DO UPDATE, matching
     every other upsert in this codebase's pattern (linear_features,
@@ -301,11 +301,11 @@ def upsert_segment_conditions(conn, rows: list[dict]) -> int:
                 """
                 INSERT INTO segment_conditions (
                     feature_id, run_time, valid_time, forecast_hour,
-                    soil_moisture, frozen_fraction, frost_depth_m, swe_mm,
+                    soil_moisture, saturation, frozen_fraction, frost_depth_m, swe_mm,
                     softness_index, confidence, model_version, raw
                 ) VALUES (
                     %(feature_id)s, %(run_time)s, %(valid_time)s, %(forecast_hour)s,
-                    %(soil_moisture)s, %(frozen_fraction)s, %(frost_depth_m)s, %(swe_mm)s,
+                    %(soil_moisture)s, %(saturation)s, %(frozen_fraction)s, %(frost_depth_m)s, %(swe_mm)s,
                     %(softness_index)s, %(confidence)s,
                     %(model_version)s, %(raw)s
                 )
@@ -313,6 +313,7 @@ def upsert_segment_conditions(conn, rows: list[dict]) -> int:
                     run_time = EXCLUDED.run_time,
                     forecast_hour = EXCLUDED.forecast_hour,
                     soil_moisture = EXCLUDED.soil_moisture,
+                    saturation = EXCLUDED.saturation,
                     frozen_fraction = EXCLUDED.frozen_fraction,
                     frost_depth_m = EXCLUDED.frost_depth_m,
                     swe_mm = EXCLUDED.swe_mm,
@@ -324,6 +325,7 @@ def upsert_segment_conditions(conn, rows: list[dict]) -> int:
                 {
                     "model_version": "trail-physics-v0",
                     "raw": "{}",
+                    "saturation": None,  # rows built before Session 14 (or by callers that don't compute it)
                     **row,
                 },
             )

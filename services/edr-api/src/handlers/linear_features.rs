@@ -295,6 +295,7 @@ fn timeseries_to_json(
                 "valid_time": c.valid_time.to_rfc3339(),
                 "forecast_hour": c.forecast_hour,
                 "soil_moisture": c.soil_moisture,
+                "saturation": c.saturation,
                 "frozen_fraction": c.frozen_fraction,
                 "confidence": c.confidence,
                 "model_version": c.model_version,
@@ -388,6 +389,7 @@ fn feature_to_geojson(f: LinearFeatureItem, condition: Option<&SegmentCondition>
             "valid_time": c.valid_time.to_rfc3339(),
             "forecast_hour": c.forecast_hour,
             "soil_moisture": c.soil_moisture,
+            "saturation": c.saturation,
             "frozen_fraction": c.frozen_fraction,
             "confidence": c.confidence,
             "model_version": c.model_version,
@@ -618,6 +620,7 @@ mod tests {
             valid_time: Utc.with_ymd_and_hms(2026, 1, 15, 15, 0, 0).unwrap(),
             forecast_hour: 3,
             soil_moisture: Some(0.23),
+            saturation: Some(0.52),
             frozen_fraction: Some(0.0),
             frost_depth_m: None,
             swe_mm: None,
@@ -652,6 +655,8 @@ mod tests {
         // 0.23f64 literally) -- compare with tolerance, not ==.
         let soil_moisture = conditions["soil_moisture"].as_f64().unwrap();
         assert!((soil_moisture - 0.23).abs() < 1e-6);
+        let saturation = conditions["saturation"].as_f64().unwrap();
+        assert!((saturation - 0.52).abs() < 1e-6);
         assert_eq!(conditions["confidence"], json!(1.0));
         assert_eq!(conditions["forecast_hour"], json!(3));
         assert_eq!(conditions["model_version"], json!("trail-physics-v1"));
@@ -705,6 +710,7 @@ mod tests {
                 + chrono::Duration::hours(hour),
             forecast_hour,
             soil_moisture: Some(soil_moisture),
+            saturation: Some(soil_moisture / 0.45),
             frozen_fraction: Some(0.0),
             frost_depth_m: None,
             swe_mm: None,
@@ -766,6 +772,22 @@ mod tests {
         let result = timeseries_to_json(&feature, 9, &rows);
         let soil_moisture = result["conditions"][0]["soil_moisture"].as_f64().unwrap();
         assert!((soil_moisture - 0.33).abs() < 1e-6);
+        let saturation = result["conditions"][0]["saturation"].as_f64().unwrap();
+        assert!((saturation - 0.33 / 0.45).abs() < 1e-6);
         assert_eq!(result["conditions"][0]["confidence"], json!(1.0));
+    }
+
+    #[test]
+    fn null_saturation_serializes_as_json_null_not_omitted() {
+        // Outside static-stack coverage a row has no theta_s, hence no
+        // saturation. The key must still be PRESENT (null) so a client can
+        // distinguish "not available here" from "field doesn't exist in
+        // this API version".
+        let mut condition = sample_condition(1);
+        condition.saturation = None;
+        let geojson = feature_to_geojson(sample_feature(1), Some(&condition));
+        let conditions = &geojson["properties"]["conditions"];
+        assert!(conditions.get("saturation").is_some());
+        assert_eq!(conditions["saturation"], Value::Null);
     }
 }

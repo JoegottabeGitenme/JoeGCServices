@@ -230,6 +230,13 @@ class TestStaticStackSampledOncePerCycleNotPerHour:
             _run_hour(job, _batch({1: GOLDEN}))
         mock_sample.assert_not_called()
 
+    def test_saturation_from_downscale_reaches_the_row_builder(self):
+        job = db.PendingForecastHour(reference_time=datetime(2026, 1, 15, 12, 0), forecast_hour=0)
+        sat = np.array([0.3])
+        result = MagicMock(predicted=np.array([0.2]), confidence=1.0, saturation=sat)
+        captured, *_ = _run_hour(job, _batch({1: GOLDEN}), downscale_result=result)
+        assert captured[0]["saturation_samples"] is sat
+
     def test_segment_static_samples_are_sliced_per_feature(self):
         """Each segment must be downscaled against ITS OWN slice of the
         batch's static samples (offsets must line up) -- a misaligned slice

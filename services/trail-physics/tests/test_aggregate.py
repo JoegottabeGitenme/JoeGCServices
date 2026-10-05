@@ -84,3 +84,27 @@ def test_build_segment_condition_row_confidence_and_model_version():
     )
     assert row["confidence"] == pytest.approx(0.75)
     assert row["model_version"] == "trail-physics-v1"
+
+
+def test_build_segment_condition_row_aggregates_saturation_as_nan_ignoring_mean():
+    row = build_segment_condition_row(
+        feature_id=1,
+        run_time=datetime(2026, 9, 22, 18, tzinfo=timezone.utc),
+        valid_time=datetime(2026, 9, 22, 18, tzinfo=timezone.utc),
+        forecast_hour=0,
+        soil_moisture_samples=np.array([0.2, 0.2, 0.2]),
+        saturation_samples=np.array([0.4, np.nan, 0.6]),
+    )
+    assert row["saturation"] == pytest.approx(0.5)
+
+
+def test_saturation_is_none_when_not_provided_or_all_nan():
+    base = dict(
+        feature_id=1,
+        run_time=datetime(2026, 9, 22, 18, tzinfo=timezone.utc),
+        valid_time=datetime(2026, 9, 22, 18, tzinfo=timezone.utc),
+        forecast_hour=0,
+        soil_moisture_samples=np.array([0.2]),
+    )
+    assert build_segment_condition_row(**base)["saturation"] is None
+    assert build_segment_condition_row(**base, saturation_samples=np.array([np.nan, np.nan]))["saturation"] is None

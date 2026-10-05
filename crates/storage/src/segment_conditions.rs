@@ -21,6 +21,9 @@ pub struct SegmentCondition {
     pub valid_time: DateTime<Utc>,
     pub forecast_hour: i32,
     pub soil_moisture: Option<f32>,
+    /// Degree of saturation (soil_moisture / theta_s, clipped to 0-1); NULL
+    /// outside static-stack coverage. See `SEGMENT_CONDITIONS_SCHEMA_SQL`.
+    pub saturation: Option<f32>,
     pub frozen_fraction: Option<f32>,
     pub frost_depth_m: Option<f32>,
     pub swe_mm: Option<f32>,
@@ -64,7 +67,7 @@ impl SegmentConditionsCatalog {
         sqlx::query_as::<_, SegmentCondition>(
             r#"
             SELECT feature_id, run_time, valid_time, forecast_hour,
-                   soil_moisture, frozen_fraction, frost_depth_m, swe_mm,
+                   soil_moisture, saturation, frozen_fraction, frost_depth_m, swe_mm,
                    softness_index, confidence, model_version
             FROM segment_conditions
             WHERE feature_id = $1 AND valid_time <= NOW()
@@ -91,7 +94,7 @@ impl SegmentConditionsCatalog {
             r#"
             SELECT DISTINCT ON (feature_id)
                    feature_id, run_time, valid_time, forecast_hour,
-                   soil_moisture, frozen_fraction, frost_depth_m, swe_mm,
+                   soil_moisture, saturation, frozen_fraction, frost_depth_m, swe_mm,
                    softness_index, confidence, model_version
             FROM segment_conditions
             WHERE feature_id = ANY($1) AND valid_time <= NOW()
@@ -121,7 +124,7 @@ impl SegmentConditionsCatalog {
                 LIMIT 1
             )
             SELECT feature_id, run_time, valid_time, forecast_hour,
-                   soil_moisture, frozen_fraction, frost_depth_m, swe_mm,
+                   soil_moisture, saturation, frozen_fraction, frost_depth_m, swe_mm,
                    softness_index, confidence, model_version
             FROM segment_conditions
             WHERE feature_id = $1
