@@ -91,17 +91,21 @@ def conditions_problems(c: dict, now: dt.datetime) -> list[str]:
     (empty list = healthy). A pure function so it can be tested against known-
     bad blocks -- including the exact Session 13 bug (a future `valid_time`)."""
     bad = []
-    for key in ("run_time", "valid_time", "forecast_hour", "model_version", "saturation", "soil_moisture", "frozen_fraction", "confidence"):
-        if key not in c:
-            bad.append(f"missing `{key}`")
-    if bad:
+    # Time checks first and independent of which OTHER fields exist: a block
+    # missing a newer field (e.g. `saturation`, added later) must still be
+    # flagged for a future valid_time, not return early on the missing key.
+    if "valid_time" not in c:
+        bad.append("missing `valid_time`")
         return bad
     vt = parse_time(c["valid_time"])
     if vt > now:
         bad.append(f"valid_time {c['valid_time']} is in the FUTURE (a forecast hour served as 'latest')")
     elif now - vt > MAX_LATEST_AGE:
         bad.append(f"valid_time is stale: {now - vt} old (limit {MAX_LATEST_AGE})")
-    if parse_time(c["run_time"]) > vt:
+    for key in ("run_time", "forecast_hour", "model_version", "saturation", "soil_moisture", "frozen_fraction", "confidence"):
+        if key not in c:
+            bad.append(f"missing `{key}`")
+    if "run_time" in c and parse_time(c["run_time"]) > vt:
         bad.append("run_time is after valid_time")
     for key, lo in (("saturation", 0.0), ("frozen_fraction", 0.0), ("confidence", 0.0)):
         v = c.get(key)

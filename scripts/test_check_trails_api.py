@@ -62,3 +62,15 @@ def test_missing_fields_are_reported_not_crashed_on():
 
 def test_nulls_are_allowed_where_the_contract_allows_them():
     assert conditions_problems(block(soil_moisture=None, saturation=None, frozen_fraction=None, confidence=None), NOW) == []
+
+
+def test_future_valid_time_is_flagged_even_when_other_fields_are_missing():
+    """Regression for a flaw in this very checker: it used to return early on a
+    missing field and so never reached the valid_time check. The pre-deploy
+    production response (Session 13 build) had no `saturation` AND a future
+    valid_time -- both must be reported."""
+    c = block(valid_time="2026-10-06T14:00:00+00:00")
+    del c["saturation"]
+    problems = conditions_problems(c, NOW)
+    assert any("FUTURE" in p for p in problems)
+    assert any("saturation" in p for p in problems)
