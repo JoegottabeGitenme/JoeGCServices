@@ -80,6 +80,25 @@ mod tests {
     }
 
     #[test]
+    fn area_and_radius_document_limit_and_class() {
+        // They used to be silently ignored; keep the published contract honest.
+        let v: serde_yaml::Value = serde_yaml::from_str(OPENAPI_SPEC).unwrap();
+        for op in [
+            "/collections/{collectionId}/area",
+            "/collections/{collectionId}/radius",
+        ] {
+            let names: Vec<String> = v["paths"][op]["get"]["parameters"]
+                .as_sequence()
+                .unwrap()
+                .iter()
+                .filter_map(|p| p.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect();
+            assert!(names.contains(&"limit".to_string()), "{} lacks limit", op);
+            assert!(names.contains(&"class".to_string()), "{} lacks class", op);
+        }
+    }
+
+    #[test]
     fn spec_is_valid_yaml_with_a_paths_section() {
         let value: serde_yaml::Value =
             serde_yaml::from_str(OPENAPI_SPEC).expect("openapi.yaml must parse");

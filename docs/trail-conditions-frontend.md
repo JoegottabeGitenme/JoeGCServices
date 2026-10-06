@@ -76,9 +76,17 @@ for (const f of features) {
 | `GET /collections/trails/items/{feature_id}/conditions` | Hourly series for one trail (plain JSON) |
 | `GET /collections/trails` | Collection metadata incl. `conditions_coverage` |
 
-All three list endpoints accept `&conditions=latest`. Other `items` params:
-`class=mtb_trail\|hiking_trail\|track\|bridleway`, `limit` (default 1000, max
-5000), `offset`.
+All three list endpoints (`items`, `area`, `radius`) accept `&conditions=latest`,
+`class=mtb_trail\|hiking_trail\|track\|bridleway`, and `limit` (default 1000,
+max 5000); `items` also takes `offset`. All three return `numberReturned`, so
+**`numberReturned === limit` means the result was truncated** — narrow the
+viewport or raise `limit`.
+
+> **History:** `radius` and `area` used to ignore `limit` and `class` (the
+> parameters were silently dropped, so `radius?limit=3` returned up to 1000
+> features and `class=` had no effect), and returned no `numberReturned`.
+> Fixed in Session 14; if you worked around it by using `items?bbox=`, that
+> still works and remains a fine choice (it also supports `offset` paging).
 
 ## 4. The `conditions` block
 

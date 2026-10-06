@@ -161,6 +161,23 @@ paths:
         - $ref: '#/components/parameters/datetime'
         - $ref: '#/components/parameters/parameter-name'
         - $ref: '#/components/parameters/crs'
+        - name: limit
+          in: query
+          required: false
+          description: |
+            Feature collections only (`trails`, storm events) and point-observation collections:
+            maximum features returned (trails: clamped to 1-5000, default 1000). Ignored by
+            gridded collections. Detect truncation with `numberReturned == limit`.
+          schema:
+            type: integer
+            minimum: 1
+        - name: class
+          in: query
+          required: false
+          description: Trails only. Filter by `feature_class`.
+          schema:
+            type: string
+            enum: [mtb_trail, hiking_trail, track, bridleway]
         - $ref: '#/components/parameters/trailConditions'
         - $ref: '#/components/parameters/f'
         - $ref: '#/components/parameters/width'
@@ -226,6 +243,23 @@ paths:
         - $ref: '#/components/parameters/datetime'
         - $ref: '#/components/parameters/parameter-name'
         - $ref: '#/components/parameters/crs'
+        - name: limit
+          in: query
+          required: false
+          description: |
+            Feature collections only (`trails`, storm events) and point-observation collections:
+            maximum features returned (trails: clamped to 1-5000, default 1000). Ignored by
+            gridded collections. Detect truncation with `numberReturned == limit`.
+          schema:
+            type: integer
+            minimum: 1
+        - name: class
+          in: query
+          required: false
+          description: Trails only. Filter by `feature_class`.
+          schema:
+            type: string
+            enum: [mtb_trail, hiking_trail, track, bridleway]
         - $ref: '#/components/parameters/trailConditions'
         - $ref: '#/components/parameters/f'
       responses:

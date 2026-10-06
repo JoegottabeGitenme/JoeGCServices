@@ -96,6 +96,56 @@ pub struct RadiusQueryParams {
     /// output into each feature's properties. See
     /// `linear_features::TrailRadiusParams::conditions`.
     pub conditions: Option<String>,
+
+    /// Feature collections (trails, storm events) and point-observation
+    /// collections: maximum features returned. Ignored by gridded collections.
+    pub limit: Option<i64>,
+
+    /// linear-features-only: `feature_class` filter (e.g. `mtb_trail`).
+    pub class: Option<String>,
+}
+
+// The `*_params` functions below translate this generic struct into each
+// backend's own. They are separate pure functions (not inline struct literals
+// in the handler) so a dropped field is caught by a unit test: before
+// Session 14 every arm hardcoded `limit: None` -- and the struct had no
+// `limit`/`class` fields at all, so serde silently discarded them from the
+// query string. `?limit=3` returned the 1000 default.
+
+fn trail_radius_params(
+    p: &RadiusQueryParams,
+) -> crate::handlers::linear_features::TrailRadiusParams {
+    crate::handlers::linear_features::TrailRadiusParams {
+        coords: p.coords.clone(),
+        within: p.within.clone(),
+        within_units: p.within_units.clone(),
+        limit: p.limit,
+        class: p.class.clone(),
+        f: p.f.clone(),
+        conditions: p.conditions.clone(),
+    }
+}
+
+fn storm_radius_params(p: &RadiusQueryParams) -> crate::handlers::storm_events::StormRadiusParams {
+    crate::handlers::storm_events::StormRadiusParams {
+        coords: p.coords.clone(),
+        within: p.within.clone(),
+        within_units: p.within_units.clone(),
+        datetime: p.datetime.clone(),
+        limit: p.limit,
+        f: p.f.clone(),
+    }
+}
+
+fn obs_radius_params(p: &RadiusQueryParams) -> ObsRadiusQueryParams {
+    ObsRadiusQueryParams {
+        coords: p.coords.clone().unwrap_or_default(),
+        within: p.within.clone(),
+        datetime: p.datetime.clone(),
+        parameter_name: p.parameter_name.clone(),
+        f: p.f.clone(),
+        limit: p.limit,
+    }
 }
 
 /// GET /edr/collections/:collection_id/radius
@@ -133,14 +183,7 @@ pub async fn radius_handler(
             }
             if model_config.data_type.is_feature_data() {
                 if model_config.observation_source.as_deref() == Some("linear_features") {
-                    let trail_params = crate::handlers::linear_features::TrailRadiusParams {
-                        coords: params.coords.clone(),
-                        within: params.within.clone(),
-                        within_units: params.within_units.clone(),
-                        limit: None,
-                        f: params.f.clone(),
-                        conditions: params.conditions.clone(),
-                    };
+                    let trail_params = trail_radius_params(&params);
                     drop(config);
                     return crate::handlers::linear_features::trail_radius_handler(
                         Extension(state.clone()),
@@ -149,14 +192,7 @@ pub async fn radius_handler(
                     )
                     .await;
                 }
-                let storm_params = crate::handlers::storm_events::StormRadiusParams {
-                    coords: params.coords.clone(),
-                    within: params.within.clone(),
-                    within_units: params.within_units.clone(),
-                    datetime: params.datetime.clone(),
-                    limit: None,
-                    f: params.f.clone(),
-                };
+                let storm_params = storm_radius_params(&params);
                 drop(config);
                 return crate::handlers::storm_events::storm_radius_handler(
                     Extension(state.clone()),
@@ -167,14 +203,7 @@ pub async fn radius_handler(
             }
             if model_config.data_type.is_point_data() {
                 // Convert the coords to format observation handler expects
-                let obs_params = ObsRadiusQueryParams {
-                    coords: params.coords.clone().unwrap_or_default(),
-                    within: params.within.clone(),
-                    datetime: params.datetime.clone(),
-                    parameter_name: params.parameter_name.clone(),
-                    f: params.f.clone(),
-                    limit: None,
-                };
+                let obs_params = obs_radius_params(&params);
                 return obs_radius_query_handler(
                     Extension(state.clone()),
                     Path(collection_id),
@@ -907,5 +936,54 @@ mod tests {
 
         // Point far away should be outside
         assert!(!rq.contains_point(-90.0, 35.5));
+    }
+
+    // ---- Session 14: limit/class were silently dropped by this dispatcher ----
+
+    fn parse(qs: &str) -> RadiusQueryParams {
+        let uri: axum::http::Uri = format!("/radius?{}", qs).parse().unwrap();
+        Query::<RadiusQueryParams>::try_from_uri(&uri).unwrap().0
+    }
+
+    #[test]
+    fn limit_and_class_survive_real_query_string_parsing() {
+        // Before the fix RadiusQueryParams had no such fields, so serde dropped
+        // them from the query string and `?limit=3` returned the 1000 default.
+        let p =
+            parse("coords=POINT(-105.2%2039.7)&within=5&within-units=km&limit=3&class=mtb_trail");
+        assert_eq!(p.limit, Some(3));
+        assert_eq!(p.class.as_deref(), Some("mtb_trail"));
+    }
+
+    #[test]
+    fn omitted_limit_and_class_stay_none() {
+        let p = parse("coords=POINT(-105.2%2039.7)&within=5&within-units=km");
+        assert_eq!(p.limit, None);
+        assert_eq!(p.class, None);
+    }
+
+    #[test]
+    fn trail_translation_threads_every_field_including_limit_and_class() {
+        let p = parse("coords=POINT(-105.2%2039.7)&within=5&within-units=km&limit=3&class=mtb_trail&conditions=latest&f=geojson");
+        let t = trail_radius_params(&p);
+        assert_eq!(t.limit, Some(3));
+        assert_eq!(t.class.as_deref(), Some("mtb_trail"));
+        assert_eq!(t.conditions.as_deref(), Some("latest"));
+        assert_eq!(t.within.as_deref(), Some("5"));
+        assert_eq!(t.within_units.as_deref(), Some("km"));
+        assert_eq!(t.coords.as_deref(), Some("POINT(-105.2 39.7)"));
+        assert_eq!(t.f.as_deref(), Some("geojson"));
+    }
+
+    #[test]
+    fn storm_and_observation_translations_thread_limit() {
+        // Same bug class: both arms hardcoded `limit: None`.
+        let p = parse("coords=POINT(-97%2035)&within=50&within-units=km&limit=7&datetime=2026-01-01T00:00:00Z");
+        assert_eq!(storm_radius_params(&p).limit, Some(7));
+        assert_eq!(
+            storm_radius_params(&p).datetime.as_deref(),
+            Some("2026-01-01T00:00:00Z")
+        );
+        assert_eq!(obs_radius_params(&p).limit, Some(7));
     }
 }

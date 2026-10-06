@@ -159,6 +159,36 @@ def main() -> int:
     status, headers, _ = fetch(f"{trails}/items?bbox={args.bbox}&limit=5")
     r.check(status == 200 and "max-age=3600" in headers.get("Cache-Control", ""), f"geometry-only cached 1 h (Cache-Control: {headers.get('Cache-Control')})")
 
+    print("== radius & area honor limit and class (were silently ignored before Session 14)")
+    lon_c, lat_c = 0.5 * (float(args.bbox.split(",")[0]) + float(args.bbox.split(",")[2])), 0.5 * (float(args.bbox.split(",")[1]) + float(args.bbox.split(",")[3]))
+    radius = f"{trails}/radius?coords=POINT({lon_c}%20{lat_c})&within=5&within-units=km"
+    area = f"{trails}/area?coords={args.bbox}"
+    for name, url in (("radius", radius), ("area", area)):
+        status, _, full = fetch(url + "&limit=1000")
+        if not r.check(status == 200 and full and "features" in full, f"{name}: baseline query -> {status}"):
+            continue
+        r.check("numberReturned" in full and full["numberReturned"] == len(full["features"]), f"{name}: numberReturned present and equals len(features) ({full.get('numberReturned')})")
+        n_full = len(full["features"])
+        if n_full >= 4:
+            _, _, small = fetch(url + "&limit=3")
+            r.check(len(small["features"]) == 3 and small["numberReturned"] == 3, f"{name}: limit=3 returns exactly 3 of {n_full} (frontend's failing query)")
+        else:
+            r.skip(f"{name}: only {n_full} trails in the viewport; cannot test limit")
+        classes = sorted({f["properties"]["feature_class"] for f in full["features"]})
+        if len(classes) >= 2:
+            want = classes[0]
+            _, _, only = fetch(url + f"&limit=1000&class={want}")
+            got = {f["properties"]["feature_class"] for f in only["features"]}
+            r.check(got == {want}, f"{name}: class={want} returns only {want} (got {sorted(got)}; unfiltered had {classes})")
+            r.check(0 < len(only["features"]) < n_full, f"{name}: class filter actually narrowed the result ({len(only['features'])} < {n_full})")
+        else:
+            r.skip(f"{name}: viewport has a single feature_class {classes}; cannot test the class filter")
+        _, _, cond = fetch(url + "&limit=5&conditions=latest")
+        r.check(
+            len(cond["features"]) > 0 and any("conditions" in f["properties"] for f in cond["features"]),
+            f"{name}: conditions=latest still merges conditions alongside limit",
+        )
+
     print("== per-trail series")
     if covered is None:
         r.skip("no covered trail found in the viewport; cannot test the series")

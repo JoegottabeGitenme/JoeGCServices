@@ -41,7 +41,9 @@
 # - /collections/trails/items  - GeoJSON items (bbox viewport query, or
 #                                 ?q=<name> for name search, e.g. ?q=apex)
 # All three accept `&conditions=latest` to merge in trail-physics' single
-# most-current reading.
+# most-current reading, plus `limit` and `class=<feature_class>`, and all three
+# return `numberReturned` (== limit means truncated). Session 14 fixed /area and
+# /radius, which silently dropped `limit`/`class` and returned no numberReturned.
 #
 # - /collections/trails/items/{feature_id}/conditions - the best-available
 #   hourly series for one trail: from a few hours ago through the end of the

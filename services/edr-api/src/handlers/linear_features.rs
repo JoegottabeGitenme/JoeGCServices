@@ -52,6 +52,8 @@ pub struct TrailRadiusParams {
     #[serde(rename = "within-units")]
     pub within_units: Option<String>,
     pub limit: Option<i64>,
+    /// Optional `feature_class` filter (e.g. `mtb_trail`), as on `/items`.
+    pub class: Option<String>,
     pub f: Option<String>,
     /// `?conditions=latest` merges each feature's latest `segment_conditions`
     /// row (trail-physics output) into its properties, when one exists. Any
@@ -65,6 +67,8 @@ pub struct TrailAreaParams {
     /// bbox as minLon,minLat,maxLon,maxLat.
     pub coords: Option<String>,
     pub limit: Option<i64>,
+    /// Optional `feature_class` filter (e.g. `mtb_trail`), as on `/items`.
+    pub class: Option<String>,
     pub f: Option<String>,
     pub conditions: Option<String>,
 }
@@ -124,7 +128,7 @@ pub async fn trail_radius_handler(
 
     let features = match state
         .linear_feature_catalog
-        .get_features_in_radius(None, lon, lat, radius_m, limit)
+        .get_features_in_radius(params.class.as_deref(), lon, lat, radius_m, limit)
         .await
     {
         Ok(f) => f,
@@ -137,8 +141,9 @@ pub async fn trail_radius_handler(
         HashMap::new()
     };
 
+    let returned = features.len();
     geojson_response(
-        features_to_collection(features, &conditions),
+        with_result_metadata(features_to_collection(features, &conditions), returned),
         cache_max_age_secs(wants_latest_conditions(&params.conditions)),
     )
 }
@@ -162,7 +167,15 @@ pub async fn trail_area_handler(
 
     let features = match state
         .linear_feature_catalog
-        .get_features_in_bbox(None, min_lon, min_lat, max_lon, max_lat, limit, 0)
+        .get_features_in_bbox(
+            params.class.as_deref(),
+            min_lon,
+            min_lat,
+            max_lon,
+            max_lat,
+            limit,
+            0,
+        )
         .await
     {
         Ok(f) => f,
@@ -175,8 +188,9 @@ pub async fn trail_area_handler(
         HashMap::new()
     };
 
+    let returned = features.len();
     geojson_response(
-        features_to_collection(features, &conditions),
+        with_result_metadata(features_to_collection(features, &conditions), returned),
         cache_max_age_secs(wants_latest_conditions(&params.conditions)),
     )
 }
@@ -232,9 +246,7 @@ pub async fn trail_items_handler(
     };
 
     let returned = features.len();
-    let mut collection = features_to_collection(features, &conditions);
-    collection["numberReturned"] = json!(returned);
-    collection["timeStamp"] = json!(chrono::Utc::now().to_rfc3339());
+    let collection = with_result_metadata(features_to_collection(features, &conditions), returned);
     geojson_response(
         collection,
         cache_max_age_secs(wants_latest_conditions(&params.conditions)),
@@ -362,6 +374,19 @@ async fn fetch_latest_conditions(
             HashMap::new()
         }
     }
+}
+
+/// Adds `numberReturned` and `timeStamp` to a FeatureCollection.
+///
+/// A client detects truncation by `numberReturned == limit` (the response
+/// does not otherwise say it was cut off). Every trails list endpoint
+/// (`/items`, `/area`, `/radius`) goes through this so they behave the same;
+/// `/area` and `/radius` previously returned neither, so a viewport query
+/// could be silently truncated with no way to tell.
+fn with_result_metadata(mut collection: Value, returned: usize) -> Value {
+    collection["numberReturned"] = json!(returned);
+    collection["timeStamp"] = json!(chrono::Utc::now().to_rfc3339());
+    collection
 }
 
 fn features_to_collection(
@@ -883,6 +908,40 @@ mod tests {
         assert_eq!(
             result["conditions"][0]["run_time"],
             json!("2026-01-15T12:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn result_metadata_reports_how_many_were_returned_so_truncation_is_detectable() {
+        // A client detects truncation by numberReturned == limit. /area and
+        // /radius used to return neither field.
+        let c = with_result_metadata(
+            features_to_collection(vec![sample_feature(1), sample_feature(2)], &HashMap::new()),
+            2,
+        );
+        assert_eq!(c["numberReturned"], json!(2));
+        assert!(c["timeStamp"].as_str().unwrap().contains('T'));
+        assert_eq!(c["features"].as_array().unwrap().len(), 2);
+        assert_eq!(c["type"], json!("FeatureCollection"));
+    }
+
+    #[test]
+    fn trail_params_deserialize_class_from_a_real_query_string() {
+        let uri: axum::http::Uri = "/x?coords=-105.3,39.9,-105.2,40.0&limit=5&class=mtb_trail"
+            .parse()
+            .unwrap();
+        let p = Query::<TrailAreaParams>::try_from_uri(&uri).unwrap().0;
+        assert_eq!((p.limit, p.class.as_deref()), (Some(5), Some("mtb_trail")));
+        let uri: axum::http::Uri = "/x?coords=POINT(-105.2%2039.7)&class=track"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            Query::<TrailRadiusParams>::try_from_uri(&uri)
+                .unwrap()
+                .0
+                .class
+                .as_deref(),
+            Some("track")
         );
     }
 }

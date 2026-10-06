@@ -199,6 +199,45 @@ pub struct AreaQueryParams {
     /// output into each feature's properties. See
     /// `linear_features::TrailAreaParams::conditions`.
     pub conditions: Option<String>,
+
+    /// Feature collections (trails, storm events) and point-observation
+    /// collections: maximum features returned. Ignored by gridded collections.
+    pub limit: Option<i64>,
+
+    /// linear-features-only: `feature_class` filter (e.g. `mtb_trail`).
+    pub class: Option<String>,
+}
+
+// Pure translations into each backend's params -- see the matching comment in
+// radius.rs for why these are functions and not inline struct literals.
+
+fn trail_area_params(p: &AreaQueryParams) -> crate::handlers::linear_features::TrailAreaParams {
+    crate::handlers::linear_features::TrailAreaParams {
+        coords: p.coords.clone(),
+        limit: p.limit,
+        class: p.class.clone(),
+        f: p.f.clone(),
+        conditions: p.conditions.clone(),
+    }
+}
+
+fn storm_area_params(p: &AreaQueryParams) -> crate::handlers::storm_events::StormAreaParams {
+    crate::handlers::storm_events::StormAreaParams {
+        coords: p.coords.clone(),
+        datetime: p.datetime.clone(),
+        limit: p.limit,
+        f: p.f.clone(),
+    }
+}
+
+fn obs_area_params(p: &AreaQueryParams) -> ObsAreaQueryParams {
+    ObsAreaQueryParams {
+        coords: p.coords.clone().unwrap_or_default(),
+        datetime: p.datetime.clone(),
+        parameter_name: p.parameter_name.clone(),
+        f: p.f.clone(),
+        limit: p.limit,
+    }
 }
 
 /// GET /edr/collections/:collection_id/area
@@ -217,12 +256,7 @@ pub async fn area_handler(
         if let Some((model_config, _)) = config.find_collection(&collection_id) {
             if model_config.data_type.is_feature_data() {
                 if model_config.observation_source.as_deref() == Some("linear_features") {
-                    let trail_params = crate::handlers::linear_features::TrailAreaParams {
-                        coords: params.coords.clone(),
-                        limit: None,
-                        f: params.f.clone(),
-                        conditions: params.conditions.clone(),
-                    };
+                    let trail_params = trail_area_params(&params);
                     drop(config);
                     return crate::handlers::linear_features::trail_area_handler(
                         Extension(state.clone()),
@@ -231,12 +265,7 @@ pub async fn area_handler(
                     )
                     .await;
                 }
-                let storm_params = crate::handlers::storm_events::StormAreaParams {
-                    coords: params.coords.clone(),
-                    datetime: params.datetime.clone(),
-                    limit: None,
-                    f: params.f.clone(),
-                };
+                let storm_params = storm_area_params(&params);
                 drop(config);
                 return crate::handlers::storm_events::storm_area_handler(
                     Extension(state.clone()),
@@ -247,13 +276,7 @@ pub async fn area_handler(
             }
             if model_config.data_type.is_point_data() {
                 // Convert the coords to format observation handler expects
-                let obs_params = ObsAreaQueryParams {
-                    coords: params.coords.clone().unwrap_or_default(),
-                    datetime: params.datetime.clone(),
-                    parameter_name: params.parameter_name.clone(),
-                    f: params.f.clone(),
-                    limit: None,
-                };
+                let obs_params = obs_area_params(&params);
                 return obs_area_query_handler(
                     Extension(state.clone()),
                     Path(collection_id),
@@ -1437,6 +1460,40 @@ fn handle_grid_read_error(e: GridProcessorError, context: &str) -> Response {
 
 #[cfg(test)]
 mod tests {
+    // ---- Session 14: limit/class were silently dropped by this dispatcher ----
+
+    fn parse_area(qs: &str) -> AreaQueryParams {
+        let uri: axum::http::Uri = format!("/area?{}", qs).parse().unwrap();
+        Query::<AreaQueryParams>::try_from_uri(&uri).unwrap().0
+    }
+
+    #[test]
+    fn limit_and_class_survive_real_query_string_parsing() {
+        let p = parse_area("coords=-105.3,39.9,-105.2,40.0&limit=3&class=hiking_trail");
+        assert_eq!(p.limit, Some(3));
+        assert_eq!(p.class.as_deref(), Some("hiking_trail"));
+    }
+
+    #[test]
+    fn trail_translation_threads_every_field_including_limit_and_class() {
+        let p = parse_area(
+            "coords=-105.3,39.9,-105.2,40.0&limit=3&class=hiking_trail&conditions=latest&f=geojson",
+        );
+        let t = trail_area_params(&p);
+        assert_eq!(t.limit, Some(3));
+        assert_eq!(t.class.as_deref(), Some("hiking_trail"));
+        assert_eq!(t.conditions.as_deref(), Some("latest"));
+        assert_eq!(t.coords.as_deref(), Some("-105.3,39.9,-105.2,40.0"));
+        assert_eq!(t.f.as_deref(), Some("geojson"));
+    }
+
+    #[test]
+    fn storm_and_observation_translations_thread_limit() {
+        let p = parse_area("coords=-97.1,35.0,-97.0,35.1&limit=7");
+        assert_eq!(storm_area_params(&p).limit, Some(7));
+        assert_eq!(obs_area_params(&p).limit, Some(7));
+    }
+
     use super::*;
 
     #[test]
