@@ -19,3 +19,8 @@ netcdf = "0.12"
 # The HDF5 C library prints errors to stderr even when they're handled gracefully;
 # we use H5Eset_auto2 to disable this verbose output
 hdf5-metno-sys = "0.11"
+
+[dev-dependencies]
+# float_roundtrip: serde_json's default float parser can be 1 ulp off, which would make
+# the exact lat/lon assertions in glm.rs fail for the wrong reason (harness, not decoder).
+serde_json = { workspace = true, features = ["float_roundtrip"] }

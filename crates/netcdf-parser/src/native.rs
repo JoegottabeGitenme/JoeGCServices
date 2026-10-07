@@ -168,7 +168,7 @@ pub fn load_goes_netcdf_from_bytes(
 ///
 /// On Linux, uses /dev/shm (memory-backed tmpfs) if available for faster I/O.
 /// Falls back to the system temp directory on other platforms or if /dev/shm is unavailable.
-fn get_optimal_temp_dir() -> PathBuf {
+pub(crate) fn get_optimal_temp_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
         use std::path::Path;
@@ -200,12 +200,12 @@ fn generate_temp_filename() -> String {
 
 /// Check if a variable has an attribute with the given name.
 /// This avoids HDF5 error spam when checking for optional attributes.
-fn has_attr(var: &netcdf::Variable, name: &str) -> bool {
+pub(crate) fn has_attr(var: &netcdf::Variable, name: &str) -> bool {
     var.attributes().any(|attr| attr.name() == name)
 }
 
 /// Helper to get f32 attribute.
-fn get_f32_attr(var: &netcdf::Variable, name: &str) -> Option<f32> {
+pub(crate) fn get_f32_attr(var: &netcdf::Variable, name: &str) -> Option<f32> {
     if !has_attr(var, name) {
         return None;
     }
@@ -214,7 +214,7 @@ fn get_f32_attr(var: &netcdf::Variable, name: &str) -> Option<f32> {
 }
 
 /// Helper to get f64 attribute.
-fn get_f64_attr(var: &netcdf::Variable, name: &str) -> Option<f64> {
+pub(crate) fn get_f64_attr(var: &netcdf::Variable, name: &str) -> Option<f64> {
     if !has_attr(var, name) {
         return None;
     }
