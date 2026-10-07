@@ -51,6 +51,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 test-utils = { path = "../../crates/test-utils", features = ["containers"] }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+sqlx = { workspace = true }
 
 [[bench]]
 name = "edr_api_benchmarks"

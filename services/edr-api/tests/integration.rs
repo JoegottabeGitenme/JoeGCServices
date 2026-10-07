@@ -58,6 +58,7 @@ async fn create_test_state(infra: &TestInfrastructure) -> Arc<AppState> {
 
     // Create segment conditions catalog (trail-physics output)
     let segment_conditions_catalog = Arc::new(SegmentConditionsCatalog::new(catalog.pool_clone()));
+    let lightning_catalog = Arc::new(storage::LightningCatalog::new(catalog.pool_clone()));
 
     // Create empty EDR config (no YAML files in test)
     let edr_config = EdrConfig::default();
@@ -74,6 +75,7 @@ async fn create_test_state(infra: &TestInfrastructure) -> Arc<AppState> {
         storm_event_catalog,
         linear_feature_catalog,
         segment_conditions_catalog,
+        lightning_catalog,
         edr_config: Arc::new(RwLock::new(edr_config)),
         base_url: "http://localhost:8083/edr".to_string(),
         location_cache,

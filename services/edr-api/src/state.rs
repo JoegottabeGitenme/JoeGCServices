@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use grid_processor::{GridDataService, MinioConfig};
+use storage::lightning::LightningCatalog;
 use storage::linear_features::LinearFeatureCatalog;
 use storage::observations::ObservationCatalog;
 use storage::segment_conditions::SegmentConditionsCatalog;
@@ -41,6 +42,10 @@ pub struct AppState {
     /// `crates/storage/src/segment_conditions.rs`'s own module docs for why
     /// this was built ahead of being wired in here).
     pub segment_conditions_catalog: Arc<SegmentConditionsCatalog>,
+
+    /// GLM lightning flashes (the `glm-lightning` feature collection). May
+    /// legitimately be empty: a quiet sky is normal.
+    pub lightning_catalog: Arc<LightningCatalog>,
 
     /// EDR configuration (hot-reloadable).
     pub edr_config: Arc<RwLock<EdrConfig>>,
@@ -121,6 +126,9 @@ impl AppState {
         let segment_conditions_catalog =
             Arc::new(SegmentConditionsCatalog::new(catalog.pool_clone()));
 
+        // GLM lightning flashes (written by the ingester)
+        let lightning_catalog = Arc::new(LightningCatalog::new(catalog.pool_clone()));
+
         // Load EDR config
         let edr_dir = format!("{}/edr", config_dir);
         let edr_config = EdrConfig::load_from_dir(&edr_dir)?;
@@ -157,6 +165,7 @@ impl AppState {
             storm_event_catalog,
             linear_feature_catalog,
             segment_conditions_catalog,
+            lightning_catalog,
             edr_config: Arc::new(RwLock::new(edr_config)),
             base_url,
             location_cache,

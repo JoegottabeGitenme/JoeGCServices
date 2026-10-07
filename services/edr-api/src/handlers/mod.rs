@@ -14,6 +14,7 @@ pub mod instances;
 pub mod items;
 pub mod landing;
 pub mod light_pollution;
+pub mod lightning;
 pub mod linear_features;
 pub mod locations;
 pub mod observations;

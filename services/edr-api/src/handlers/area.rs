@@ -206,6 +206,16 @@ pub struct AreaQueryParams {
 
     /// linear-features-only: `feature_class` filter (e.g. `mtb_trail`).
     pub class: Option<String>,
+
+    /// lightning-only: server-relative time window, an ISO-8601 duration
+    /// (e.g. `PT10M`). See `lightning` module docs.
+    pub window: Option<String>,
+
+    /// lightning-only: change-feed cursor -- only flashes with `id` greater than this.
+    pub after: Option<i64>,
+
+    /// lightning-only: `goes-east` (default), `goes-west` or `both`.
+    pub satellite: Option<String>,
 }
 
 // Pure translations into each backend's params -- see the matching comment in
@@ -218,6 +228,18 @@ fn trail_area_params(p: &AreaQueryParams) -> crate::handlers::linear_features::T
         class: p.class.clone(),
         f: p.f.clone(),
         conditions: p.conditions.clone(),
+    }
+}
+
+fn lightning_area_params(p: &AreaQueryParams) -> crate::handlers::lightning::LightningAreaParams {
+    crate::handlers::lightning::LightningAreaParams {
+        coords: p.coords.clone(),
+        datetime: p.datetime.clone(),
+        window: p.window.clone(),
+        after: p.after,
+        satellite: p.satellite.clone(),
+        limit: p.limit,
+        f: p.f.clone(),
     }
 }
 
@@ -255,6 +277,16 @@ pub async fn area_handler(
         let config = state.edr_config.read().await;
         if let Some((model_config, _)) = config.find_collection(&collection_id) {
             if model_config.data_type.is_feature_data() {
+                if model_config.observation_source.as_deref() == Some("lightning") {
+                    let lightning_params = lightning_area_params(&params);
+                    drop(config);
+                    return crate::handlers::lightning::lightning_area_handler(
+                        Extension(state.clone()),
+                        Path(collection_id),
+                        Query(lightning_params),
+                    )
+                    .await;
+                }
                 if model_config.observation_source.as_deref() == Some("linear_features") {
                     let trail_params = trail_area_params(&params);
                     drop(config);
@@ -1460,6 +1492,23 @@ fn handle_grid_read_error(e: GridProcessorError, context: &str) -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lightning_translation_threads_every_field() {
+        let p = parse_area("coords=-106,39,-105,40&datetime=2026-10-07T20:00:00Z/..&limit=9&window=PT30M&after=7&satellite=goes-west");
+        let l = lightning_area_params(&p);
+        assert_eq!(l.coords.as_deref(), Some("-106,39,-105,40"));
+        assert_eq!(l.datetime.as_deref(), Some("2026-10-07T20:00:00Z/.."));
+        assert_eq!(
+            (
+                l.limit,
+                l.window.as_deref(),
+                l.after,
+                l.satellite.as_deref()
+            ),
+            (Some(9), Some("PT30M"), Some(7), Some("goes-west"))
+        );
+    }
+
     // ---- Session 14: limit/class were silently dropped by this dispatcher ----
 
     fn parse_area(qs: &str) -> AreaQueryParams {

@@ -494,7 +494,7 @@ fn clamp_limit(limit: Option<i64>) -> i64 {
 /// Parse `POINT(lon lat)` or `lon,lat`. Identical to storm_events' parser;
 /// duplicated rather than shared to keep the two feature-collection backends
 /// independently editable (same rationale as the rest of this module).
-fn parse_point_wkt(coords: &str) -> Result<(f64, f64), String> {
+pub(crate) fn parse_point_wkt(coords: &str) -> Result<(f64, f64), String> {
     let coords = coords.trim();
     if coords.to_uppercase().starts_with("POINT") {
         let inner = coords
@@ -526,7 +526,7 @@ fn parse_point_wkt(coords: &str) -> Result<(f64, f64), String> {
     Err("Invalid coordinates. Use POINT(lon lat) or lon,lat".to_string())
 }
 
-fn parse_radius(within: &Option<String>, units: Option<&str>) -> Result<f64, String> {
+pub(crate) fn parse_radius(within: &Option<String>, units: Option<&str>) -> Result<f64, String> {
     let default_m = 10_000.0; // 10 km default -- trails are local, unlike storm events' 100km
     let Some(within) = within else {
         return Ok(default_m);
@@ -558,7 +558,7 @@ fn parse_radius(within: &Option<String>, units: Option<&str>) -> Result<f64, Str
     Ok(meters)
 }
 
-fn parse_bbox(coords: &str) -> Result<(f64, f64, f64, f64), String> {
+pub(crate) fn parse_bbox(coords: &str) -> Result<(f64, f64, f64, f64), String> {
     let parts: Vec<&str> = coords.trim().split(',').collect();
     if parts.len() >= 4 {
         let min_lon = parts[0]
@@ -630,14 +630,14 @@ fn json_response(value: Value) -> Response {
     }
 }
 
-fn bad_request(msg: impl Into<String>) -> Response {
+pub(crate) fn bad_request(msg: impl Into<String>) -> Response {
     error_response(
         StatusCode::BAD_REQUEST,
         edr_protocol::responses::ExceptionResponse::bad_request(msg.into()),
     )
 }
 
-fn internal_error(msg: impl Into<String>) -> Response {
+pub(crate) fn internal_error(msg: impl Into<String>) -> Response {
     let msg = msg.into();
     tracing::error!("{}", msg);
     error_response(
@@ -646,7 +646,10 @@ fn internal_error(msg: impl Into<String>) -> Response {
     )
 }
 
-fn error_response(status: StatusCode, exc: edr_protocol::responses::ExceptionResponse) -> Response {
+pub(crate) fn error_response(
+    status: StatusCode,
+    exc: edr_protocol::responses::ExceptionResponse,
+) -> Response {
     let json = serde_json::to_string(&exc).unwrap_or_else(|_| "{}".to_string());
     Response::builder()
         .status(status)

@@ -391,6 +391,41 @@ async fn build_storm_event_collection(
     collection
 }
 
+/// Build a Collection for GOES GLM lightning flashes.
+///
+/// The spatial extent is the CONUS clip applied at ingest (what the data can
+/// cover), and the temporal extent is the retention window ending now: flashes
+/// are a live feed, so the interval is open-ended rather than read from the
+/// table (which would make an empty sky look like "no data").
+fn build_lightning_collection(
+    state: &AppState,
+    collection_def: &CollectionDefinition,
+    available_params: &[String],
+) -> Collection {
+    let mut collection = Collection::new(&collection_def.id)
+        .with_title(&collection_def.title)
+        .with_description(&collection_def.description);
+
+    collection.build_links(&state.base_url);
+
+    let queries = DataQueries::default()
+        .with_radius(&state.base_url, &collection_def.id)
+        .with_area(&state.base_url, &collection_def.id);
+    collection = collection.with_data_queries(queries);
+
+    // Mirrors services/ingester/src/lightning.rs CONUS_{MIN,MAX}_{LON,LAT}.
+    let mut extent = Extent::with_spatial([-125.0, 24.0, -66.0, 50.0], None);
+    let start = chrono::Utc::now() - chrono::Duration::hours(24);
+    extent = extent.with_temporal(TemporalExtent::new(Some(start.to_rfc3339()), None));
+    collection = collection.with_extent(extent);
+
+    let mut params = HashMap::new();
+    for param_name in available_params {
+        params.insert(param_name.clone(), Parameter::new(param_name, param_name));
+    }
+    collection.with_parameters(params)
+}
+
 /// Build a Collection for linear-feature data (trails/tracks/bridleways).
 ///
 /// Unlike storm events, there is no per-feature temporal extent (a trail
@@ -516,6 +551,18 @@ pub async fn list_collections_handler(
         if model_config.data_type.is_feature_data() {
             let available_params: Vec<String> =
                 coll_def.parameters.iter().map(|p| p.name.clone()).collect();
+
+            // Lightning is ALWAYS listed, even with zero flashes stored: over CONUS
+            // a quiet sky is normal, and a collection that vanishes whenever it is
+            // not currently storming would look like an outage to a client.
+            if model_config.observation_source.as_deref() == Some("lightning") {
+                collections.push(build_lightning_collection(
+                    &state,
+                    coll_def,
+                    &available_params,
+                ));
+                continue;
+            }
 
             if model_config.observation_source.as_deref() == Some("linear_features") {
                 let count = state
@@ -845,6 +892,17 @@ pub async fn get_collection_handler(
             .iter()
             .map(|p| p.name.clone())
             .collect();
+
+        if model_config.observation_source.as_deref() == Some("lightning") {
+            let collection = build_lightning_collection(&state, collection_def, &available_params);
+            let json = serde_json::to_string_pretty(&collection).unwrap_or_default();
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CACHE_CONTROL, "max-age=60")
+                .body(json.into())
+                .unwrap();
+        }
 
         if model_config.observation_source.as_deref() == Some("linear_features") {
             let count = state
