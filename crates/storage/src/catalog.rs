@@ -190,6 +190,26 @@ impl Catalog {
         Ok(())
     }
 
+    /// Run database migrations for `lightning_flashes` -- GOES GLM lightning
+    /// flashes written by the ingester (`/ingest/lightning`) and read by the EDR
+    /// `glm-lightning` collection. Requires PostGIS (call after
+    /// `migrate_observations()`, which enables it).
+    pub async fn migrate_lightning(&self) -> WmsResult<()> {
+        for statement in LIGHTNING_SCHEMA_SQL.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        WmsError::DatabaseError(format!("Lightning migration failed: {}", e))
+                    })?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get a reference to the underlying connection pool.
     ///
     /// This allows creating an `ObservationCatalog` that shares the same pool.
@@ -2395,6 +2415,38 @@ CREATE TABLE IF NOT EXISTS trail_physics_progress (
 
 CREATE INDEX IF NOT EXISTS idx_trail_physics_progress_lookup
     ON trail_physics_progress(model, reference_time, forecast_hour)
+"#;
+
+/// Schema for `lightning_flashes` -- GOES-R GLM L2 LCFA flashes, CONUS-clipped.
+///
+/// A live-map feed, not an archive: rows are deleted after
+/// `LIGHTNING_RETENTION_HOURS` (default 24) by a timer in the ingester.
+///
+/// - `location` is `geometry(Point,4326)`, not `geography`, so a viewport bbox is
+///   an exact lon/lat rectangle (see `storage::lightning`'s module docs).
+/// - `flash_id` is GLM's rolling `u16` counter (it wraps about every 25 minutes
+///   at ~900 flashes per 20 s granule), so it is only unique *with* the time:
+///   `UNIQUE(satellite, flash_time, flash_id)` makes re-ingesting a granule a
+///   no-op without ever collapsing two distinct flashes.
+/// - `id` is also a change-feed cursor; `insert_flashes` serializes writers so
+///   ids become visible in order.
+/// - `satellite` is the role (`goes-east` / `goes-west`), not the platform: the
+///   East/West slots are re-assigned to new spacecraft over the years.
+pub const LIGHTNING_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS lightning_flashes (
+    id BIGSERIAL PRIMARY KEY,
+    satellite TEXT NOT NULL,
+    flash_time TIMESTAMPTZ NOT NULL,
+    flash_id INTEGER NOT NULL,
+    location GEOMETRY(Point, 4326) NOT NULL,
+    energy_j REAL,
+    quality SMALLINT NOT NULL DEFAULT 0,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (satellite, flash_time, flash_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lightning_flash_time ON lightning_flashes(flash_time);
+CREATE INDEX IF NOT EXISTS idx_lightning_location ON lightning_flashes USING GIST(location)
 "#;
 
 #[cfg(test)]
