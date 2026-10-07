@@ -321,7 +321,54 @@ impl LightningCatalog {
         Ok(r.rows_affected())
     }
 
-    /// The newest stored flash time per satellite (freshness / monitoring).
+    /// Record that a granule covering up to `window_end` was processed for
+    /// `satellite`, whether or not it held any flashes. Monotonic: an older
+    /// granule arriving late never moves the marker backwards.
+    pub async fn record_granule(
+        &self,
+        satellite: &str,
+        window_end: DateTime<Utc>,
+    ) -> WmsResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO lightning_ingest_progress (satellite, last_window_end, last_ingested_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (satellite) DO UPDATE SET
+                last_window_end = GREATEST(lightning_ingest_progress.last_window_end, EXCLUDED.last_window_end),
+                last_ingested_at = NOW()
+            "#,
+        )
+        .bind(satellite)
+        .bind(window_end)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Lightning progress failed: {}", e)))?;
+        Ok(())
+    }
+
+    /// `(satellite, newest granule window end, when it was ingested)` -- the
+    /// monitoring signal (see the schema notes in `catalog.rs`).
+    pub async fn ingest_progress(&self) -> WmsResult<Vec<(String, DateTime<Utc>, DateTime<Utc>)>> {
+        let rows = sqlx::query(
+            "SELECT satellite, last_window_end, last_ingested_at FROM lightning_ingest_progress ORDER BY satellite",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Lightning progress read failed: {}", e)))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get("satellite"),
+                    r.get("last_window_end"),
+                    r.get("last_ingested_at"),
+                )
+            })
+            .collect())
+    }
+
+    /// The newest stored flash time per satellite. NOT a freshness signal
+    /// (quiet skies are normal) -- use [`Self::ingest_progress`] for that.
     pub async fn latest_flash_times(&self) -> WmsResult<Vec<(String, DateTime<Utc>)>> {
         let rows = sqlx::query(
             "SELECT satellite, MAX(flash_time) AS t FROM lightning_flashes GROUP BY satellite ORDER BY satellite",

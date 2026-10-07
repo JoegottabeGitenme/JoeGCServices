@@ -41,7 +41,7 @@ async fn env() -> Env {
         .migrate_lightning()
         .await
         .expect("migrate_lightning");
-    sqlx::query("TRUNCATE lightning_flashes RESTART IDENTITY")
+    sqlx::query("TRUNCATE lightning_flashes, lightning_ingest_progress RESTART IDENTITY")
         .execute(catalog.pool())
         .await
         .expect("truncate");
@@ -407,4 +407,35 @@ async fn concurrent_writers_get_contiguous_non_interleaved_id_blocks() {
             ids.last().unwrap()
         );
     }
+}
+
+#[tokio::test]
+#[ignore]
+async fn granule_progress_is_recorded_even_with_no_flashes_and_never_moves_backwards() {
+    // Monitoring depends on this: a quiet sky (granules with zero CONUS flashes)
+    // must still advance the marker, and a late older granule must not rewind it.
+    let e = env().await;
+    let c = lc(e.catalog.pool());
+    assert!(c.ingest_progress().await.unwrap().is_empty());
+
+    c.record_granule("goes-east", t0() + Duration::seconds(40))
+        .await
+        .unwrap();
+    c.record_granule("goes-east", t0() + Duration::seconds(20))
+        .await
+        .unwrap(); // late, older
+    c.record_granule("goes-west", t0() + Duration::seconds(10))
+        .await
+        .unwrap();
+
+    let p = c.ingest_progress().await.unwrap();
+    assert_eq!(p.len(), 2);
+    assert_eq!(p[0].0, "goes-east");
+    assert_eq!(
+        p[0].1,
+        t0() + Duration::seconds(40),
+        "must not move backwards"
+    );
+    assert_eq!(p[1].0, "goes-west");
+    assert_eq!(c.count().await.unwrap(), 0, "no flashes were stored");
 }

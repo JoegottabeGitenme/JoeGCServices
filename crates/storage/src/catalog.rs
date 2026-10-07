@@ -2432,6 +2432,13 @@ CREATE INDEX IF NOT EXISTS idx_trail_physics_progress_lookup
 ///   ids become visible in order.
 /// - `satellite` is the role (`goes-east` / `goes-west`), not the platform: the
 ///   East/West slots are re-assigned to new spacecraft over the years.
+///
+/// `lightning_ingest_progress` records, per satellite, the newest granule
+/// window processed -- *including granules with no CONUS flashes*. That is the
+/// right freshness signal for monitoring: over CONUS there are legitimately
+/// hours without a single flash (winter nights), so "newest flash is old" can
+/// not tell a quiet sky from a dead pipeline, while granules keep arriving every
+/// 20 s regardless.
 pub const LIGHTNING_SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS lightning_flashes (
     id BIGSERIAL PRIMARY KEY,
@@ -2446,7 +2453,13 @@ CREATE TABLE IF NOT EXISTS lightning_flashes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_lightning_flash_time ON lightning_flashes(flash_time);
-CREATE INDEX IF NOT EXISTS idx_lightning_location ON lightning_flashes USING GIST(location)
+CREATE INDEX IF NOT EXISTS idx_lightning_location ON lightning_flashes USING GIST(location);
+
+CREATE TABLE IF NOT EXISTS lightning_ingest_progress (
+    satellite TEXT PRIMARY KEY,
+    last_window_end TIMESTAMPTZ NOT NULL,
+    last_ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
 "#;
 
 #[cfg(test)]
