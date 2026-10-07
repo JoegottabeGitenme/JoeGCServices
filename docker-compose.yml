@@ -337,6 +337,10 @@ services:
       S3_ALLOW_HTTP: ${S3_ALLOW_HTTP:-true}
       # Config directory for GRIB2 parameter tables
       CONFIG_DIR: /app/config
+      # GOES GLM lightning is a live feed, not an archive: flashes older than this
+      # are deleted (swept every 10 min). Keep in step with retention.hours in
+      # config/models/glm-*.yaml and the 24 h cap on the EDR `window` parameter.
+      LIGHTNING_RETENTION_HOURS: ${LIGHTNING_RETENTION_HOURS:-24}
     volumes:
       - downloader_data:/data/downloads:ro
       - ./config:/app/config:ro
