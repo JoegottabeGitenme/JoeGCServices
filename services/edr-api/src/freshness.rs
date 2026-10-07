@@ -29,6 +29,11 @@ use crate::state::AppState;
 
 pub const LATEST_VALID_GAUGE: &str = "trail_conditions_latest_valid_timestamp_seconds";
 pub const WORKER_PROGRESS_GAUGE: &str = "trail_physics_last_processed_timestamp_seconds";
+/// End of the newest GLM granule processed, per `satellite`. Deliberately NOT the
+/// newest *flash*: over CONUS there are legitimately hours with no flashes, so
+/// flash recency cannot tell a quiet sky from a dead pipeline, while granules
+/// keep arriving every 20 s regardless.
+pub const GLM_GRANULE_GAUGE: &str = "glm_latest_granule_end_timestamp_seconds";
 
 /// How often the gauges are refreshed. Both queries are index-backed / tiny
 /// (see `SegmentConditionsCatalog::latest_valid_time`), so this can be short;
@@ -48,6 +53,13 @@ pub fn record_timestamp(name: &'static str, ts: Option<DateTime<Utc>>) -> Option
     let value = to_gauge_value(ts?);
     gauge!(name).set(value);
     Some(value)
+}
+
+/// Set the per-satellite GLM granule gauge. Returns the value written.
+pub fn record_glm_granule(satellite: &str, window_end: DateTime<Utc>) -> f64 {
+    let value = to_gauge_value(window_end);
+    gauge!(GLM_GRANULE_GAUGE, "satellite" => satellite.to_string()).set(value);
+    value
 }
 
 /// Spawn the background refresher. Safe to call once at startup.
@@ -72,6 +84,14 @@ pub fn spawn(state: Arc<AppState>) {
                     record_timestamp(WORKER_PROGRESS_GAUGE, ts);
                 }
                 Err(e) => tracing::warn!("freshness: last_worker_progress failed: {}", e),
+            }
+            match state.lightning_catalog.ingest_progress().await {
+                Ok(rows) => {
+                    for (satellite, window_end, _ingested_at) in rows {
+                        record_glm_granule(&satellite, window_end);
+                    }
+                }
+                Err(e) => tracing::warn!("freshness: lightning ingest_progress failed: {}", e),
             }
         }
     });
@@ -111,5 +131,29 @@ mod tests {
         let rules = include_str!("../../../deploy/prometheus/alerts.yml");
         assert!(rules.contains(LATEST_VALID_GAUGE));
         assert!(rules.contains(WORKER_PROGRESS_GAUGE));
+        assert!(rules.contains(GLM_GRANULE_GAUGE));
+    }
+
+    #[test]
+    fn glm_granule_gauge_value_is_the_window_end_in_unix_seconds() {
+        let end = Utc.with_ymd_and_hms(2026, 10, 7, 20, 33, 20).unwrap();
+        assert_eq!(record_glm_granule("goes-east", end), end.timestamp() as f64);
+    }
+
+    #[test]
+    fn glm_alert_rules_cover_both_satellites_individually() {
+        // `absent(metric)` only fires when EVERY series is gone, so a satellite that
+        // never reports would go unnoticed behind the other one. Each must have its
+        // own explicit rule.
+        let rules = include_str!("../../../deploy/prometheus/alerts.yml");
+        for sat in ["goes-east", "goes-west"] {
+            assert!(
+                rules.contains(&format!(
+                    "absent({}{{satellite=\"{}\"}})",
+                    GLM_GRANULE_GAUGE, sat
+                )),
+                "no absent() rule for {sat}"
+            );
+        }
     }
 }
