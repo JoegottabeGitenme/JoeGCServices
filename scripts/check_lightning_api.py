@@ -46,11 +46,11 @@ class Results:
         print(f"  SKIP  {msg}")
 
 
-def fetch(url: str):
+def fetch(url: str, timeout: float = 60):
     """-> (status, headers, json_or_None). A real User-Agent: the gateway 403s default scripting agents."""
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (lightning-api-contract-check)"})
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, resp.headers, _loads(resp.read())
     except urllib.error.HTTPError as e:
         return e.code, e.headers, _loads(e.read())
@@ -144,9 +144,13 @@ def main() -> int:
         r.check(meta.get("id") == "glm-lightning", "id is glm-lightning")
         bbox = (meta.get("extent", {}).get("spatial", {}).get("bbox") or [[]])[0]
         r.check(bbox == [-125.0, 24.0, -66.0, 50.0], f"spatial extent is the CONUS clip ({bbox})")
-    status, _, lst = fetch(f"{base}/collections")
+    # The full listing is slow on a large deployment (it counts every observation
+    # table), so allow it plenty of time and report how long it took.
+    t0 = dt.datetime.now()
+    status, _, lst = fetch(f"{base}/collections", timeout=300)
+    took = (dt.datetime.now() - t0).total_seconds()
     r.check(status == 200 and any(c.get("id") == "glm-lightning" for c in (lst or {}).get("collections", [])),
-            "listed in /collections (even when no flash is stored)")
+            f"listed in /collections (even when no flash is stored) [{took:.0f}s]")
 
     print("== default query (CONUS-wide, last 10 min, goes-east)")
     status, headers, fc = fetch(f"{col}/items")
