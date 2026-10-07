@@ -107,6 +107,15 @@ pub struct SourceConfig {
     /// First year to backfill (for storm_events_csv sources).
     #[serde(default)]
     pub backfill_start_year: Option<i32>,
+    /// GLM-specific (`aws_s3_glm`): the platform id in the file names, e.g. `G19`.
+    #[serde(default)]
+    pub satellite: Option<String>,
+    /// GLM-specific: how far back each poll looks. This is deliberately NOT
+    /// `retention.hours` (24 h of lightning is ~8,600 files, ~2.8 GB, for both
+    /// satellites -- far too much to re-fetch on every restart): it only needs
+    /// to cover downtime worth recovering and the poll cadence.
+    #[serde(default)]
+    pub backfill_minutes: Option<u32>,
 }
 
 fn default_index_suffix() -> String {

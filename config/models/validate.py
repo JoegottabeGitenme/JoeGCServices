@@ -39,6 +39,7 @@ except ImportError:
 VALID_DIMENSION_TYPES = {"forecast", "observation", "static"}
 VALID_SOURCE_TYPES = {
     "aws_s3",
+    "aws_s3_glm",
     "aws_s3_goes",
     "aws_s3_grib2",
     "local",
@@ -496,6 +497,7 @@ class ModelValidator:
                         "aviation_weather_api_taf",
                         "ndbc_latest_obs",
                         "dart_realtime",
+                        "aws_s3_glm",
                     )
                     and dim_type != "static"
                 ):

@@ -13,6 +13,7 @@ mod concurrency;
 mod config;
 mod dart_runner;
 mod download;
+mod glm_runner;
 mod grib_index;
 mod lis_runner;
 mod model_runner;

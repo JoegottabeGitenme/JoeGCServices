@@ -17,6 +17,7 @@ use crate::concurrency::{ConcurrencyManager, ModelDownloadPermit};
 use crate::config::{self, ModelConfig};
 use crate::dart_runner::{self, DartConfig, DartRunner};
 use crate::download::DownloadManager;
+use crate::glm_runner::{self, GlmConfig, GlmRunner};
 use crate::lis_runner;
 use crate::model_runner::{EarthdataAuth, ModelRunner};
 use crate::ndbc_runner::{self, NdbcConfig, NdbcRunner};
@@ -92,6 +93,8 @@ pub struct Scheduler {
     taf_configs: Vec<ObservationConfig>,
     /// NDBC buoy observation configs
     ndbc_configs: Vec<NdbcConfig>,
+    /// GOES GLM lightning sources (one per satellite)
+    glm_configs: Vec<GlmConfig>,
     /// DART tsunami buoy configs
     dart_configs: Vec<DartConfig>,
     /// Storm Events (hail/wind/tornado) configs
@@ -139,6 +142,9 @@ impl Scheduler {
 
         // Load NDBC buoy observation configs
         let ndbc_configs = Self::load_ndbc_configs(&config_dir, &ingester_url);
+
+        // Load GOES GLM lightning configs
+        let glm_configs = Self::load_glm_configs(&config_dir, &ingester_url);
 
         // Load DART tsunami buoy configs
         let dart_configs = Self::load_dart_configs(&config_dir, &ingester_url);
@@ -253,6 +259,7 @@ impl Scheduler {
             observation_configs,
             taf_configs,
             ndbc_configs,
+            glm_configs,
             dart_configs,
             storm_events_configs,
             s3_client,
@@ -367,6 +374,44 @@ impl Scheduler {
         }
 
         runner
+    }
+
+    /// Load GOES GLM lightning configurations from model config files.
+    fn load_glm_configs(
+        config_dir: &std::path::Path,
+        ingester_url: &Option<String>,
+    ) -> Vec<GlmConfig> {
+        let mut configs = Vec::new();
+        let models_dir = config_dir.join("models");
+
+        let ingester_base = ingester_url.as_deref().unwrap_or("http://localhost:8082");
+
+        if let Ok(entries) = std::fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path
+                    .extension()
+                    .is_some_and(|ext| ext == "yaml" || ext == "yml")
+                {
+                    match glm_runner::load_glm_config(&path, ingester_base) {
+                        Ok(Some(config)) => {
+                            info!(source = %config.id, "Loaded GLM lightning config");
+                            configs.push(config);
+                        }
+                        Ok(None) => {} // not a GLM source
+                        Err(e) => {
+                            warn!(
+                                path = %path.display(),
+                                error = %e,
+                                "Failed to load GLM config"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        configs
     }
 
     /// Load NDBC buoy observation configurations from model config files.
@@ -670,6 +715,30 @@ impl Scheduler {
             handles.push(tokio::spawn(async move {
                 if let Err(e) = runner.run_forever(shutdown_rx).await {
                     error!(source = %source_id, error = %e, "NDBC runner failed");
+                }
+            }));
+        }
+
+        // Spawn GLM lightning runners (one per satellite)
+        for glm_config in &self.glm_configs {
+            let runner = match GlmRunner::new(glm_config.clone()) {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(
+                        source = %glm_config.id,
+                        error = %e,
+                        "Failed to create GLM runner"
+                    );
+                    continue;
+                }
+            };
+
+            let shutdown_rx = shutdown.resubscribe();
+            let source_id = glm_config.id.clone();
+
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = runner.run_forever(shutdown_rx).await {
+                    error!(source = %source_id, error = %e, "GLM runner failed");
                 }
             }));
         }

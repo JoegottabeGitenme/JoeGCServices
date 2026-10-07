@@ -1,0 +1,61 @@
+# GLM - Geostationary Lightning Mapper, GOES18 (GOES-West)
+#
+# GOES-18 is the operational GOES-West.
+# Product GLM-L2-LCFA: a new ~180 KB netCDF granule every 20 seconds, appearing on S3
+# about 14 s after its observation window closes. Each granule holds the lightning
+# flashes detected in that window; the ingester keeps those inside the CONUS box
+# (-125..-66 lon, 24..50 lat) and stores them in `lightning_flashes`.
+#
+# Served by the EDR `glm-lightning` collection (config/edr/glm.yaml).
+#
+# Handled by services/downloader/src/glm_runner.rs (a dedicated runner, like NDBC
+# and storm events) - NOT by the generic ModelRunner.
+#
+# Data source: https://registry.opendata.aws/noaa-goes/  (public, anonymous S3)
+
+model:
+  id: glm-goes18
+  name: "GOES-18 GLM Lightning (West)"
+  description: "GOES-18 (West) Geostationary Lightning Mapper L2 LCFA flashes, CONUS"
+  enabled: true
+
+dimensions:
+  type: observation
+  time: true
+  elevation: false
+
+source:
+  type: aws_s3_glm
+  bucket: noaa-goes18
+  product: "GLM-L2-LCFA"
+  satellite: G18          # platform id in the file names (OR_GLM-L2-LCFA_G18_s...)
+  region: us-east-1
+  # How far back each poll looks. Deliberately NOT retention.hours: 24 h of lightning
+  # is ~4,300 files per satellite. This only has to cover a restart/downtime worth
+  # recovering; the ingester is idempotent, so re-sending is harmless.
+  backfill_minutes: 30
+
+grid:
+  projection: geographic
+  resolution: "point"
+  bbox:                      # the CONUS clip applied at ingest
+    min_lon: -125.0
+    min_lat: 24.0
+    max_lon: -66.0
+    max_lat: 50.0
+
+schedule:
+  type: observation
+  poll_interval_secs: 15     # granules arrive every 20 s; polling at 15 s adds ~7 s on average
+  lookback_minutes: 0
+
+retention:
+  # Documentation only for this source: flashes are expired by the ingester's own
+  # timer, configured with the LIGHTNING_RETENTION_HOURS environment variable
+  # (default 24). Keep the two in step.
+  hours: 24
+
+parameters:
+  - name: flash
+    description: "Lightning flash (centroid, time, radiant energy, quality)"
+    units: "count"
