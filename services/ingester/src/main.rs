@@ -15,6 +15,7 @@
 //! ingester --test-file /path/to/data.grib2 --test-model gfs
 //! ```
 
+mod lightning;
 mod server;
 
 use anyhow::Result;
@@ -128,6 +129,11 @@ async fn main() -> Result<()> {
     catalog.migrate_trail_physics_progress().await?;
     info!("Trail physics progress schema migrated");
 
+    // Migrate GLM lightning flashes (written by /ingest/lightning, read by the
+    // EDR `glm-lightning` collection). After migrate_observations: needs PostGIS.
+    catalog.migrate_lightning().await?;
+    info!("Lightning schema migrated");
+
     // Create observation catalog using the same connection pool
     let observation_catalog = ObservationCatalog::new(catalog.pool_clone());
 
@@ -137,6 +143,9 @@ async fn main() -> Result<()> {
     // Create linear feature catalog sharing the same connection pool
     let linear_feature_catalog =
         storage::linear_features::LinearFeatureCatalog::new(catalog.pool_clone());
+
+    // Create lightning catalog sharing the same connection pool
+    let lightning_catalog = storage::LightningCatalog::new(catalog.pool_clone());
 
     // Create trail report catalog sharing the same connection pool (Phase 0
     // label archive; see docs/trail-conditions-design.md)
@@ -258,12 +267,24 @@ async fn main() -> Result<()> {
         return run_test_file(ingester, test_file, args.test_model, args.forecast_hour).await;
     }
 
+    // GLM lightning is a live feed, not an archive: sweep expired flashes forever.
+    let lightning_retention_hours = lightning::retention_hours_from_env();
+    info!(
+        retention_hours = lightning_retention_hours,
+        "Lightning retention enabled"
+    );
+    tokio::spawn(lightning::run_retention(
+        lightning_catalog.clone(),
+        lightning_retention_hours,
+    ));
+
     // Create server state
     let state = Arc::new(ServerState {
         ingester,
         observation_catalog: Some(observation_catalog),
         storm_event_catalog: Some(storm_event_catalog),
         trail_report_catalog: Some(trail_report_catalog),
+        lightning_catalog: Some(lightning_catalog),
         tracker: IngestionTracker::new(),
     });
 
