@@ -318,6 +318,27 @@ fn fill_value_unsigned(file: &netcdf::File, name: &str) -> Option<u16> {
 mod tests {
     use super::*;
     use serde_json::Value;
+    use std::sync::Mutex;
+
+    /// HDF5's error-print handler is process-global and a failed open resets it,
+    /// so tests that deliberately feed garbage (or assert on the handler) must not
+    /// interleave with each other.
+    static HDF5_STATE: Mutex<()> = Mutex::new(());
+
+    /// True if HDF5 will NOT print error stacks to stderr right now.
+    fn hdf5_auto_printing_is_off() -> bool {
+        let mut func: hdf5_metno_sys::h5e::H5E_auto2_t = None;
+        let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
+        // SAFETY: plain getter writing into two valid out-pointers.
+        unsafe {
+            hdf5_metno_sys::h5e::H5Eget_auto2(
+                hdf5_metno_sys::h5e::H5E_DEFAULT,
+                &mut func,
+                &mut data,
+            );
+        }
+        func.is_none()
+    }
 
     const G18: &str =
         "tests/fixtures/OR_GLM-L2-LCFA_G18_s20262802033000_e20262802033200_c20262802033222.nc";
@@ -581,6 +602,7 @@ mod tests {
 
     #[test]
     fn garbage_input_is_an_error_not_a_panic() {
+        let _g = HDF5_STATE.lock().unwrap_or_else(|e| e.into_inner());
         assert!(read_glm_flashes_from_bytes(b"this is not a netcdf file").is_err());
         assert!(read_glm_flashes_from_bytes(&[]).is_err());
         assert!(read_glm_flashes(Path::new("tests/fixtures/does_not_exist.nc")).is_err());
@@ -588,6 +610,7 @@ mod tests {
 
     #[test]
     fn an_abi_file_or_non_glm_netcdf_is_rejected_clearly() {
+        let _g = HDF5_STATE.lock().unwrap_or_else(|e| e.into_inner());
         // Build a valid netCDF that is not GLM (no platform_ID) via the cf fixture
         // path if one exists; otherwise the garbage test above covers rejection.
         let err = read_glm_flashes_from_bytes(b"\x89HDF\r\n\x1a\n not really").unwrap_err();
@@ -603,5 +626,20 @@ mod tests {
         let t2 = j2000_seconds_to_utc(844_677_300.123456).unwrap();
         assert_eq!(t2.timestamp_subsec_micros(), 123_456);
         assert!(j2000_seconds_to_utc(f64::NAN).is_err());
+    }
+
+    #[test]
+    fn error_silencing_survives_a_failed_open() {
+        // Regression: opening a non-HDF5 file makes netcdf-c/HDF5 re-initialize,
+        // which restored error printing. With the old once-per-process guard, ONE
+        // bad upload made every later good read spray 20+ HDF5-DIAG blocks on
+        // stderr (a log flood at one granule per 20 s per satellite).
+        let _g = HDF5_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(read_glm_flashes_from_bytes(b"not netcdf").is_err());
+        assert!(read_glm_flashes(Path::new(G18)).is_ok());
+        assert!(
+            hdf5_auto_printing_is_off(),
+            "HDF5 error printing came back after a failed open"
+        );
     }
 }

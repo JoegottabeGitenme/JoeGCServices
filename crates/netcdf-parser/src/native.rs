@@ -17,7 +17,6 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Once;
 
 use crate::error::{NetCdfError, NetCdfResult};
 use crate::projection::GoesProjection;
@@ -34,25 +33,25 @@ use crate::projection::GoesProjection;
 /// ```
 ///
 /// This function disables that output by calling H5Eset_auto2 with null handlers.
-/// It only needs to be called once per process, but is safe to call multiple times.
 ///
-/// **Important**: Call this function early in your program's startup (e.g., in main())
-/// before any HDF5/NetCDF operations occur. If HDF5 is initialized before this is called,
-/// the error silencing may not take effect for all operations.
+/// **It is applied on every call, not once per process.** An earlier version used
+/// a `Once` guard on the theory that one call was enough, but that is false:
+/// opening a file that is *not* valid HDF5 makes netcdf-c/HDF5 re-initialize, which
+/// puts error printing back to the default. After a single bad upload every
+/// later, perfectly good read then printed 20+ diagnostic blocks to stderr
+/// (measured with a garbage read followed by a good GLM read; see the
+/// `error_silencing_survives_a_failed_open` test). The call is a cheap setter, so
+/// call it right before each open.
 pub fn silence_hdf5_errors() {
-    static INIT: Once = Once::new();
-
-    INIT.call_once(|| {
-        // SAFETY: H5Eset_auto2 is thread-safe and we're passing null pointers
-        // to disable error output, which is a documented valid use.
-        unsafe {
-            hdf5_metno_sys::h5e::H5Eset_auto2(
-                hdf5_metno_sys::h5e::H5E_DEFAULT,
-                None,
-                std::ptr::null_mut(),
-            );
-        }
-    });
+    // SAFETY: H5Eset_auto2 is thread-safe and we're passing null pointers
+    // to disable error output, which is a documented valid use.
+    unsafe {
+        hdf5_metno_sys::h5e::H5Eset_auto2(
+            hdf5_metno_sys::h5e::H5E_DEFAULT,
+            None,
+            std::ptr::null_mut(),
+        );
+    }
 }
 
 /// Load GOES NetCDF data directly from bytes using native netcdf library.
