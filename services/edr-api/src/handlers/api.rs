@@ -99,6 +99,47 @@ mod tests {
     }
 
     #[test]
+    fn spec_documents_the_lightning_contract() {
+        let v: serde_yaml::Value = serde_yaml::from_str(OPENAPI_SPEC).unwrap();
+        // the three shared parameters are referenced from items, area and radius
+        for op in ["items", "area", "radius"] {
+            let path = format!("/collections/{{collectionId}}/{}", op);
+            let refs: Vec<String> = v["paths"][path.as_str()]["get"]["parameters"]
+                .as_sequence()
+                .unwrap()
+                .iter()
+                .filter_map(|p| p.get("$ref").and_then(|r| r.as_str()).map(String::from))
+                .collect();
+            for name in ["lightningWindow", "lightningAfter", "lightningSatellite"] {
+                assert!(refs.iter().any(|r| r.ends_with(name)), "{op} lacks {name}");
+            }
+        }
+        // the freshness fields exist AND are required: they are what lets a client
+        // tell a quiet sky from a dead feed, so they must not silently go missing.
+        let coll = &v["components"]["schemas"]["LightningFeatureCollection"];
+        let required: Vec<&str> = coll["required"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .filter_map(|x| x.as_str())
+            .collect();
+        for field in [
+            "dataThrough",
+            "dataAgeSeconds",
+            "lastId",
+            "timeStamp",
+            "numberReturned",
+        ] {
+            assert!(required.contains(&field), "{field} must be required");
+            assert!(
+                coll["properties"].get(field).is_some(),
+                "{field} undocumented"
+            );
+        }
+        assert!(v["components"]["schemas"].get("LightningFeature").is_some());
+    }
+
+    #[test]
     fn spec_is_valid_yaml_with_a_paths_section() {
         let value: serde_yaml::Value =
             serde_yaml::from_str(OPENAPI_SPEC).expect("openapi.yaml must parse");

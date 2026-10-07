@@ -27,8 +27,12 @@
 # no cross-satellite de-duplication.
 #
 # A quiet sky is normal: an empty `features` array is a valid answer, not an error.
-# Pipeline health is exported as glm_latest_granule_end_timestamp_seconds (not flash
-# recency, which is legitimately old on a clear day) -- see deploy/prometheus/alerts.yml.
+# But an empty answer is ambiguous on its own (quiet sky, or a dead feed?), so every
+# response carries `dataThrough` / `dataAgeSeconds`: the end of the newest granule
+# processed. Empty + recent = quiet sky; empty + old or null = do NOT say "no lightning".
+# Server-side, pipeline health is the same signal exported as
+# glm_latest_granule_end_timestamp_seconds (not flash recency, which is legitimately
+# old on a clear day) -- see deploy/prometheus/alerts.yml.
 #
 # Advisory: GLM detects optical emissions from cloud tops, not ground strikes, and its
 # detection efficiency varies with the flash and the view angle. Treat counts as

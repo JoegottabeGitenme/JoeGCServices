@@ -482,3 +482,59 @@ async fn other_collections_are_not_served_by_the_lightning_handlers() {
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+#[ignore]
+async fn data_through_distinguishes_a_quiet_sky_from_a_dead_pipeline() {
+    let e = env().await;
+
+    // Nothing has ever been ingested: no flashes AND unknown freshness. A client
+    // must NOT read this as "quiet sky".
+    let (_, _, v) = items(&e, "").await;
+    assert_eq!(v["numberReturned"], 0);
+    assert!(
+        v["dataThrough"].is_null(),
+        "never-ingested must be unknown, not current"
+    );
+    assert!(v["dataAgeSeconds"].is_null());
+
+    // Granules are flowing but nothing flashed: empty AND current -> a real quiet sky.
+    e.lightning
+        .record_granule("goes-east", Utc::now() - Duration::seconds(30))
+        .await
+        .unwrap();
+    let (_, _, v) = items(&e, "").await;
+    assert_eq!(v["numberReturned"], 0);
+    let age = v["dataAgeSeconds"]
+        .as_f64()
+        .expect("freshness is known now");
+    assert!((29.0..40.0).contains(&age), "{age}");
+
+    // The pipeline dies: the marker stops advancing and the age grows, even though
+    // the answer is still "no flashes".
+    e.lightning
+        .record_granule("goes-east", Utc::now() - Duration::seconds(1500))
+        .await
+        .unwrap(); // late/older: must not rewind
+    let (_, _, v) = items(&e, "").await;
+    assert!(
+        v["dataAgeSeconds"].as_f64().unwrap() < 40.0,
+        "an older granule must not rewind the marker"
+    );
+
+    // `both` is only as fresh as its slowest source, and unknown while west is silent.
+    let (_, _, both) = items(&e, "satellite=both").await;
+    assert!(both["dataThrough"].is_null(), "west has never reported");
+    e.lightning
+        .record_granule("goes-west", Utc::now() - Duration::seconds(300))
+        .await
+        .unwrap();
+    let (_, _, both) = items(&e, "satellite=both").await;
+    let age = both["dataAgeSeconds"].as_f64().unwrap();
+    assert!(
+        (299.0..310.0).contains(&age),
+        "min over satellites is the laggard (west, ~300 s): {age}"
+    );
+    let (_, _, west) = items(&e, "satellite=goes-west").await;
+    assert!((299.0..310.0).contains(&west["dataAgeSeconds"].as_f64().unwrap()));
+}

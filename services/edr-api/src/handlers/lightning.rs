@@ -340,7 +340,39 @@ pub fn flash_to_feature(f: &StoredFlash, now: DateTime<Utc>) -> Value {
     })
 }
 
-pub fn flashes_to_collection(flashes: &[StoredFlash], now: DateTime<Utc>) -> Value {
+/// "The data is complete through": the end of the newest granule processed,
+/// for the satellites a query covers (all of them when `satellites` is empty).
+///
+/// This is what lets a client tell a quiet sky from a dead pipeline -- the
+/// ambiguity at the heart of an empty response. It is the *minimum* over the
+/// selected satellites (the data is only complete up to its slowest source), and
+/// `None` if any selected satellite has never reported, so "unknown" is never
+/// dressed up as "current".
+pub fn data_through(
+    progress: &[(String, DateTime<Utc>, DateTime<Utc>)],
+    satellites: &[String],
+) -> Option<DateTime<Utc>> {
+    let wanted: Vec<&str> = if satellites.is_empty() {
+        vec!["goes-east", "goes-west"]
+    } else {
+        satellites.iter().map(String::as_str).collect()
+    };
+    let mut oldest: Option<DateTime<Utc>> = None;
+    for sat in wanted {
+        let end = progress
+            .iter()
+            .find(|(s, _, _)| s == sat)
+            .map(|(_, end, _)| *end)?;
+        oldest = Some(oldest.map_or(end, |o| o.min(end)));
+    }
+    oldest
+}
+
+pub fn flashes_to_collection(
+    flashes: &[StoredFlash],
+    now: DateTime<Utc>,
+    data_through: Option<DateTime<Utc>>,
+) -> Value {
     json!({
         "type": "FeatureCollection",
         "features": flashes.iter().map(|f| flash_to_feature(f, now)).collect::<Vec<_>>(),
@@ -349,6 +381,12 @@ pub fn flashes_to_collection(flashes: &[StoredFlash], now: DateTime<Utc>) -> Val
         // Cursor for the next poll's `after`; null when nothing was returned
         // (keep the previous one).
         "lastId": flashes.iter().map(|f| f.id).max(),
+        // How current the DATA is, independent of whether anything flashed: the
+        // end of the newest processed granule (see `data_through`). An empty
+        // `features` with a recent `dataThrough` is a genuinely quiet sky; with a
+        // stale or null one it is NOT -- do not tell a user "no lightning".
+        "dataThrough": data_through.map(|t| t.to_rfc3339_opts(SecondsFormat::Millis, true)),
+        "dataAgeSeconds": data_through.map(|t| round_to((now - t).num_milliseconds() as f64 / 1000.0, 1)),
     })
 }
 
@@ -446,10 +484,20 @@ async fn run(state: &Arc<AppState>, area: FlashArea, common: &CommonParams) -> R
         area,
         limit: r.limit,
     };
-    match state.lightning_catalog.query_flashes(&query).await {
-        Ok(flashes) => geojson_response(flashes_to_collection(&flashes, now)),
-        Err(e) => internal_error(format!("Lightning query failed: {}", e)),
-    }
+    let flashes = match state.lightning_catalog.query_flashes(&query).await {
+        Ok(f) => f,
+        Err(e) => return internal_error(format!("Lightning query failed: {}", e)),
+    };
+    // A failure here must not turn a good answer into an error; it just means the
+    // freshness is unknown (null), which clients are told never to read as "current".
+    let through = match state.lightning_catalog.ingest_progress().await {
+        Ok(progress) => data_through(&progress, &query.satellites),
+        Err(e) => {
+            tracing::warn!("lightning ingest_progress failed: {}", e);
+            None
+        }
+    };
+    geojson_response(flashes_to_collection(&flashes, now, through))
 }
 
 /// The collection must exist and be wired to the lightning backend.
@@ -862,6 +910,7 @@ mod tests {
                 flash(11, 25, None),
             ],
             now(),
+            None,
         );
         assert_eq!(c["type"], "FeatureCollection");
         assert_eq!(c["numberReturned"], 3);
@@ -872,7 +921,7 @@ mod tests {
 
     #[test]
     fn an_empty_result_has_a_null_cursor_so_the_client_keeps_its_old_one() {
-        let c = flashes_to_collection(&[], now());
+        let c = flashes_to_collection(&[], now(), None);
         assert_eq!(c["numberReturned"], 0);
         assert!(c["lastId"].is_null());
         assert_eq!(c["features"], json!([]));
@@ -889,5 +938,58 @@ mod tests {
             r.headers().get(axum::http::header::CONTENT_TYPE).unwrap(),
             "application/geo+json"
         );
+    }
+
+    // ---- dataThrough: telling a quiet sky from a dead pipeline ----
+
+    fn prog(sat: &str, end_secs_ago: i64) -> (String, DateTime<Utc>, DateTime<Utc>) {
+        (
+            sat.to_string(),
+            now() - Duration::seconds(end_secs_ago),
+            now(),
+        )
+    }
+
+    #[test]
+    fn data_through_is_the_slowest_of_the_selected_satellites() {
+        let p = vec![prog("goes-east", 40), prog("goes-west", 400)];
+        assert_eq!(
+            data_through(&p, &["goes-east".into()]),
+            Some(now() - Duration::seconds(40))
+        );
+        assert_eq!(
+            data_through(&p, &["goes-west".into()]),
+            Some(now() - Duration::seconds(400))
+        );
+        // both (empty filter): only complete up to the laggard
+        assert_eq!(data_through(&p, &[]), Some(now() - Duration::seconds(400)));
+    }
+
+    #[test]
+    fn data_through_is_unknown_not_current_if_a_selected_satellite_never_reported() {
+        let only_east = vec![prog("goes-east", 40)];
+        assert_eq!(
+            data_through(&only_east, &["goes-east".into()]),
+            Some(now() - Duration::seconds(40))
+        );
+        assert_eq!(data_through(&only_east, &["goes-west".into()]), None);
+        assert_eq!(
+            data_through(&only_east, &[]),
+            None,
+            "`both` with west missing must not look current"
+        );
+        assert_eq!(data_through(&[], &["goes-east".into()]), None);
+    }
+
+    #[test]
+    fn the_response_carries_data_through_and_its_age() {
+        let through = now() - Duration::seconds(45);
+        let c = flashes_to_collection(&[], now(), Some(through));
+        assert_eq!(c["dataThrough"], "2026-10-07T20:59:15.000Z");
+        assert_eq!(c["dataAgeSeconds"], 45.0);
+        // Unknown freshness is explicit null, never omitted and never a number.
+        let c = flashes_to_collection(&[], now(), None);
+        assert!(c["dataThrough"].is_null() && c["dataAgeSeconds"].is_null());
+        assert!(c.as_object().unwrap().contains_key("dataThrough"));
     }
 }
