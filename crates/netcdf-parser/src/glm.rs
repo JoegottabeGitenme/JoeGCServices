@@ -583,6 +583,9 @@ mod tests {
 
     #[test]
     fn from_bytes_equals_from_path_and_leaves_no_temp_file() {
+        // Every test that spools bytes to a temp file holds this lock, so no other
+        // test can have a `glm_<pid>_*` file in flight while we count them.
+        let _g = HDF5_STATE.lock().unwrap_or_else(|e| e.into_inner());
         let bytes = std::fs::read(G18).unwrap();
         let a = read_glm_flashes(Path::new(G18)).unwrap();
         let b = read_glm_flashes_from_bytes(&bytes).unwrap();
