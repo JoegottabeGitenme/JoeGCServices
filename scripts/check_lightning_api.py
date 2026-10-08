@@ -144,10 +144,11 @@ def main() -> int:
         r.check(meta.get("id") == "glm-lightning", "id is glm-lightning")
         bbox = (meta.get("extent", {}).get("spatial", {}).get("bbox") or [[]])[0]
         r.check(bbox == [-125.0, 24.0, -66.0, 50.0], f"spatial extent is the CONUS clip ({bbox})")
-    # The full listing is slow on a large deployment (it counts every observation
-    # table), so allow it plenty of time and report how long it took.
+    # The full listing is served from a cached snapshot (~0.3 s). The first
+    # request after an edr-api restart can still wait for a cold build (~20 s),
+    # so keep a generous timeout and report how long it took.
     t0 = dt.datetime.now()
-    status, _, lst = fetch(f"{base}/collections", timeout=300)
+    status, _, lst = fetch(f"{base}/collections", timeout=120)
     took = (dt.datetime.now() - t0).total_seconds()
     r.check(status == 200 and any(c.get("id") == "glm-lightning" for c in (lst or {}).get("collections", [])),
             f"listed in /collections (even when no flash is stored) [{took:.0f}s]")
