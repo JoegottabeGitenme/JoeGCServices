@@ -327,6 +327,7 @@ mod tests {
 
     /// True if HDF5 will NOT print error stacks to stderr right now.
     fn hdf5_auto_printing_is_off() -> bool {
+        let _guard = hdf5_metno_sys::LOCK.lock();
         let mut func: hdf5_metno_sys::h5e::H5E_auto2_t = None;
         let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
         // SAFETY: plain getter writing into two valid out-pointers.
@@ -644,5 +645,47 @@ mod tests {
             hdf5_auto_printing_is_off(),
             "HDF5 error printing came back after a failed open"
         );
+    }
+
+    #[test]
+    fn silencing_concurrently_with_reads_never_corrupts_a_read() {
+        // Regression for a race I introduced when silence_hdf5_errors() began running
+        // before every open: it called H5Eset_auto2 OUTSIDE the netcdf crate's global
+        // lock, racing another thread's in-flight attribute read. On HDF5 2.2.0 that
+        // failed ~40% of runs of the GLM tests with NC_EATTMETA (-107) on a valid file.
+        // Here many threads read the same real granule while others hammer the
+        // silencer; every read must still decode identically.
+        let _g = HDF5_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let want = read_glm_flashes(Path::new(G19)).unwrap().flashes.len();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|s| {
+            let hammer: Vec<_> = (0..4)
+                .map(|_| {
+                    s.spawn(|| {
+                        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                            crate::native::silence_hdf5_errors();
+                        }
+                    })
+                })
+                .collect();
+            let readers: Vec<_> = (0..4)
+                .map(|_| {
+                    s.spawn(|| {
+                        for _ in 0..40 {
+                            let got = read_glm_flashes(Path::new(G19))
+                                .expect("valid file must always read");
+                            assert_eq!(got.flashes.len(), want);
+                        }
+                    })
+                })
+                .collect();
+            for r in readers {
+                r.join().expect("a reader panicked: the race is back");
+            }
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            for h in hammer {
+                h.join().unwrap();
+            }
+        });
     }
 }

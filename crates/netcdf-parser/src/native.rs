@@ -43,8 +43,16 @@ use crate::projection::GoesProjection;
 /// `error_silencing_survives_a_failed_open` test). The call is a cheap setter, so
 /// call it right before each open.
 pub fn silence_hdf5_errors() {
-    // SAFETY: H5Eset_auto2 is thread-safe and we're passing null pointers
-    // to disable error output, which is a documented valid use.
+    // libnetcdf is not thread-safe, so the `netcdf` crate serializes EVERY call
+    // into it (and HDF5) through this one global reentrant lock. Setting the
+    // error handler is an HDF5 call like any other: made without the lock it
+    // races with another thread's in-flight read. Measured on HDF5 2.2.0: ~60% of
+    // parallel test runs failed with NC_EATTMETA (-107, "error reading attribute
+    // metadata") on a perfectly valid file. It is reentrant, so holding it here is
+    // safe even if a caller already does.
+    let _guard = hdf5_metno_sys::LOCK.lock();
+    // SAFETY: H5Eset_auto2 with null handlers is a documented way to disable
+    // error printing, and we hold the library-wide lock.
     unsafe {
         hdf5_metno_sys::h5e::H5Eset_auto2(
             hdf5_metno_sys::h5e::H5E_DEFAULT,

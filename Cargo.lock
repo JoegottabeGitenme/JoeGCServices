@@ -2271,9 +2271,9 @@ dependencies = [
 
 [[package]]
 name = "hdf5-metno-sys"
-version = "0.11.3"
+version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b546cf84b629a51ea1e68c783b37ce2045c80f3d56e4ba1d2d882cfba0364738"
+checksum = "567a57ee34c38263f551f2cf02b95675def6b91d0e321c5e70f8c6d5ef9cee87"
 dependencies = [
  "libc",
  "libloading",
@@ -3385,9 +3385,9 @@ dependencies = [
 
 [[package]]
 name = "netcdf-sys"
-version = "0.9.0"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "596486b4ae6f128b4c0c62343fe9459946e6bf40e830d7dfb5fe82fbbf024f65"
+checksum = "e0e415a9513a707eda0d14294c1dbefb19b87a8ff37511a36e969e71f0aa05f4"
 dependencies = [
  "hdf5-metno-sys",
  "libz-sys",
