@@ -76,6 +76,9 @@ async fn create_test_state(infra: &TestInfrastructure) -> Arc<AppState> {
         linear_feature_catalog,
         segment_conditions_catalog,
         lightning_catalog,
+        collections_snapshot: Arc::new(edr_api::snapshot_cache::SnapshotCache::new(
+            std::time::Duration::from_secs(60),
+        )),
         edr_config: Arc::new(RwLock::new(edr_config)),
         base_url: "http://localhost:8083/edr".to_string(),
         location_cache,

@@ -537,6 +537,38 @@ pub async fn list_collections_handler(
         return response;
     }
 
+    // The listing costs ~575 queries (see snapshot_cache.rs), so it is served from
+    // a stale-while-revalidate snapshot: instant, refreshed in the background at
+    // most once per TTL, and rebuilt on config reload.
+    let builder_state = Arc::clone(&state);
+    let served = state
+        .collections_snapshot
+        .get(move || async move { build_collections_list_json(&builder_state).await })
+        .await;
+
+    match served {
+        Some((body, _how)) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CACHE_CONTROL, "max-age=60")
+            .body(body.as_str().to_owned().into())
+            .unwrap(),
+        None => {
+            let exc = ExceptionResponse::internal_error("Failed to build the collection list");
+            let json = serde_json::to_string(&exc).unwrap_or_default();
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json.into())
+                .unwrap()
+        }
+    }
+}
+
+/// Build the full `/collections` response body (the expensive part). `None` if it
+/// could not be serialized.
+pub async fn build_collections_list_json(state: &Arc<AppState>) -> Option<String> {
+    let started = std::time::Instant::now();
     let config = state.edr_config.read().await;
 
     let mut collections = Vec::new();
@@ -819,14 +851,13 @@ pub async fn list_collections_handler(
 
     let list = CollectionList::new(collections, &state.base_url);
 
-    let json = serde_json::to_string_pretty(&list).unwrap_or_default();
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(header::CACHE_CONTROL, "max-age=60")
-        .body(json.into())
-        .unwrap()
+    let json = serde_json::to_string_pretty(&list).ok()?;
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        bytes = json.len(),
+        "Built /collections snapshot"
+    );
+    Some(json)
 }
 
 /// GET /edr/collections/:collection_id - Get a specific collection

@@ -91,6 +91,26 @@ async fn run_server(args: Args) {
         }
     };
 
+    // Warm the /collections snapshot in the background so the first real request
+    // is already fast. The listing is slow (~575 queries); it must not delay startup.
+    {
+        let warm_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let builder_state = Arc::clone(&warm_state);
+            let ok = warm_state
+                .collections_snapshot
+                .refresh(move || async move {
+                    handlers::collections::build_collections_list_json(&builder_state).await
+                })
+                .await;
+            if !ok {
+                tracing::warn!(
+                    "Initial /collections snapshot failed; the first request will build it"
+                );
+            }
+        });
+    }
+
     // Export trail-conditions freshness (see freshness.rs for why these are
     // timestamps, not ages) so a silently-stalled worker is visible.
     edr_api::freshness::spawn(state.clone());
