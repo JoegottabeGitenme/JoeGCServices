@@ -16,6 +16,7 @@
 //! ```
 
 mod lightning;
+mod obs_retention;
 mod server;
 
 use anyhow::Result;
@@ -136,6 +137,9 @@ async fn main() -> Result<()> {
 
     // Create observation catalog using the same connection pool
     let observation_catalog = ObservationCatalog::new(catalog.pool_clone());
+    // A second handle on the same pool for the retention task (ObservationCatalog is
+    // not Clone, and `catalog` is moved into the Ingester below).
+    let observation_catalog_for_retention = ObservationCatalog::new(catalog.pool_clone());
 
     // Create storm event catalog sharing the same connection pool
     let storm_event_catalog = StormEventCatalog::new(catalog.pool_clone());
@@ -266,6 +270,13 @@ async fn main() -> Result<()> {
     if let Some(test_file) = &args.test_file {
         return run_test_file(ingester, test_file, args.test_model, args.forecast_hour).await;
     }
+
+    // Observations and TAFs used to grow forever (nothing called the delete
+    // functions): 14.5M rows made COUNT(*) take ~50 s. Sweep them on a timer.
+    tokio::spawn(obs_retention::run(
+        observation_catalog_for_retention,
+        obs_retention::ObsRetentionConfig::from_env(),
+    ));
 
     // GLM lightning is a live feed, not an archive: sweep expired flashes forever.
     let lightning_retention_hours = lightning::retention_hours_from_env();

@@ -1443,6 +1443,46 @@ impl ObservationCatalog {
         Ok(result.rows_affected())
     }
 
+    /// Delete at most `batch_size` observations of `source` older than `before`;
+    /// returns how many were deleted. Call repeatedly until it returns less than
+    /// `batch_size`.
+    ///
+    /// Batched because the first retention sweep on a long-running deployment
+    /// removes millions of rows (production: 12.9M NDBC rows), and one statement
+    /// would hold a single huge transaction -- minutes of locks on the table the
+    /// ingester is inserting into, and one enormous WAL burst. Batching on `ctid`
+    /// (the physical row id) rather than the UUID primary key keeps each batch an
+    /// index-driven scan on `idx_observations_source_time (source, obs_time DESC)`
+    /// instead of random primary-key lookups.
+    ///
+    /// `source` is required: retention windows differ per source (DART needs 60
+    /// days, METAR 7), so there is deliberately no "delete across all sources".
+    pub async fn delete_observations_before_batch(
+        &self,
+        source: &str,
+        before: DateTime<Utc>,
+        batch_size: i64,
+    ) -> WmsResult<u64> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM observations
+            WHERE ctid = ANY(ARRAY(
+                SELECT ctid FROM observations
+                WHERE source = $1 AND obs_time < $2
+                LIMIT $3
+            ))
+            "#,
+        )
+        .bind(source)
+        .bind(before)
+        .bind(batch_size.max(1))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Delete observations batch failed: {}", e)))?;
+
+        Ok(result.rows_affected())
+    }
+
     /// Get locations that have observations from a specific source.
     pub async fn get_locations_with_observations(
         &self,
