@@ -3,13 +3,20 @@
 //! These tests require Docker and are run with `cargo test -- --ignored`.
 
 use bytes::Bytes;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, SubsecRound, Utc};
 
 use storage::{
     Catalog, CatalogEntry, ObjectStorage, ObjectStorageConfig, SegmentConditionsCatalog,
 };
 use test_utils::containers::TestInfrastructure;
 use wms_common::BoundingBox;
+
+/// `Utc::now()` truncated to microseconds, which is all Postgres `timestamptz`
+/// stores. Comparing a round-tripped value against a nanosecond `Utc::now()`
+/// fails (left `...941725Z`, right `...941725767Z`) on any clock finer than 1 us.
+fn now_micros() -> DateTime<Utc> {
+    Utc::now().trunc_subsecs(6)
+}
 
 /// Helper to create a test catalog entry.
 fn test_entry(model: &str, parameter: &str, forecast_hour: u32) -> CatalogEntry {
@@ -461,7 +468,7 @@ async fn test_segment_conditions_latest_orders_by_valid_time_not_insertion_order
     let catalog = connected_catalog(&infra).await;
     let pool = catalog.pool_clone();
     let feature_id: i64 = 999_001;
-    let now = Utc::now();
+    let now = now_micros();
     let newer_valid_time = now - Duration::hours(1);
     let older_valid_time = now - Duration::hours(3);
 
@@ -508,7 +515,7 @@ async fn test_segment_conditions_latest_excludes_future_valid_times() {
     let catalog = connected_catalog(&infra).await;
     let pool = catalog.pool_clone();
     let feature_id: i64 = 999_002;
-    let now = Utc::now();
+    let now = now_micros();
     let past_valid_time = now - Duration::hours(1);
     // A genuine forecast-hour row for an upcoming hour of the same run --
     // real data, not a bug, but not "current conditions" either.
@@ -551,7 +558,7 @@ async fn test_segment_conditions_latest_tie_breaks_by_newest_run_time() {
     let catalog = connected_catalog(&infra).await;
     let pool = catalog.pool_clone();
     let feature_id: i64 = 999_003;
-    let now = Utc::now();
+    let now = now_micros();
     let valid_time = now - Duration::hours(1);
 
     // Same valid_time, two different model_versions -- the only way two

@@ -313,7 +313,7 @@ mod tests {
             let rule = SOURCES.iter().find(|s| s.source == src).unwrap();
             assert!(rule.floor_hours * 60 > lookback_min, "{src}");
         }
-        assert!(TAF_FLOOR_HOURS >= 2);
+        const { assert!(TAF_FLOOR_HOURS >= 2) };
     }
 
     #[test]
