@@ -7,7 +7,12 @@
 
 use std::sync::Arc;
 
-use axum::{body::Body, http::Request, routing::get, Extension, Router};
+use axum::{
+    body::Body,
+    http::{Method, Request},
+    routing::{get, post},
+    Extension, Router,
+};
 use chrono::{DateTime, Duration, Utc};
 use storage::{Catalog, CatalogEntry};
 use test_utils::containers::{TestConfig, TestInfrastructure};
@@ -45,6 +50,21 @@ async fn get_path(app: &Router, path_and_query: &str) -> (u16, String) {
         .await
         .unwrap();
     (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+async fn post_path(app: &Router, path: &str) -> u16 {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
 }
 
 fn data_layers(xml: &str) -> Vec<String> {
@@ -130,6 +150,10 @@ async fn capabilities_layer_filter_end_to_end() {
     let state = Arc::new(AppState::new().await.expect("AppState"));
     let app = Router::new()
         .route("/wms", get(handlers::wms_handler))
+        .route(
+            "/api/config/reload/layers",
+            post(handlers::config_reload_layers_handler),
+        )
         .layer(Extension(Arc::clone(&state)));
 
     // --- A filtered request on a cold cache must not populate it ----------
@@ -211,6 +235,31 @@ async fn capabilities_layer_filter_end_to_end() {
         assert!(body.contains(expect_in_message), "{q}: {body}");
         assert!(!body.contains("<Capability>"), "{q}: no partial document");
     }
+
+    // --- config reload must not wipe the layer registry ---------------------
+    // (the handlers used to look in `<CONFIG_DIR>/layers/layers`, find nothing and
+    // swap in an empty registry; this also drops the capabilities cache)
+    assert_eq!(post_path(&app, "/api/config/reload/layers").await, 200);
+    let (st, after_reload) = get_path(&app, BASE).await;
+    assert_eq!(st, 200);
+    assert_eq!(
+        data_layers(&after_reload),
+        data_layers(&full),
+        "reload lost layers"
+    );
+    let (_, one_after) = get_path(&app, &format!("{BASE}&layer=hrrr_DPT")).await;
+    assert_eq!(data_layers(&one_after), ["hrrr_DPT"]);
+    // a reload that finds no layers is refused and changes nothing
+    let good = std::env::var("CONFIG_DIR").unwrap();
+    std::env::set_var("CONFIG_DIR", "/definitely/not/a/config/dir");
+    assert_eq!(post_path(&app, "/api/config/reload/layers").await, 500);
+    std::env::set_var("CONFIG_DIR", good);
+    let (_, still) = get_path(&app, &format!("{BASE}&layer=hrrr_DPT")).await;
+    assert_eq!(
+        data_layers(&still),
+        ["hrrr_DPT"],
+        "failed reload emptied the registry"
+    );
 
     // --- short circuit: unknown names never touch the database -------------
     state.catalog.pool_clone().close().await;
