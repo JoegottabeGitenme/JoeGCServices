@@ -741,3 +741,210 @@ async fn test_segment_conditions_timeseries_excludes_history_older_than_the_wind
     assert_eq!(series.len(), 1);
     assert_eq!(series[0].soil_moisture, Some(0.20));
 }
+
+// ============================================================================
+// get_parameter_availability: single-query rewrite == the old five queries
+// ============================================================================
+
+/// The previous implementation, verbatim in SQL: COUNT, then four separate
+/// scans. Kept here as an independent oracle for the single-query version.
+async fn availability_five_queries(
+    pool: &sqlx::PgPool,
+    model: &str,
+    parameter: &str,
+) -> Option<(Vec<String>, Vec<i32>, Vec<String>, (f64, f64, f64, f64))> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM datasets WHERE model = $1 AND parameter = $2 AND status = 'available'",
+    )
+    .bind(model)
+    .bind(parameter)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    if count == 0 {
+        return None;
+    }
+    let times: Vec<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT DISTINCT DATE_TRUNC('minute', reference_time) as ref_time FROM datasets \
+         WHERE model = $1 AND parameter = $2 AND status = 'available' ORDER BY ref_time DESC",
+    )
+    .bind(model)
+    .bind(parameter)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let hours: Vec<i32> = sqlx::query_scalar(
+        "SELECT DISTINCT forecast_hour FROM datasets \
+         WHERE model = $1 AND parameter = $2 AND status = 'available' ORDER BY forecast_hour ASC",
+    )
+    .bind(model)
+    .bind(parameter)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let levels: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT level FROM datasets \
+         WHERE model = $1 AND parameter = $2 AND status = 'available' ORDER BY level ASC",
+    )
+    .bind(model)
+    .bind(parameter)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let bbox: (f64, f64, f64, f64) = sqlx::query_as(
+        "SELECT MIN(bbox_min_x), MIN(bbox_min_y), MAX(bbox_max_x), MAX(bbox_max_y) FROM datasets \
+         WHERE model = $1 AND parameter = $2 AND status = 'available'",
+    )
+    .bind(model)
+    .bind(parameter)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    Some((
+        times
+            .into_iter()
+            .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .collect(),
+        hours,
+        levels,
+        bbox,
+    ))
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_parameter_availability_matches_the_five_query_oracle() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url())
+        .await
+        .expect("connect");
+    catalog.migrate().await.expect("migrate");
+    let pool = catalog.pool_clone();
+
+    // Anchor on a whole minute so "+20 s" stays inside the same minute bucket.
+    let six_hours_ago = (Utc::now() - Duration::hours(6)).timestamp();
+    let base = DateTime::<Utc>::from_timestamp(six_hours_ago - six_hours_ago % 60, 0).unwrap();
+
+    // "multi": several runs (two inside the same minute -> must collapse to
+    // one), forecast hours inserted out of order, mixed-case / numeric levels
+    // (ordering is collation-sensitive), differing bboxes.
+    let levels = [
+        "surface",
+        "2 m above ground",
+        "500 mb",
+        "10 m above ground",
+        "Entire atmosphere",
+    ];
+    let mut n = 0u32;
+    for (run_offset_secs, hours) in [
+        (0i64, vec![6u32, 0, 3]),
+        (20, vec![0, 1]), // same minute as the first run
+        (3600, vec![12, 0]),
+        (7200, vec![2]),
+    ] {
+        for h in hours {
+            for (li, level) in levels.iter().enumerate() {
+                n += 1;
+                let mut e = test_entry("multi", "TMP", h);
+                e.reference_time = base + Duration::seconds(run_offset_secs);
+                e.level = level.to_string();
+                e.bbox = BoundingBox::new(
+                    -130.0 + li as f64 + (n % 3) as f64,
+                    20.0 - (n % 4) as f64,
+                    -60.0 - li as f64,
+                    55.0 + (n % 5) as f64,
+                );
+                catalog.register_dataset(&e).await.expect("register");
+            }
+        }
+    }
+    // A single-row parameter, and one with rows that are NOT available.
+    let mut one = test_entry("multi", "ONE", 0);
+    one.reference_time = base;
+    catalog.register_dataset(&one).await.expect("register");
+
+    let mut hidden = test_entry("multi", "HIDDEN", 0);
+    hidden.reference_time = base;
+    catalog.register_dataset(&hidden).await.expect("register");
+    sqlx::query("UPDATE datasets SET status = 'deleted' WHERE parameter = 'HIDDEN'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Rows with status != available must not influence the multi parameter
+    // either (extreme bbox / extra hour / extra level on a hidden row).
+    let mut stray = test_entry("multi", "TMP", 99);
+    stray.reference_time = base - Duration::days(9);
+    stray.level = "zzz hidden level".to_string();
+    stray.bbox = BoundingBox::new(-999.0, -999.0, 999.0, 999.0);
+    catalog.register_dataset(&stray).await.expect("register");
+    sqlx::query("UPDATE datasets SET status = 'deleted' WHERE forecast_hour = 99")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Another model with the same parameter must not leak in.
+    let mut other = test_entry("othermodel", "TMP", 7);
+    other.bbox = BoundingBox::new(-1.0, -1.0, 1.0, 1.0);
+    catalog.register_dataset(&other).await.expect("register");
+
+    for (model, param) in [
+        ("multi", "TMP"),
+        ("multi", "ONE"),
+        ("multi", "HIDDEN"),
+        ("multi", "NOPE"),
+        ("nomodel", "TMP"),
+        ("othermodel", "TMP"),
+    ] {
+        let got = catalog
+            .get_parameter_availability(model, param)
+            .await
+            .expect("query");
+        let want = availability_five_queries(&pool, model, param).await;
+        match (got, want) {
+            (None, None) => {}
+            (Some(g), Some((times, hours, lv, bb))) => {
+                assert_eq!(g.times, times, "{model}/{param} times");
+                assert_eq!(g.forecast_hours, hours, "{model}/{param} hours");
+                assert_eq!(g.levels, lv, "{model}/{param} levels");
+                assert_eq!(
+                    (g.bbox.min_x, g.bbox.min_y, g.bbox.max_x, g.bbox.max_y),
+                    bb,
+                    "{model}/{param} bbox"
+                );
+            }
+            (g, w) => panic!(
+                "{model}/{param}: got {:?}, oracle {:?}",
+                g.is_some(),
+                w.is_some()
+            ),
+        }
+    }
+
+    // Sanity on the seeded data so the comparison above can't pass vacuously.
+    let multi = catalog
+        .get_parameter_availability("multi", "TMP")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        multi.times.len(),
+        3,
+        "20 s-apart runs collapse to one minute bucket"
+    );
+    assert!(multi.times[0] > multi.times[1], "times newest first");
+    assert_eq!(multi.forecast_hours, vec![0, 1, 2, 3, 6, 12]);
+    assert_eq!(multi.levels.len(), 5);
+    assert!(!multi.levels.iter().any(|l| l.contains("hidden")));
+    assert!(multi.bbox.min_x > -999.0, "non-available rows are excluded");
+    assert!(catalog
+        .get_parameter_availability("multi", "HIDDEN")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(catalog
+        .get_parameter_availability("multi", "NOPE")
+        .await
+        .unwrap()
+        .is_none());
+}
