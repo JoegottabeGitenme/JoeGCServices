@@ -35,6 +35,13 @@ whole database was busy at those moments.
 
 No new index was needed: the existing `(feature_id, valid_time)` serves the probe.
 
+**The hourly write pass got cheaper too** (one data point, not a benchmark). Before the
+cleanup, a catch-up pass wrote 66,496 rows per forecast hour at roughly 70 s each
+(11 hours, 731k rows, about 12 minutes). The first pass after it wrote 66,525 rows for one
+hour in 27.8 s. The earlier pass overlapped with my own measurement queries, so the real ratio
+is probably smaller than 2.5x; the direction is what the smaller table and zero dead tuples
+predict. Watch `docker logs weather-wms-trail-physics-1 | grep wrote` over the next days.
+
 ## Measured results (production, trail-physics idle)
 
 | Request | Before | After |
