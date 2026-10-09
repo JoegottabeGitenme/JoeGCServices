@@ -15,8 +15,9 @@ use std::sync::Arc;
 use tracing::{error, info, instrument};
 
 use super::common::{
-    convert_png_to_jpeg, convert_png_to_webp, get_styles_xml_from_file, mercator_to_wgs84,
-    wms_exception, DimensionParams,
+    convert_png_to_jpeg, convert_png_to_webp, get_styles_xml_from_file, layers_message,
+    mercator_to_wgs84, parse_layer_names, resolve_capabilities_filter, wms_exception,
+    CapabilitiesDoc, DimensionParams,
 };
 use crate::cite;
 use crate::layer_config::LayerConfigRegistry;
@@ -491,96 +492,9 @@ fn capabilities_response(xml: String) -> Response {
         .unwrap()
 }
 
-/// Layer names asked for via `layer=` and/or `layers=` on a GetCapabilities
-/// request: comma-separated, trimmed, empty entries dropped, duplicates
-/// (case-insensitive) removed, first spelling kept. If both parameters are
-/// given their names are combined. Empty means "no filter" (the full document).
+/// Layer names asked for via `layer=` and/or `layers=` on a GetCapabilities request.
 fn requested_layer_names(params: &WmsParams) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut names = Vec::new();
-    for raw in [params.layer.as_deref(), params.layers.as_deref()]
-        .into_iter()
-        .flatten()
-    {
-        for name in raw.split(',').map(str::trim).filter(|n| !n.is_empty()) {
-            if seen.insert(name.to_ascii_lowercase()) {
-                names.push(name.to_string());
-            }
-        }
-    }
-    names
-}
-
-/// A validated GetCapabilities layer filter.
-#[derive(Debug)]
-struct CapabilitiesFilter {
-    /// Canonical layer names (`{model_id}_{PARAMETER}`, exactly as the
-    /// document spells them) that may appear in the output.
-    allowed: std::collections::HashSet<String>,
-    /// `(model_id, parameter)` pairs whose catalog availability is needed to
-    /// build those layers. A composite layer (WIND_BARBS) needs the
-    /// availability of the components it `requires`, not its own.
-    lookups: Vec<(String, String)>,
-}
-
-/// Resolve requested names against the layer config only (no database), so an
-/// unknown name is rejected before any query runs. Matching is
-/// case-insensitive on the canonical `{model_id}_{PARAMETER}` name, which is
-/// what the full document advertises. `Err` carries the names that matched
-/// nothing, as the caller spelled them.
-fn resolve_capabilities_filter(
-    layer_configs: &LayerConfigRegistry,
-    requested: &[String],
-) -> Result<CapabilitiesFilter, Vec<String>> {
-    let mut by_lower: HashMap<String, (&str, &crate::layer_config::LayerConfig)> = HashMap::new();
-    for model_id in layer_configs.models() {
-        if let Some(model) = layer_configs.get_model(model_id) {
-            for layer in &model.layers {
-                by_lower.insert(
-                    format!("{}_{}", model_id, layer.parameter).to_ascii_lowercase(),
-                    (model_id, layer),
-                );
-            }
-        }
-    }
-
-    let mut allowed = std::collections::HashSet::new();
-    let mut lookups: Vec<(String, String)> = Vec::new();
-    let mut unknown = Vec::new();
-    for name in requested {
-        match by_lower.get(&name.to_ascii_lowercase()) {
-            None => unknown.push(name.clone()),
-            Some((model_id, layer)) => {
-                allowed.insert(format!("{}_{}", model_id, layer.parameter));
-                let needed: Vec<&String> = if layer.composite {
-                    layer.requires.iter().collect()
-                } else {
-                    vec![&layer.parameter]
-                };
-                for param in needed {
-                    let pair = (model_id.to_string(), param.clone());
-                    if !lookups.contains(&pair) {
-                        lookups.push(pair);
-                    }
-                }
-            }
-        }
-    }
-    if unknown.is_empty() {
-        Ok(CapabilitiesFilter { allowed, lookups })
-    } else {
-        Err(unknown)
-    }
-}
-
-/// "Layer 'a' is not defined." / "Layers 'a', 'b' are not defined."
-fn layers_message(names: &[String], what: &str) -> String {
-    let quoted: Vec<String> = names.iter().map(|n| format!("'{}'", n)).collect();
-    if names.len() == 1 {
-        format!("Layer {} {}.", quoted[0], what)
-    } else {
-        format!("Layers {} {}.", quoted.join(", "), what)
-    }
+    parse_layer_names(params.layer.as_deref(), params.layers.as_deref())
 }
 
 /// GetCapabilities restricted to the layers named in `layer=` / `layers=`.
@@ -2045,14 +1959,6 @@ fn build_wms_capabilities_xml_v2(
         xml,
         layers: emitted,
     }
-}
-
-/// A built capabilities document plus the names of the data layers it contains.
-struct CapabilitiesDoc {
-    xml: String,
-    /// Canonical names (`{model}_{PARAM}`) of the configured layers emitted
-    /// (CITE test layers are not listed).
-    layers: Vec<String>,
 }
 
 /// Build dimension XML for a specific layer based on its actual data availability.

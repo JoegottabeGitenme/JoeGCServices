@@ -26,7 +26,8 @@ use wms_common::{
 
 use super::common::{
     convert_png_to_jpeg, convert_png_to_webp, get_valid_styles_from_file,
-    get_wmts_styles_xml_from_file, wmts_exception, wmts_exception_with_locator, DimensionParams,
+    get_wmts_styles_xml_from_file, layers_message, parse_layer_names, resolve_capabilities_filter,
+    wmts_exception, wmts_exception_with_locator, CapabilitiesDoc, DimensionParams,
     WmtsDimensionParams,
 };
 use crate::layer_config::LayerConfigRegistry;
@@ -46,6 +47,9 @@ pub struct WmtsKvpParams {
     pub request: Option<String>,
     pub version: Option<String>,
     pub layer: Option<String>,
+    /// Not a WMTS KVP parameter: accepted on GetCapabilities only, as the
+    /// plural spelling of the vendor `layer` filter (same as WMS `layers`).
+    pub layers: Option<String>,
     pub style: Option<String>,
     pub tile_matrix_set: Option<String>,
     pub tile_matrix: Option<String>,
@@ -74,6 +78,8 @@ impl WmtsKvpParams {
                         // Simple percent-decoding for common cases
                         v.replace("%2F", "/")
                             .replace("%3A", ":")
+                            .replace("%2C", ",")
+                            .replace("%2c", ",")
                             .replace("%20", " ")
                             .replace("+", " ")
                     })
@@ -89,6 +95,7 @@ impl WmtsKvpParams {
             .or_else(|| map.get("ACCEPTVERSIONS"))
             .cloned();
         params.layer = map.get("LAYER").cloned();
+        params.layers = map.get("LAYERS").cloned();
         params.style = map.get("STYLE").cloned();
         params.tile_matrix_set = map.get("TILEMATRIXSET").cloned();
         params.tile_matrix = map.get("TILEMATRIX").cloned();
@@ -154,7 +161,7 @@ pub async fn wmts_kvp_handler(
     };
 
     match request.to_uppercase().as_str() {
-        "GETCAPABILITIES" => wmts_get_capabilities(state).await,
+        "GETCAPABILITIES" => wmts_get_capabilities(state, &params).await,
         "GETTILE" => {
             // Validate required LAYER parameter
             let layer = match params.layer.as_deref() {
@@ -679,7 +686,17 @@ pub async fn xyz_tile_handler(
 // GetCapabilities
 // ============================================================================
 
-async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
+async fn wmts_get_capabilities(state: Arc<AppState>, params: &WmtsKvpParams) -> Response {
+    // Optional layer filter (`layer=` / `layers=`): answer for just those layers.
+    // On GetCapabilities `LAYER` is not a standard parameter, so it is read
+    // here only, never in GetTile. Filtered documents are cheap to build (one
+    // query per layer) and are never cached, so the cache slot below stays
+    // reserved for the full document.
+    let requested = parse_layer_names(params.layer.as_deref(), params.layers.as_deref());
+    if !requested.is_empty() {
+        return wmts_get_filtered_capabilities(state, requested).await;
+    }
+
     // Check cache first
     if let Some(cached_xml) = state.capabilities_cache.get_wmts().await {
         return Response::builder()
@@ -744,17 +761,91 @@ async fn wmts_get_capabilities(state: Arc<AppState>) -> Response {
         &layer_configs,
         &param_availability,
         &state.model_dimensions,
-    );
+        None,
+    )
+    .xml;
 
     // Cache the result
     state.capabilities_cache.set_wmts(xml.clone()).await;
 
+    wmts_capabilities_response(xml)
+}
+
+fn wmts_capabilities_response(xml: String) -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/xml")
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .body(xml.into())
         .unwrap()
+}
+
+/// GetCapabilities restricted to the layers named in `layer=` / `layers=`.
+///
+/// Same rules as the WMS version: names are resolved against the layer config
+/// only, so an unknown name fails before any database work; a configured
+/// layer with no data (omitted by the full document too) also fails. WMTS has
+/// no `LayerNotDefined` code, so both use `InvalidParameterValue` with
+/// `locator="layer"`, matching GetTile's unknown-layer response.
+async fn wmts_get_filtered_capabilities(state: Arc<AppState>, requested: Vec<String>) -> Response {
+    let layer_not_defined = |msg: String| {
+        wmts_exception_with_locator(
+            "InvalidParameterValue",
+            &msg,
+            Some("layer"),
+            StatusCode::BAD_REQUEST,
+        )
+    };
+
+    let layer_configs = state.layer_configs.read().await;
+
+    let filter = match resolve_capabilities_filter(&layer_configs, &requested) {
+        Ok(f) => f,
+        Err(unknown) => return layer_not_defined(layers_message(&unknown, "is not defined")),
+    };
+
+    let mut param_availability: HashMap<String, ParameterAvailability> = HashMap::new();
+    for (model_id, parameter) in &filter.lookups {
+        match state
+            .catalog
+            .get_parameter_availability(model_id, parameter)
+            .await
+        {
+            Ok(Some(availability)) => {
+                param_availability.insert(format!("{}_{}", model_id, parameter), availability);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                // Do not report a database failure as an undefined layer.
+                tracing::error!(error = %e, model = %model_id, parameter = %parameter, "capabilities lookup failed");
+                return wmts_exception(
+                    "NoApplicableCode",
+                    "Could not read layer availability.",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                );
+            }
+        }
+    }
+
+    let doc = build_wmts_capabilities_xml_v2(
+        &layer_configs,
+        &param_availability,
+        &state.model_dimensions,
+        Some(&filter.allowed),
+    );
+
+    let mut without_data: Vec<String> = filter
+        .allowed
+        .iter()
+        .filter(|name| !doc.layers.contains(name))
+        .cloned()
+        .collect();
+    if !without_data.is_empty() {
+        without_data.sort();
+        return layer_not_defined(layers_message(&without_data, "has no data available"));
+    }
+
+    wmts_capabilities_response(doc.xml)
 }
 
 // ============================================================================
@@ -1480,12 +1571,18 @@ fn build_wgs84_tile_matrices() -> String {
 
 /// Build WMTS capabilities XML from layer configs (config-driven approach).
 /// Only includes layers that have data available in the catalog.
+///
+/// `allowed`: when `Some`, only those canonical layer names (`{model}_{PARAM}`)
+/// are emitted. Component layers that a requested composite (WIND_BARBS) is
+/// derived from are still read from `param_availability`, just not emitted.
 fn build_wmts_capabilities_xml_v2(
     layer_configs: &LayerConfigRegistry,
     param_availability: &HashMap<String, ParameterAvailability>,
     dimension_registry: &ModelDimensionRegistry,
-) -> String {
+    allowed: Option<&std::collections::HashSet<String>>,
+) -> CapabilitiesDoc {
     let mut all_layers: Vec<String> = Vec::new();
+    let mut emitted: Vec<String> = Vec::new();
 
     for model_id in layer_configs.models() {
         let Some(model_config) = layer_configs.get_model(model_id) else {
@@ -1520,6 +1617,12 @@ fn build_wmts_capabilities_xml_v2(
                 "WSPD" | "WIND" => wspd_availability = Some(availability),
                 "WDIR" => wdir_availability = Some(availability),
                 _ => {}
+            }
+
+            // Filtered request: component layers were tracked above (a requested
+            // WIND_BARBS needs them) but are only emitted if asked for.
+            if allowed.is_some_and(|a| !a.contains(&key)) {
+                continue;
             }
 
             let layer_id = format!("{}_{}", model_id, layer.parameter);
@@ -1568,6 +1671,7 @@ fn build_wmts_capabilities_xml_v2(
                 time_dimensions, elevation_dim,
                 layer_id, layer_id, layer_id
             ));
+            emitted.push(key);
         }
 
         // Handle WIND_BARBS composite layer
@@ -1587,7 +1691,10 @@ fn build_wmts_capabilities_xml_v2(
                 None
             };
 
-        if let Some((wind1, wind2)) = wind_components {
+        let wind_barbs_name = format!("{}_WIND_BARBS", model_id);
+        let wind_barbs_wanted = allowed.is_none_or(|a| a.contains(&wind_barbs_name));
+
+        if let (Some((wind1, wind2)), true) = (wind_components, wind_barbs_wanted) {
             // Find common levels between the two wind components
             let common_levels: Vec<String> = wind1
                 .levels
@@ -1653,6 +1760,7 @@ fn build_wmts_capabilities_xml_v2(
                     time_dimensions, elevation_dim,
                     layer_id, layer_id, layer_id
                 ));
+                emitted.push(wind_barbs_name);
             }
         }
     }
@@ -1661,7 +1769,7 @@ fn build_wmts_capabilities_xml_v2(
     let webmercator_tile_matrices = build_tile_matrices();
     let wgs84_tile_matrices = build_wgs84_tile_matrices();
 
-    format!(
+    let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <Capabilities xmlns="http://www.opengis.net/wmts/1.0"
     xmlns:ows="http://www.opengis.net/ows/1.1"
@@ -1711,7 +1819,12 @@ fn build_wmts_capabilities_xml_v2(
   </Contents>
 </Capabilities>"#,
         layers, webmercator_tile_matrices, wgs84_tile_matrices
-    )
+    );
+
+    CapabilitiesDoc {
+        xml,
+        layers: emitted,
+    }
 }
 
 /// Find the nearest available time within a tolerance window.
@@ -2078,5 +2191,201 @@ mod tests {
         let result =
             find_nearest_time("2026-03-11T15:59:00Z", &times, chrono::Duration::minutes(2));
         assert_eq!(result, Some("2026-03-11T16:00:00Z".to_string()));
+    }
+    // ------------------------------------------------------------------
+    // GetCapabilities layer filter (`layer=` / `layers=`)
+    // ------------------------------------------------------------------
+
+    fn names_from(query: &str) -> Vec<String> {
+        let p = WmtsKvpParams::from_query_string(query);
+        parse_layer_names(p.layer.as_deref(), p.layers.as_deref())
+    }
+
+    #[test]
+    fn kvp_params_read_layer_and_layers_case_insensitively() {
+        for key in ["layer", "LAYER", "Layer"] {
+            let p = WmtsKvpParams::from_query_string(&format!(
+                "request=GetCapabilities&{key}=hrrr_DPT"
+            ));
+            assert_eq!(p.layer.as_deref(), Some("hrrr_DPT"), "key {key}");
+            assert!(p.layers.is_none());
+        }
+        let p = WmtsKvpParams::from_query_string("LAYERS=a,b");
+        assert_eq!(p.layers.as_deref(), Some("a,b"));
+        assert!(p.layer.is_none());
+    }
+
+    #[test]
+    fn an_encoded_comma_is_a_separator_not_part_of_a_name() {
+        // `%2C` used to survive decoding, turning "a,b" into one bogus name "a%2Cb".
+        assert_eq!(
+            names_from("layers=hrrr_DPT%2Chrrr_TMP"),
+            ["hrrr_DPT", "hrrr_TMP"]
+        );
+        assert_eq!(
+            names_from("layer=hrrr_DPT%2chrrr_TMP"),
+            ["hrrr_DPT", "hrrr_TMP"]
+        );
+        assert_eq!(
+            names_from("layers=hrrr_DPT,hrrr_TMP"),
+            ["hrrr_DPT", "hrrr_TMP"]
+        );
+    }
+
+    #[test]
+    fn layer_filter_combines_both_spellings_and_ignores_blanks() {
+        assert_eq!(
+            names_from("layer=hrrr_DPT&layers=HRRR_dpt,gfs_TMP"),
+            ["hrrr_DPT", "gfs_TMP"]
+        );
+        assert!(names_from("request=GetCapabilities").is_empty());
+        assert!(names_from("layer=").is_empty());
+        assert!(names_from("layer=%2C%20,").is_empty());
+    }
+
+    fn real_config() -> (LayerConfigRegistry, ModelDimensionRegistry) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config");
+        (
+            LayerConfigRegistry::load_from_directory(&root),
+            ModelDimensionRegistry::load_from_directory(&root),
+        )
+    }
+
+    fn avail(hours: &[i32], levels: &[&str]) -> ParameterAvailability {
+        ParameterAvailability {
+            times: vec!["2026-10-08T12:00:00Z".into(), "2026-10-08T11:00:00Z".into()],
+            forecast_hours: hours.to_vec(),
+            levels: levels.iter().map(|s| s.to_string()).collect(),
+            bbox: wms_common::BoundingBox::new(-135.0, 20.0, -60.0, 55.0),
+        }
+    }
+
+    fn hrrr_availability() -> HashMap<String, ParameterAvailability> {
+        let mut m = HashMap::new();
+        m.insert("hrrr_DPT".into(), avail(&[0, 1, 2], &["2 m above ground"]));
+        m.insert("hrrr_TMP".into(), avail(&[0, 1], &["2 m above ground"]));
+        m.insert(
+            "hrrr_UGRD".into(),
+            avail(&[0, 1, 2], &["10 m above ground"]),
+        );
+        m.insert(
+            "hrrr_VGRD".into(),
+            avail(&[0, 1, 2], &["10 m above ground"]),
+        );
+        m
+    }
+
+    fn build(
+        allowed: Option<&[&str]>,
+        avail: &HashMap<String, ParameterAvailability>,
+    ) -> CapabilitiesDoc {
+        let (layers, dims) = real_config();
+        let set: Option<std::collections::HashSet<String>> =
+            allowed.map(|a| a.iter().map(|s| s.to_string()).collect());
+        build_wmts_capabilities_xml_v2(&layers, avail, &dims, set.as_ref())
+    }
+
+    fn is_well_formed(xml: &str) -> bool {
+        let mut r = quick_xml::Reader::from_str(xml);
+        loop {
+            match r.read_event() {
+                Ok(quick_xml::events::Event::Eof) => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+        }
+    }
+
+    /// The `<Layer>...</Layer>` element whose `ows:Identifier` is `id`.
+    fn layer_element(xml: &str, id: &str) -> Option<String> {
+        let ident = format!("<ows:Identifier>{id}</ows:Identifier>");
+        let at = xml.find(&ident)?;
+        let start = xml[..at].rfind("<Layer>")?;
+        let end = xml[at..].find("</Layer>")? + at + "</Layer>".len();
+        Some(xml[start..end].to_string())
+    }
+
+    #[test]
+    fn unfiltered_wmts_document_lists_every_layer_with_data() {
+        let doc = build(None, &hrrr_availability());
+        assert!(is_well_formed(&doc.xml));
+        let mut got = doc.layers.clone();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                "hrrr_DPT",
+                "hrrr_TMP",
+                "hrrr_UGRD",
+                "hrrr_VGRD",
+                "hrrr_WIND_BARBS"
+            ]
+        );
+        for id in &got {
+            assert!(layer_element(&doc.xml, id).is_some(), "{id} not in the XML");
+        }
+        // the tile matrix sets are part of every document
+        assert!(doc
+            .xml
+            .contains("<ows:Identifier>WebMercatorQuad</ows:Identifier>"));
+    }
+
+    #[test]
+    fn one_layer_filter_keeps_that_layer_and_the_boilerplate() {
+        let a = hrrr_availability();
+        let full = build(None, &a);
+        let one = build(Some(&["hrrr_DPT"]), &a);
+        assert!(is_well_formed(&one.xml));
+        assert_eq!(one.layers, ["hrrr_DPT"]);
+        for other in ["hrrr_TMP", "hrrr_UGRD", "hrrr_VGRD", "hrrr_WIND_BARBS"] {
+            assert!(layer_element(&one.xml, other).is_none(), "{other} leaked");
+        }
+        assert_eq!(
+            layer_element(&one.xml, "hrrr_DPT").unwrap(),
+            layer_element(&full.xml, "hrrr_DPT").unwrap()
+        );
+        assert!(one
+            .xml
+            .contains("<ows:Title>Weather WMTS Service</ows:Title>"));
+        assert!(one
+            .xml
+            .contains("<ows:Identifier>WorldCRS84Quad</ows:Identifier>"));
+    }
+
+    #[test]
+    fn multi_layer_filter_emits_each_requested_layer() {
+        let two = build(Some(&["hrrr_DPT", "hrrr_TMP"]), &hrrr_availability());
+        assert!(is_well_formed(&two.xml));
+        let mut got = two.layers.clone();
+        got.sort();
+        assert_eq!(got, ["hrrr_DPT", "hrrr_TMP"]);
+    }
+
+    #[test]
+    fn composite_filter_builds_from_components_without_emitting_them() {
+        let a = hrrr_availability();
+        let full = build(None, &a);
+        let wind = build(Some(&["hrrr_WIND_BARBS"]), &a);
+        assert!(is_well_formed(&wind.xml));
+        assert_eq!(wind.layers, ["hrrr_WIND_BARBS"]);
+        assert!(layer_element(&wind.xml, "hrrr_UGRD").is_none());
+        assert!(layer_element(&wind.xml, "hrrr_VGRD").is_none());
+        assert_eq!(
+            layer_element(&wind.xml, "hrrr_WIND_BARBS").unwrap(),
+            layer_element(&full.xml, "hrrr_WIND_BARBS").unwrap()
+        );
+    }
+
+    #[test]
+    fn requested_layers_without_data_are_not_reported_as_emitted() {
+        let doc = build(Some(&["hrrr_DPT", "hrrr_GUST"]), &hrrr_availability());
+        assert_eq!(doc.layers, ["hrrr_DPT"]);
+        let mut only_dpt = HashMap::new();
+        only_dpt.insert(
+            "hrrr_DPT".to_string(),
+            hrrr_availability()["hrrr_DPT"].clone(),
+        );
+        let doc = build(Some(&["hrrr_WIND_BARBS"]), &only_dpt);
+        assert!(doc.layers.is_empty(), "composite without components");
     }
 }

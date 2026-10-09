@@ -1,4 +1,4 @@
-//! HTTP-level tests for the GetCapabilities layer filter (`layer=` / `layers=`),
+//! HTTP-level tests for the WMS and WMTS GetCapabilities layer filter (`layer=` / `layers=`),
 //! through the real `wms_handler` and a real `AppState` on throwaway
 //! Postgres/Redis/MinIO containers.
 //!
@@ -93,6 +93,33 @@ fn layer_element(xml: &str, name: &str) -> String {
     xml[start..end].to_string()
 }
 
+/// Identifiers of the data layers in a WMTS capabilities document.
+fn wmts_layers(xml: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = xml;
+    // data layers: `<Layer>` ... `<ows:Identifier>X</ows:Identifier>` (the tile
+    // matrix sets use `<TileMatrixSet>`, not `<Layer>`)
+    while let Some(i) = rest.find("<Layer>") {
+        let after = &rest[i..];
+        let id_at = after.find("<ows:Identifier>").unwrap() + "<ows:Identifier>".len();
+        let end = after[id_at..].find("</ows:Identifier>").unwrap();
+        out.push(after[id_at..id_at + end].to_string());
+        rest = &after[id_at + end..];
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn wmts_layer_element(xml: &str, id: &str) -> String {
+    let at = xml
+        .find(&format!("<ows:Identifier>{id}</ows:Identifier>"))
+        .unwrap_or_else(|| panic!("{id} not in WMTS document"));
+    let start = xml[..at].rfind("<Layer>").unwrap();
+    let end = xml[at..].find("</Layer>").unwrap() + at + "</Layer>".len();
+    xml[start..end].to_string()
+}
+
 fn well_formed(xml: &str) -> bool {
     let mut r = quick_xml::Reader::from_str(xml);
     loop {
@@ -150,6 +177,7 @@ async fn capabilities_layer_filter_end_to_end() {
     let state = Arc::new(AppState::new().await.expect("AppState"));
     let app = Router::new()
         .route("/wms", get(handlers::wms_handler))
+        .route("/wmts", get(handlers::wmts_kvp_handler))
         .route(
             "/api/config/reload/layers",
             post(handlers::config_reload_layers_handler),
@@ -261,6 +289,106 @@ async fn capabilities_layer_filter_end_to_end() {
         "failed reload emptied the registry"
     );
 
+    // ======================= WMTS GetCapabilities ==========================
+    const W: &str = "/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0";
+    const ALL: [&str; 6] = [
+        "gfs_TMP",
+        "hrrr_DPT",
+        "hrrr_TMP",
+        "hrrr_UGRD",
+        "hrrr_VGRD",
+        "hrrr_WIND_BARBS",
+    ];
+
+    // filtered on a cold WMTS cache must not populate it
+    state.capabilities_cache.invalidate().await;
+    let (st, w_one) = get_path(&app, &format!("{W}&layer=hrrr_DPT")).await;
+    assert_eq!(st, 200, "{w_one}");
+    assert!(well_formed(&w_one));
+    assert_eq!(wmts_layers(&w_one), ["hrrr_DPT"]);
+
+    let (st, w_full) = get_path(&app, W).await;
+    assert_eq!(st, 200);
+    assert!(well_formed(&w_full));
+    assert_eq!(
+        wmts_layers(&w_full),
+        ALL,
+        "full WMTS document poisoned or changed"
+    );
+    // ...and once the full document is cached a filtered request must not be served from it
+    let (_, w_again) = get_path(&app, &format!("{W}&layer=hrrr_DPT")).await;
+    assert_eq!(
+        wmts_layers(&w_again),
+        ["hrrr_DPT"],
+        "filtered request served from the cache"
+    );
+    assert!(w_again.len() < w_full.len());
+
+    // markup identical to the full document's entry; boilerplate intact
+    assert_eq!(
+        wmts_layer_element(&w_one, "hrrr_DPT"),
+        wmts_layer_element(&w_full, "hrrr_DPT")
+    );
+    assert!(w_one.contains("<ows:Title>Weather WMTS Service</ows:Title>"));
+    assert!(w_one.contains("<ows:Identifier>WebMercatorQuad</ows:Identifier>"));
+    assert!(w_one.contains("<ows:Identifier>WorldCRS84Quad</ows:Identifier>"));
+
+    // plural spelling, any key case, URL-encoded commas, both params combined
+    let (st, w_two) = get_path(&app, &format!("{W}&LAYERS=HRRR_dpt,hrrr_TMP")).await;
+    assert_eq!(st, 200);
+    assert_eq!(wmts_layers(&w_two), ["hrrr_DPT", "hrrr_TMP"]);
+    let (st, w_enc) = get_path(&app, &format!("{W}&layers=hrrr_DPT%2Chrrr_TMP")).await;
+    assert_eq!(st, 200, "{w_enc}");
+    assert_eq!(wmts_layers(&w_enc), ["hrrr_DPT", "hrrr_TMP"]);
+    let (_, w_both) = get_path(&app, &format!("{W}&layer=hrrr_DPT&layers=gfs_TMP,hrrr_DPT")).await;
+    assert_eq!(wmts_layers(&w_both), ["gfs_TMP", "hrrr_DPT"]);
+
+    // empty value = no filter
+    let (_, w_empty) = get_path(&app, &format!("{W}&layer=")).await;
+    assert_eq!(wmts_layers(&w_empty), ALL);
+
+    // composite built from components, components not emitted
+    let (st, w_wind) = get_path(&app, &format!("{W}&layer=hrrr_WIND_BARBS")).await;
+    assert_eq!(st, 200, "{w_wind}");
+    assert_eq!(wmts_layers(&w_wind), ["hrrr_WIND_BARBS"]);
+    assert_eq!(
+        wmts_layer_element(&w_wind, "hrrr_WIND_BARBS"),
+        wmts_layer_element(&w_full, "hrrr_WIND_BARBS")
+    );
+
+    // errors: OWS InvalidParameterValue + locator=layer (the GetTile precedent)
+    for (q, expect) in [
+        ("layer=nope_TMP", "nope_TMP"),
+        ("layers=hrrr_DPT,nope_TMP", "nope_TMP"),
+        ("layer=hrrr_GUST", "hrrr_GUST"),
+        ("layer=gfs_WIND_BARBS", "gfs_WIND_BARBS"),
+    ] {
+        let (st, body) = get_path(&app, &format!("{W}&{q}")).await;
+        assert_eq!(st, 400, "{q}: {body}");
+        assert!(body.contains("ExceptionReport"), "{q}: {body}");
+        assert!(
+            body.contains(r#"exceptionCode="InvalidParameterValue""#),
+            "{q}: {body}"
+        );
+        assert!(body.contains(r#"locator="layer""#), "{q}: {body}");
+        assert!(body.contains(expect), "{q}: {body}");
+        assert!(!body.contains("<Contents>"), "{q}: no partial document");
+    }
+
+    // LAYER keeps its normal meaning in GetTile: the filter reads it on
+    // GetCapabilities only. (The tile itself cannot render here - no data
+    // in object storage - but the layer must be accepted, not rejected as
+    // a capabilities filter would reject an unknown one.)
+    let (_, tile_unknown) = get_path(
+        &app,
+        "/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=nope_TMP&STYLE=default&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX=3&TILEROW=2&TILECOL=2&FORMAT=image/png",
+    )
+    .await;
+    assert!(
+        tile_unknown.contains("nope_TMP"),
+        "GetTile unknown-layer path changed: {tile_unknown}"
+    );
+
     // --- short circuit: unknown names never touch the database -------------
     state.catalog.pool_clone().close().await;
     let (st, body) = get_path(&app, &format!("{BASE}&layer=nope_TMP")).await;
@@ -274,4 +402,18 @@ async fn capabilities_layer_filter_end_to_end() {
     let (st, body) = get_path(&app, &format!("{BASE}&layer=hrrr_DPT")).await;
     assert_eq!(st, 500, "{body}");
     assert!(body.contains(r#"code="NoApplicableCode""#), "{body}");
+
+    // WMTS: same two behaviors.
+    let (st, body) = get_path(&app, &format!("{W}&layer=nope_TMP")).await;
+    assert_eq!(
+        st, 400,
+        "unknown WMTS layer must be rejected without a DB: {body}"
+    );
+    assert!(body.contains(r#"exceptionCode="InvalidParameterValue""#));
+    let (st, body) = get_path(&app, &format!("{W}&layer=hrrr_DPT")).await;
+    assert_eq!(st, 500, "{body}");
+    assert!(
+        body.contains(r#"exceptionCode="NoApplicableCode""#),
+        "{body}"
+    );
 }
