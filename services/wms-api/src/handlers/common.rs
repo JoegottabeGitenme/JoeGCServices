@@ -7,7 +7,111 @@ use axum::{
 
 use serde::Deserialize;
 
+use crate::layer_config::LayerConfigRegistry;
 use crate::model_config::ModelDimensionRegistry;
+use std::collections::HashMap;
+
+// ============================================================================
+// GetCapabilities layer filter (shared by WMS and WMTS)
+// ============================================================================
+
+/// Layer names asked for via `layer=` and/or `layers=` on a GetCapabilities
+/// request (WMS or WMTS): comma-separated, trimmed, empty entries dropped,
+/// duplicates (case-insensitive) removed, first spelling kept. If both
+/// parameters are given their names are combined. Empty means "no filter" (the
+/// full document).
+pub(crate) fn parse_layer_names(layer: Option<&str>, layers: Option<&str>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut names = Vec::new();
+    for raw in [layer, layers].into_iter().flatten() {
+        for name in raw.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+            if seen.insert(name.to_ascii_lowercase()) {
+                names.push(name.to_string());
+            }
+        }
+    }
+    names
+}
+
+/// A validated GetCapabilities layer filter.
+#[derive(Debug)]
+pub(crate) struct CapabilitiesFilter {
+    /// Canonical layer names (`{model_id}_{PARAMETER}`, exactly as the
+    /// document spells them) that may appear in the output.
+    pub allowed: std::collections::HashSet<String>,
+    /// `(model_id, parameter)` pairs whose catalog availability is needed to
+    /// build those layers. A composite layer (WIND_BARBS) needs the
+    /// availability of the components it `requires`, not its own.
+    pub lookups: Vec<(String, String)>,
+}
+
+/// Resolve requested names against the layer config only (no database), so an
+/// unknown name is rejected before any query runs. Matching is
+/// case-insensitive on the canonical `{model_id}_{PARAMETER}` name, which is
+/// what the full document advertises. `Err` carries the names that matched
+/// nothing, as the caller spelled them.
+pub(crate) fn resolve_capabilities_filter(
+    layer_configs: &LayerConfigRegistry,
+    requested: &[String],
+) -> Result<CapabilitiesFilter, Vec<String>> {
+    let mut by_lower: HashMap<String, (&str, &crate::layer_config::LayerConfig)> = HashMap::new();
+    for model_id in layer_configs.models() {
+        if let Some(model) = layer_configs.get_model(model_id) {
+            for layer in &model.layers {
+                by_lower.insert(
+                    format!("{}_{}", model_id, layer.parameter).to_ascii_lowercase(),
+                    (model_id, layer),
+                );
+            }
+        }
+    }
+
+    let mut allowed = std::collections::HashSet::new();
+    let mut lookups: Vec<(String, String)> = Vec::new();
+    let mut unknown = Vec::new();
+    for name in requested {
+        match by_lower.get(&name.to_ascii_lowercase()) {
+            None => unknown.push(name.clone()),
+            Some((model_id, layer)) => {
+                allowed.insert(format!("{}_{}", model_id, layer.parameter));
+                let needed: Vec<&String> = if layer.composite {
+                    layer.requires.iter().collect()
+                } else {
+                    vec![&layer.parameter]
+                };
+                for param in needed {
+                    let pair = (model_id.to_string(), param.clone());
+                    if !lookups.contains(&pair) {
+                        lookups.push(pair);
+                    }
+                }
+            }
+        }
+    }
+    if unknown.is_empty() {
+        Ok(CapabilitiesFilter { allowed, lookups })
+    } else {
+        Err(unknown)
+    }
+}
+
+/// "Layer 'a' is not defined." / "Layers 'a', 'b' are not defined."
+pub(crate) fn layers_message(names: &[String], what: &str) -> String {
+    let quoted: Vec<String> = names.iter().map(|n| format!("'{}'", n)).collect();
+    if names.len() == 1 {
+        format!("Layer {} {}.", quoted[0], what)
+    } else {
+        format!("Layers {} {}.", quoted.join(", "), what)
+    }
+}
+
+/// A built capabilities document plus the names of the data layers it contains.
+pub(crate) struct CapabilitiesDoc {
+    pub xml: String,
+    /// Canonical names (`{model}_{PARAM}`) of the configured layers emitted
+    /// (CITE test layers are not listed).
+    pub layers: Vec<String>,
+}
 
 // ============================================================================
 // Exception Helpers
