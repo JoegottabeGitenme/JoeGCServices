@@ -948,3 +948,382 @@ async fn test_parameter_availability_matches_the_five_query_oracle() {
         .unwrap()
         .is_none());
 }
+
+// ============================================================================
+// Trail conditions: latest (LATERAL) / batch timeseries / retention delete
+// ============================================================================
+
+/// Insert a row with every field the stitched series cares about.
+#[allow(clippy::too_many_arguments)]
+async fn insert_full_condition_row(
+    pool: &sqlx::PgPool,
+    feature_id: i64,
+    run_time: DateTime<Utc>,
+    valid_time: DateTime<Utc>,
+    forecast_hour: i32,
+    soil_moisture: f32,
+    model_version: &str,
+) {
+    sqlx::query(
+        r#"INSERT INTO segment_conditions
+           (feature_id, run_time, valid_time, forecast_hour, soil_moisture, saturation,
+            frozen_fraction, confidence, model_version)
+           VALUES ($1, $2, $3, $4, $5, $5 * 2, 0.0, 1.0, $6)"#,
+    )
+    .bind(feature_id)
+    .bind(run_time)
+    .bind(valid_time)
+    .bind(forecast_hour)
+    .bind(soil_moisture)
+    .bind(model_version)
+    .execute(pool)
+    .await
+    .expect("insert segment_conditions row");
+}
+
+async fn insert_trail(pool: &sqlx::PgPool, feature_id: i64, name: Option<&str>, active: bool) {
+    sqlx::query(
+        r#"INSERT INTO linear_features (feature_id, feature_class, name, geom, region, active)
+           VALUES ($1, 'mtb_trail', $2, ST_GeomFromText('LINESTRING(-105.3 40.0, -105.29 40.01)', 4326), 'test', $3)"#,
+    )
+    .bind(feature_id)
+    .bind(name)
+    .bind(active)
+    .execute(pool)
+    .await
+    .expect("insert linear_features row");
+}
+
+fn row_key(r: &storage::segment_conditions::SegmentCondition) -> String {
+    format!(
+        "{}|{}|{}|{}|{:?}|{}",
+        r.feature_id,
+        r.valid_time.to_rfc3339(),
+        r.run_time.to_rfc3339(),
+        r.forecast_hour,
+        r.soil_moisture,
+        r.model_version
+    )
+}
+
+/// The previous `get_latest_for_features` SQL as the oracle (DISTINCT ON + global
+/// sort), plus the explicit `model_version DESC` tie-break the old ORDER BY lacked.
+async fn latest_distinct_on_oracle(
+    pool: &sqlx::PgPool,
+    ids: &[i64],
+) -> Vec<storage::segment_conditions::SegmentCondition> {
+    sqlx::query_as(
+        r#"
+        SELECT DISTINCT ON (feature_id)
+               feature_id, run_time, valid_time, forecast_hour,
+               soil_moisture, saturation, frozen_fraction, frost_depth_m, swe_mm,
+               softness_index, confidence, model_version
+        FROM segment_conditions
+        WHERE feature_id = ANY($1) AND valid_time <= NOW()
+        ORDER BY feature_id, valid_time DESC, run_time DESC, model_version DESC
+        "#,
+    )
+    .bind(ids)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// Seed several trails with different shapes of history. Returns the ids.
+async fn seed_conditions(pool: &sqlx::PgPool) -> Vec<i64> {
+    let now = now_micros();
+    let hour = |h: i64| now.trunc_subsecs(0) + Duration::hours(h);
+    let (a, b, c, d, e) = (11_i64, 12_i64, 13_i64, 14_i64, 15_i64);
+
+    // a: many past hours, runs overlapping (newer run wins per valid hour),
+    //    plus future hours; two model versions on one hour.
+    for h in -20..=6 {
+        // old run covers everything, newer run covers only -3..=3
+        insert_full_condition_row(
+            pool,
+            a,
+            hour(-24),
+            hour(h),
+            (h + 24) as i32,
+            0.10,
+            "trail-physics-v1",
+        )
+        .await;
+        if (-3..=3).contains(&h) {
+            insert_full_condition_row(
+                pool,
+                a,
+                hour(-4),
+                hour(h),
+                (h + 4) as i32,
+                0.30,
+                "trail-physics-v1.1",
+            )
+            .await;
+        }
+    }
+    // b: only the future (no row at or before now) -> no "latest", still a series
+    for h in 2..=5 {
+        insert_full_condition_row(
+            pool,
+            b,
+            hour(0),
+            hour(h),
+            h as i32,
+            0.20,
+            "trail-physics-v1",
+        )
+        .await;
+    }
+    // c: a single past row
+    insert_full_condition_row(pool, c, hour(-2), hour(-1), 1, 0.40, "trail-physics-v1").await;
+    // d: same valid_time, same run_time, different versions (tie)
+    insert_full_condition_row(pool, d, hour(-3), hour(-1), 2, 0.11, "trail-physics-v1").await;
+    insert_full_condition_row(pool, d, hour(-3), hour(-1), 2, 0.22, "trail-physics-v2").await;
+    // e: known trail with no rows at all (inserted as a trail below, none here)
+    vec![a, b, c, d, e]
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_latest_for_features_lateral_matches_the_distinct_on_oracle() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = connected_catalog(&infra).await;
+    let pool = catalog.pool_clone();
+    let ids = seed_conditions(&pool).await;
+    let conditions = storage::segment_conditions::SegmentConditionsCatalog::new(pool.clone());
+
+    // every id, a subset, duplicates, ids with no rows, and nothing at all
+    for query in [
+        ids.clone(),
+        vec![11, 13],
+        vec![13, 13, 11, 11],
+        vec![12, 15, 99_999],
+        vec![99_999],
+        vec![],
+    ] {
+        let got = conditions.get_latest_for_features(&query).await.unwrap();
+        let want = latest_distinct_on_oracle(&pool, &query).await;
+        assert_eq!(
+            got.iter().map(row_key).collect::<Vec<_>>(),
+            want.iter().map(row_key).collect::<Vec<_>>(),
+            "ids {query:?}"
+        );
+    }
+
+    // sanity on the seed, so the comparison cannot pass vacuously
+    let all = conditions.get_latest_for_features(&ids).await.unwrap();
+    let by_id = |id: i64| all.iter().find(|r| r.feature_id == id);
+    assert_eq!(
+        all.len(),
+        3,
+        "a, c, d have a past row; b (future only) and e (none) do not"
+    );
+    assert!(by_id(12).is_none() && by_id(15).is_none());
+    // a: the newest run wins at the latest hour (valid_time = now truncated to the hour)
+    let a = by_id(11).unwrap();
+    assert_eq!(a.model_version, "trail-physics-v1.1");
+    assert_eq!(a.soil_moisture, Some(0.30));
+    // d: valid_time and run_time tie -> the higher model_version, deterministically
+    assert_eq!(by_id(14).unwrap().model_version, "trail-physics-v2");
+    assert!(
+        all.windows(2).all(|w| w[0].feature_id < w[1].feature_id),
+        "ordered by feature_id"
+    );
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_timeseries_for_features_matches_per_feature_calls() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = connected_catalog(&infra).await;
+    let pool = catalog.pool_clone();
+    let ids = seed_conditions(&pool).await;
+    let conditions = storage::segment_conditions::SegmentConditionsCatalog::new(pool.clone());
+
+    for query in [
+        ids.clone(),
+        vec![11],
+        vec![14, 11],
+        vec![15],
+        vec![99_999, 13],
+        vec![],
+    ] {
+        let batch = conditions
+            .get_timeseries_for_features(&query)
+            .await
+            .unwrap();
+
+        // grouped by feature, ascending valid_time within each, ascending feature_id
+        assert!(
+            batch
+                .windows(2)
+                .all(|w| (w[0].feature_id, w[0].valid_time) < (w[1].feature_id, w[1].valid_time)),
+            "ordering for {query:?}"
+        );
+
+        let mut sorted_query = query.clone();
+        sorted_query.sort_unstable();
+        sorted_query.dedup();
+        let mut want = Vec::new();
+        for id in &sorted_query {
+            want.extend(conditions.get_timeseries_for_feature(*id).await.unwrap());
+        }
+        assert_eq!(
+            batch.iter().map(row_key).collect::<Vec<_>>(),
+            want.iter().map(row_key).collect::<Vec<_>>(),
+            "batch != per-feature calls for {query:?}"
+        );
+    }
+
+    // sanity: the series are non-trivial, stitched and windowed
+    let a = conditions.get_timeseries_for_features(&[11]).await.unwrap();
+    assert!(a.len() > 6, "past 6 h + future hours: {}", a.len());
+    assert!(
+        a.iter()
+            .all(|r| r.valid_time >= Utc::now() - Duration::hours(7)),
+        "history window"
+    );
+    let at_zero = a
+        .iter()
+        .find(|r| r.soil_moisture == Some(0.30))
+        .expect("newer run wins its hours");
+    assert_eq!(at_zero.model_version, "trail-physics-v1.1");
+    assert!(
+        a.iter()
+            .filter(|r| r.valid_time == at_zero.valid_time)
+            .count()
+            == 1,
+        "one row per valid_time"
+    );
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_get_names_by_ids_reports_known_trails_only() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = connected_catalog(&infra).await;
+    let pool = catalog.pool_clone();
+    insert_trail(&pool, 21, Some("Forsythe Canyon Trail"), true).await;
+    insert_trail(&pool, 22, None, true).await;
+    insert_trail(&pool, 23, Some("Retired Way"), false).await; // inactive is still "known"
+    let features = storage::LinearFeatureCatalog::new(pool.clone());
+
+    let mut got = features
+        .get_names_by_ids(&[23, 21, 22, 99_999])
+        .await
+        .unwrap();
+    got.sort();
+    assert_eq!(
+        got,
+        vec![
+            (21, Some("Forsythe Canyon Trail".to_string())),
+            (22, None),
+            (23, Some("Retired Way".to_string())),
+        ]
+    );
+    // exactly what the single-trail lookup reports
+    for id in [21, 22, 23, 99_999] {
+        let single = features.get_feature_by_id(id).await.unwrap();
+        let batch = got.iter().find(|(i, _)| *i == id);
+        assert_eq!(single.is_some(), batch.is_some(), "id {id}");
+        if let (Some(s), Some((_, n))) = (single, batch) {
+            assert_eq!(&s.name, n);
+        }
+    }
+    assert!(features.get_names_by_ids(&[]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_delete_valid_before_batch_removes_only_old_rows_in_batches() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = connected_catalog(&infra).await;
+    let pool = catalog.pool_clone();
+    let conditions = storage::segment_conditions::SegmentConditionsCatalog::new(pool.clone());
+    let now = now_micros().trunc_subsecs(0);
+
+    // 10 old rows (13..22 h ago), 5 recent/future rows (-2..+2 h)
+    for h in 13..23 {
+        insert_full_condition_row(
+            &pool,
+            31,
+            now - Duration::hours(30),
+            now - Duration::hours(h),
+            0,
+            0.1,
+            "v",
+        )
+        .await;
+    }
+    for h in -2..=2 {
+        insert_full_condition_row(
+            &pool,
+            31,
+            now - Duration::hours(30),
+            now + Duration::hours(h),
+            0,
+            0.1,
+            "v",
+        )
+        .await;
+    }
+    let cutoff = now - Duration::hours(12);
+
+    // batches of 4: 4, 4, 2, then nothing
+    assert_eq!(
+        conditions
+            .delete_valid_before_batch(cutoff, 4)
+            .await
+            .unwrap(),
+        4
+    );
+    assert_eq!(
+        conditions
+            .delete_valid_before_batch(cutoff, 4)
+            .await
+            .unwrap(),
+        4
+    );
+    assert_eq!(
+        conditions
+            .delete_valid_before_batch(cutoff, 4)
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        conditions
+            .delete_valid_before_batch(cutoff, 4)
+            .await
+            .unwrap(),
+        0
+    );
+
+    let left: Vec<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT valid_time FROM segment_conditions ORDER BY valid_time")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(left.len(), 5, "every recent and future row survives");
+    assert!(left.iter().all(|t| *t >= cutoff));
+    // a row exactly at the cutoff is kept (strictly older is deleted)
+    insert_full_condition_row(&pool, 32, now, cutoff, 0, 0.1, "v").await;
+    assert_eq!(
+        conditions
+            .delete_valid_before_batch(cutoff, 100)
+            .await
+            .unwrap(),
+        0
+    );
+    // a non-positive batch size is treated as 1, never as "everything"
+    insert_full_condition_row(&pool, 33, now, cutoff - Duration::hours(1), 0, 0.1, "v").await;
+    insert_full_condition_row(&pool, 34, now, cutoff - Duration::hours(2), 0, 0.1, "v").await;
+    assert_eq!(
+        conditions
+            .delete_valid_before_batch(cutoff, 0)
+            .await
+            .unwrap(),
+        1
+    );
+}
