@@ -1,7 +1,8 @@
-# WMS GetCapabilities for specific layers
+# WMS and WMTS GetCapabilities for specific layers
 
 Ask for an up-to-date capabilities document for just the layers you care about,
-instead of downloading and parsing the whole catalog.
+instead of downloading and parsing the whole catalog. Works on both `/wms` and
+`/wmts`, with the same parameters.
 
 ```
 GET https://folkweather.com/wms?REQUEST=GetCapabilities&SERVICE=WMS&VERSION=1.3.0&layer=hrrr_DPT
@@ -69,3 +70,48 @@ WMS exception (HTTP 400) and no partial document:
 - `gfs_TMP` appears twice in the full document and in a `layer=gfs_TMP`
   response, because `config/layers/gfs.yaml` also defines `gfs_SST` with
   parameter `TMP`. This is existing behavior.
+
+## WMTS
+
+```
+GET https://folkweather.com/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0&layer=hrrr_DPT
+```
+
+Same parameters and rules as above (`layer` / `layers`, comma-separated,
+case-insensitive, combined if both are given, empty = no filter). A comma may
+be sent URL-encoded (`layers=hrrr_DPT%2Chrrr_TMP`).
+
+| | Full document | `layer=hrrr_DPT` |
+|---|---|---|
+| Size | ~1.65 MB (218 layers) | ~19 KB |
+| Server time (measured on the NUC) | ~0.5 s cold, ~2 ms cached | ~2 ms |
+| Cached by the server | yes (120 s) | no, always current |
+
+About 15.6 KB of the single-layer document is fixed: the service metadata and
+the two `TileMatrixSet` definitions (WebMercatorQuad and WorldCRS84Quad), which
+every WMTS document carries. The layer itself is ~3.8 KB (it includes the
+`ResourceURL` tile templates and the dimension values).
+
+You get the normal `Capabilities` document with only the requested `<Layer>`
+elements; each is byte-for-byte what the full document has. `hrrr_WIND_BARBS`
+works and does not include its UGRD/VGRD components.
+
+### WMTS errors
+
+WMTS has no `LayerNotDefined` code. Failures use the standard OWS
+`ExceptionReport` with `InvalidParameterValue` and `locator="layer"` (HTTP 400),
+the same response GetTile gives for an unknown layer:
+
+```xml
+<ows:ExceptionReport version="1.1.0" ...>
+  <ows:Exception exceptionCode="InvalidParameterValue" locator="layer">
+    <ows:ExceptionText>Layer 'nope_TMP' is not defined.</ows:ExceptionText>
+  </ows:Exception>
+</ows:ExceptionReport>
+```
+
+The messages are the same as for WMS (`is not defined` / `has no data
+available`), and a database problem is `NoApplicableCode` (HTTP 500).
+
+`LAYER` keeps its normal meaning on GetTile; the filter only applies to
+`REQUEST=GetCapabilities`.
