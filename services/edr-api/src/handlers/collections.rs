@@ -391,6 +391,41 @@ async fn build_storm_event_collection(
     collection
 }
 
+/// Build a Collection for GOES GLM lightning flashes.
+///
+/// The spatial extent is the CONUS clip applied at ingest (what the data can
+/// cover), and the temporal extent is the retention window ending now: flashes
+/// are a live feed, so the interval is open-ended rather than read from the
+/// table (which would make an empty sky look like "no data").
+fn build_lightning_collection(
+    state: &AppState,
+    collection_def: &CollectionDefinition,
+    available_params: &[String],
+) -> Collection {
+    let mut collection = Collection::new(&collection_def.id)
+        .with_title(&collection_def.title)
+        .with_description(&collection_def.description);
+
+    collection.build_links(&state.base_url);
+
+    let queries = DataQueries::default()
+        .with_radius(&state.base_url, &collection_def.id)
+        .with_area(&state.base_url, &collection_def.id);
+    collection = collection.with_data_queries(queries);
+
+    // Mirrors services/ingester/src/lightning.rs CONUS_{MIN,MAX}_{LON,LAT}.
+    let mut extent = Extent::with_spatial([-125.0, 24.0, -66.0, 50.0], None);
+    let start = chrono::Utc::now() - chrono::Duration::hours(24);
+    extent = extent.with_temporal(TemporalExtent::new(Some(start.to_rfc3339()), None));
+    collection = collection.with_extent(extent);
+
+    let mut params = HashMap::new();
+    for param_name in available_params {
+        params.insert(param_name.clone(), Parameter::new(param_name, param_name));
+    }
+    collection.with_parameters(params)
+}
+
 /// Build a Collection for linear-feature data (trails/tracks/bridleways).
 ///
 /// Unlike storm events, there is no per-feature temporal extent (a trail
@@ -502,6 +537,38 @@ pub async fn list_collections_handler(
         return response;
     }
 
+    // The listing costs ~575 queries (see snapshot_cache.rs), so it is served from
+    // a stale-while-revalidate snapshot: instant, refreshed in the background at
+    // most once per TTL, and rebuilt on config reload.
+    let builder_state = Arc::clone(&state);
+    let served = state
+        .collections_snapshot
+        .get(move || async move { build_collections_list_json(&builder_state).await })
+        .await;
+
+    match served {
+        Some((body, _how)) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CACHE_CONTROL, "max-age=60")
+            .body(body.as_str().to_owned().into())
+            .unwrap(),
+        None => {
+            let exc = ExceptionResponse::internal_error("Failed to build the collection list");
+            let json = serde_json::to_string(&exc).unwrap_or_default();
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(json.into())
+                .unwrap()
+        }
+    }
+}
+
+/// Build the full `/collections` response body (the expensive part). `None` if it
+/// could not be serialized.
+pub async fn build_collections_list_json(state: &Arc<AppState>) -> Option<String> {
+    let started = std::time::Instant::now();
     let config = state.edr_config.read().await;
 
     let mut collections = Vec::new();
@@ -516,6 +583,18 @@ pub async fn list_collections_handler(
         if model_config.data_type.is_feature_data() {
             let available_params: Vec<String> =
                 coll_def.parameters.iter().map(|p| p.name.clone()).collect();
+
+            // Lightning is ALWAYS listed, even with zero flashes stored: over CONUS
+            // a quiet sky is normal, and a collection that vanishes whenever it is
+            // not currently storming would look like an outage to a client.
+            if model_config.observation_source.as_deref() == Some("lightning") {
+                collections.push(build_lightning_collection(
+                    &state,
+                    coll_def,
+                    &available_params,
+                ));
+                continue;
+            }
 
             if model_config.observation_source.as_deref() == Some("linear_features") {
                 let count = state
@@ -772,14 +851,13 @@ pub async fn list_collections_handler(
 
     let list = CollectionList::new(collections, &state.base_url);
 
-    let json = serde_json::to_string_pretty(&list).unwrap_or_default();
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(header::CACHE_CONTROL, "max-age=60")
-        .body(json.into())
-        .unwrap()
+    let json = serde_json::to_string_pretty(&list).ok()?;
+    tracing::info!(
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        bytes = json.len(),
+        "Built /collections snapshot"
+    );
+    Some(json)
 }
 
 /// GET /edr/collections/:collection_id - Get a specific collection
@@ -845,6 +923,17 @@ pub async fn get_collection_handler(
             .iter()
             .map(|p| p.name.clone())
             .collect();
+
+        if model_config.observation_source.as_deref() == Some("lightning") {
+            let collection = build_lightning_collection(&state, collection_def, &available_params);
+            let json = serde_json::to_string_pretty(&collection).unwrap_or_default();
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CACHE_CONTROL, "max-age=60")
+                .body(json.into())
+                .unwrap();
+        }
 
         if model_config.observation_source.as_deref() == Some("linear_features") {
             let count = state

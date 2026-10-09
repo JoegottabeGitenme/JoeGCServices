@@ -17,7 +17,6 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Once;
 
 use crate::error::{NetCdfError, NetCdfResult};
 use crate::projection::GoesProjection;
@@ -34,25 +33,33 @@ use crate::projection::GoesProjection;
 /// ```
 ///
 /// This function disables that output by calling H5Eset_auto2 with null handlers.
-/// It only needs to be called once per process, but is safe to call multiple times.
 ///
-/// **Important**: Call this function early in your program's startup (e.g., in main())
-/// before any HDF5/NetCDF operations occur. If HDF5 is initialized before this is called,
-/// the error silencing may not take effect for all operations.
+/// **It is applied on every call, not once per process.** An earlier version used
+/// a `Once` guard on the theory that one call was enough, but that is false:
+/// opening a file that is *not* valid HDF5 makes netcdf-c/HDF5 re-initialize, which
+/// puts error printing back to the default. After a single bad upload every
+/// later, perfectly good read then printed 20+ diagnostic blocks to stderr
+/// (measured with a garbage read followed by a good GLM read; see the
+/// `error_silencing_survives_a_failed_open` test). The call is a cheap setter, so
+/// call it right before each open.
 pub fn silence_hdf5_errors() {
-    static INIT: Once = Once::new();
-
-    INIT.call_once(|| {
-        // SAFETY: H5Eset_auto2 is thread-safe and we're passing null pointers
-        // to disable error output, which is a documented valid use.
-        unsafe {
-            hdf5_metno_sys::h5e::H5Eset_auto2(
-                hdf5_metno_sys::h5e::H5E_DEFAULT,
-                None,
-                std::ptr::null_mut(),
-            );
-        }
-    });
+    // libnetcdf is not thread-safe, so the `netcdf` crate serializes EVERY call
+    // into it (and HDF5) through this one global reentrant lock. Setting the
+    // error handler is an HDF5 call like any other: made without the lock it
+    // races with another thread's in-flight read. Measured on HDF5 2.2.0: ~60% of
+    // parallel test runs failed with NC_EATTMETA (-107, "error reading attribute
+    // metadata") on a perfectly valid file. It is reentrant, so holding it here is
+    // safe even if a caller already does.
+    let _guard = hdf5_metno_sys::LOCK.lock();
+    // SAFETY: H5Eset_auto2 with null handlers is a documented way to disable
+    // error printing, and we hold the library-wide lock.
+    unsafe {
+        hdf5_metno_sys::h5e::H5Eset_auto2(
+            hdf5_metno_sys::h5e::H5E_DEFAULT,
+            None,
+            std::ptr::null_mut(),
+        );
+    }
 }
 
 /// Load GOES NetCDF data directly from bytes using native netcdf library.
@@ -168,7 +175,7 @@ pub fn load_goes_netcdf_from_bytes(
 ///
 /// On Linux, uses /dev/shm (memory-backed tmpfs) if available for faster I/O.
 /// Falls back to the system temp directory on other platforms or if /dev/shm is unavailable.
-fn get_optimal_temp_dir() -> PathBuf {
+pub(crate) fn get_optimal_temp_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
         use std::path::Path;
@@ -200,12 +207,12 @@ fn generate_temp_filename() -> String {
 
 /// Check if a variable has an attribute with the given name.
 /// This avoids HDF5 error spam when checking for optional attributes.
-fn has_attr(var: &netcdf::Variable, name: &str) -> bool {
+pub(crate) fn has_attr(var: &netcdf::Variable, name: &str) -> bool {
     var.attributes().any(|attr| attr.name() == name)
 }
 
 /// Helper to get f32 attribute.
-fn get_f32_attr(var: &netcdf::Variable, name: &str) -> Option<f32> {
+pub(crate) fn get_f32_attr(var: &netcdf::Variable, name: &str) -> Option<f32> {
     if !has_attr(var, name) {
         return None;
     }
@@ -214,7 +221,7 @@ fn get_f32_attr(var: &netcdf::Variable, name: &str) -> Option<f32> {
 }
 
 /// Helper to get f64 attribute.
-fn get_f64_attr(var: &netcdf::Variable, name: &str) -> Option<f64> {
+pub(crate) fn get_f64_attr(var: &netcdf::Variable, name: &str) -> Option<f64> {
     if !has_attr(var, name) {
         return None;
     }

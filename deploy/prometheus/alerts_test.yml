@@ -100,3 +100,70 @@ tests:
             exp_annotations:
               summary: "Trail-conditions freshness metric is missing"
               description: "edr-api is not exporting trail_conditions_latest_valid_timestamp_seconds (edr-api down, the metric endpoint unscraped, or no condition rows exist), so the staleness alerts cannot fire."
+
+  # ---- GLM: a healthy pipeline. The newest granule ends ~90 s behind the clock and
+  # advances in real time (+60 s per 60 s) -> age is a constant 90 s -> no alert.
+  - interval: 1m
+    input_series:
+      - series: 'glm_latest_granule_end_timestamp_seconds{satellite="goes-east"}'
+        values: '-90+60x120'
+      - series: 'glm_latest_granule_end_timestamp_seconds{satellite="goes-west"}'
+        values: '-90+60x120'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: GlmGranulesStale
+        exp_alerts: []
+      - eval_time: 100m
+        alertname: GlmEastMetricMissing
+        exp_alerts: []
+      - eval_time: 100m
+        alertname: GlmWestMetricMissing
+        exp_alerts: []
+
+  # ---- GLM: ONLY goes-west stalls (its marker freezes at t=0) while east stays fresh.
+  # Must alert for west and ONLY west, with the satellite label in the annotation.
+  - interval: 1m
+    input_series:
+      - series: 'glm_latest_granule_end_timestamp_seconds{satellite="goes-east"}'
+        values: '-90+60x120'
+      - series: 'glm_latest_granule_end_timestamp_seconds{satellite="goes-west"}'
+        values: '0x120'
+    alert_rule_test:
+      # 12 min stale but still inside the 5 m 'for' -> not yet firing... (age 10m+ at t=11m; for 5m)
+      - eval_time: 14m
+        alertname: GlmGranulesStale
+        exp_alerts: []
+      # > 10 min stale for > 5 min -> firing, west only
+      - eval_time: 20m
+        alertname: GlmGranulesStale
+        exp_alerts:
+          - exp_labels:
+              satellite: goes-west
+              severity: warning
+            exp_annotations:
+              summary: "GLM lightning granules are stale (goes-west)"
+              description: "The newest GLM granule processed for goes-west ended 20m 0s ago (normally under 2 minutes). Check the downloader's glm runner and the ingester (docker logs weather-wms-downloader-1 / weather-wms-ingester-1). NOAA also has occasional GLM data gaps of its own; compare against the S3 bucket listing before assuming our fault."
+
+  # ---- GLM: a satellite that has NEVER reported is invisible to a plain absent().
+  # East reports; west has no series at all -> only the west rule fires.
+  - interval: 1m
+    input_series:
+      - series: 'glm_latest_granule_end_timestamp_seconds{satellite="goes-east"}'
+        values: '-90+60x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GlmWestMetricMissing
+        exp_alerts: []   # inside the 15m 'for'
+      - eval_time: 20m
+        alertname: GlmWestMetricMissing
+        exp_alerts:
+          - exp_labels:
+              satellite: goes-west   # absent() carries over the equality matcher
+              severity: warning
+            exp_annotations:
+              summary: "No GLM granule has been recorded for goes-west"
+              description: "edr-api exports no glm_latest_granule_end_timestamp_seconds for goes-west: nothing has ever been ingested for it, edr-api is down, or the metric is unscraped. The staleness alert cannot fire without it."
+      - eval_time: 20m
+        alertname: GlmEastMetricMissing
+        exp_alerts: []
+

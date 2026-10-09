@@ -1284,4 +1284,28 @@ collections:
         let (_m, hrrr) = config.find_collection("hrrr-soil").unwrap();
         assert!(hrrr.conditions_coverage.is_none());
     }
+
+    #[test]
+    fn test_real_glm_config_declares_a_lightning_feature_collection() {
+        let config =
+            EdrConfig::load_from_dir("../../config/edr").expect("real config/edr must parse");
+        let (model, collection) = config
+            .find_collection("glm-lightning")
+            .expect("glm-lightning must exist in the real config");
+        // The dispatchers key off exactly these two facts; if either drifts the
+        // collection silently falls through to the gridded-data path.
+        assert!(model.data_type.is_feature_data());
+        assert_eq!(model.observation_source.as_deref(), Some("lightning"));
+        let params: Vec<&str> = collection
+            .parameters
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        for expected in ["flash_time", "energy_j", "quality"] {
+            assert!(
+                params.contains(&expected),
+                "{expected} missing from {params:?}"
+            );
+        }
+    }
 }

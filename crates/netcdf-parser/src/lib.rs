@@ -4,6 +4,7 @@
 //!
 //! 1. **GOES-R ABI satellite data** — Geostationary imagery with scan-angle coordinates
 //! 2. **CF-convention gridded data** — Regular lat/lon grids (NLDAS-2, GLDAS, ERA5, etc.)
+//! 3. **GOES-R GLM lightning** — point flash events ([`glm`])
 //!
 //! # Features
 //!
@@ -20,12 +21,14 @@
 
 pub mod cf_reader;
 pub mod error;
+pub mod glm;
 pub mod native;
 pub mod projection;
 
 // Re-export commonly used items at crate root
 pub use cf_reader::{load_cf_netcdf, CfDataset, CfGridMetadata, CfVariable};
 pub use error::{NetCdfError, NetCdfResult};
+pub use glm::{read_glm_flashes, read_glm_flashes_from_bytes, GlmFlash, GlmGranule};
 pub use native::{load_goes_netcdf_from_bytes, silence_hdf5_errors};
 pub use projection::GoesProjection;
 

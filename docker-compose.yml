@@ -337,6 +337,20 @@ services:
       S3_ALLOW_HTTP: ${S3_ALLOW_HTTP:-true}
       # Config directory for GRIB2 parameter tables
       CONFIG_DIR: /app/config
+      # GOES GLM lightning is a live feed, not an archive: flashes older than this
+      # are deleted (swept every 10 min). Keep in step with retention.hours in
+      # config/models/glm-*.yaml and the 24 h cap on the EDR `window` parameter.
+      LIGHTNING_RETENTION_HOURS: ${LIGHTNING_RETENTION_HOURS:-24}
+      # Observation/TAF retention. These tables grew without bound until Session 14
+      # (14.5M rows; 89% NDBC) and made `SELECT count(*)` take ~50 s. Windows are
+      # per source; values below a source's safe minimum are RAISED, not obeyed
+      # (DART's downloader re-fetches 45 days, so it cannot go under 1128 h).
+      # Deliberately not the model YAMLs' retention.hours, which also drives the
+      # downloader's lookback. See services/ingester/src/obs_retention.rs.
+      OBS_RETENTION_HOURS_METAR: ${OBS_RETENTION_HOURS_METAR:-168}
+      OBS_RETENTION_HOURS_NDBC: ${OBS_RETENTION_HOURS_NDBC:-168}
+      OBS_RETENTION_HOURS_DART: ${OBS_RETENTION_HOURS_DART:-1440}
+      TAF_RETENTION_HOURS: ${TAF_RETENTION_HOURS:-168}
     volumes:
       - downloader_data:/data/downloads:ro
       - ./config:/app/config:ro

@@ -3,12 +3,14 @@
 //! Provides endpoints for:
 //! - `POST /ingest` - Ingest a file (called by downloader)
 //! - `POST /ingest/observations` - Ingest observation data (METAR, etc.)
+//! - `POST /ingest/lightning` - Ingest one GOES GLM L2 LCFA granule (raw netCDF body)
 //! - `GET /status` - Get active/recent ingestions
 //! - `GET /health` - Health check
 //! - `GET /metrics` - Prometheus metrics
 
 use axum::{
-    extract::{Extension, Json},
+    body::Bytes,
+    extract::{DefaultBodyLimit, Extension, Json, Query},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -27,6 +29,7 @@ use ingestion::{IngestOptions, Ingester, IngestionResult};
 use storage::observations::{Location, Observation, ObservationCatalog, TafForecast, TafPeriod};
 use storage::storm_events::{StormEvent, StormEventCatalog};
 use storage::trail_reports::{TrailReport, TrailReportCatalog};
+use storage::LightningCatalog;
 
 /// Shared state for the HTTP server.
 pub struct ServerState {
@@ -38,6 +41,8 @@ pub struct ServerState {
     pub storm_event_catalog: Option<StormEventCatalog>,
     /// Trail report catalog (Phase 0 label archive; not EDR-exposed)
     pub trail_report_catalog: Option<TrailReportCatalog>,
+    /// GLM lightning flashes (EDR `glm-lightning`)
+    pub lightning_catalog: Option<LightningCatalog>,
     /// Tracking for active/completed ingestions
     pub tracker: IngestionTracker,
 }
@@ -1134,6 +1139,156 @@ async fn ingest_trail_reports_handler(
     }
 }
 
+// =============================================================================
+// GLM lightning ingest
+// =============================================================================
+
+/// Query parameters of `POST /ingest/lightning`.
+#[derive(Debug, Deserialize)]
+pub struct LightningIngestQuery {
+    /// Where the granule came from (logging only).
+    #[serde(default)]
+    pub source_url: Option<String>,
+}
+
+/// Response of `POST /ingest/lightning`.
+#[derive(Debug, Serialize)]
+pub struct LightningIngestResponse {
+    pub success: bool,
+    pub message: String,
+    pub satellite: Option<String>,
+    pub platform: Option<String>,
+    pub window_start: Option<DateTime<Utc>>,
+    pub window_end: Option<DateTime<Utc>>,
+    /// Flashes in the granule, before the CONUS clip.
+    pub flashes_in_file: usize,
+    /// Flashes dropped because the file gave them no usable position.
+    pub flashes_skipped_invalid: usize,
+    /// Flashes inside the CONUS box.
+    pub flashes_in_conus: usize,
+    /// Newly stored (a re-sent granule inserts 0).
+    pub flashes_inserted: usize,
+    /// Seconds from the end of the 20 s observation window to now: what a user
+    /// pays for GLM's own downlink + the download + this ingest.
+    pub latency_secs: Option<f64>,
+}
+
+impl LightningIngestResponse {
+    fn failure(message: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            message: message.into(),
+            satellite: None,
+            platform: None,
+            window_start: None,
+            window_end: None,
+            flashes_in_file: 0,
+            flashes_skipped_invalid: 0,
+            flashes_in_conus: 0,
+            flashes_inserted: 0,
+            latency_secs: None,
+        }
+    }
+}
+
+/// POST /ingest/lightning - body is one raw GLM L2 LCFA netCDF granule.
+///
+/// Status codes drive the downloader's retry behaviour: `422` means the upload
+/// itself is unusable (retrying cannot help, so it is dropped); `5xx` means try
+/// again later.
+async fn ingest_lightning_handler(
+    Extension(state): Extension<Arc<ServerState>>,
+    Query(query): Query<LightningIngestQuery>,
+    body: Bytes,
+) -> impl IntoResponse {
+    let Some(catalog) = &state.lightning_catalog else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(LightningIngestResponse::failure(
+                "Lightning catalog not configured",
+            )),
+        );
+    };
+
+    // libnetcdf is blocking and a granule takes tens of ms: keep it off the async workers.
+    let bytes = body.to_vec();
+    let processed = match tokio::task::spawn_blocking(move || {
+        crate::lightning::process_granule(&bytes)
+    })
+    .await
+    {
+        Ok(Ok(p)) => p,
+        Ok(Err(e)) => {
+            warn!(source_url = ?query.source_url, error = %e, "Rejected lightning granule");
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(LightningIngestResponse::failure(e.to_string())),
+            );
+        }
+        Err(e) => {
+            error!(error = %e, "Lightning parse task panicked");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(LightningIngestResponse::failure(
+                    "internal error while parsing granule",
+                )),
+            );
+        }
+    };
+
+    let inserted = match catalog.insert_flashes(&processed.flashes).await {
+        Ok(ids) => ids.len(),
+        Err(e) => {
+            error!(error = %e, "Lightning insert failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(LightningIngestResponse::failure(format!(
+                    "database error: {e}"
+                ))),
+            );
+        }
+    };
+
+    // Recorded even when the granule had no CONUS flashes: this is the
+    // freshness signal monitoring uses (see LIGHTNING_SCHEMA_SQL).
+    if let Err(e) = catalog
+        .record_granule(processed.satellite, processed.window_end)
+        .await
+    {
+        warn!(error = %e, "Failed to record lightning granule progress");
+    }
+
+    let latency_secs = (Utc::now() - processed.window_end).num_milliseconds() as f64 / 1000.0;
+    info!(
+        satellite = processed.satellite,
+        platform = %processed.platform,
+        window_start = %processed.window_start,
+        flashes_in_file = processed.flashes_in_file,
+        skipped_invalid = processed.skipped_invalid,
+        flashes_in_conus = processed.flashes.len(),
+        inserted,
+        latency_secs,
+        "Ingested GLM granule"
+    );
+
+    (
+        StatusCode::OK,
+        Json(LightningIngestResponse {
+            success: true,
+            message: "ok".to_string(),
+            satellite: Some(processed.satellite.to_string()),
+            platform: Some(processed.platform),
+            window_start: Some(processed.window_start),
+            window_end: Some(processed.window_end),
+            flashes_in_file: processed.flashes_in_file,
+            flashes_skipped_invalid: processed.skipped_invalid,
+            flashes_in_conus: processed.flashes.len(),
+            flashes_inserted: inserted,
+            latency_secs: Some(latency_secs),
+        }),
+    )
+}
+
 pub fn build_router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route("/ingest", post(ingest_handler))
@@ -1145,6 +1300,12 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
             post(refresh_counties_handler),
         )
         .route("/ingest/trail-reports", post(ingest_trail_reports_handler))
+        .route(
+            "/ingest/lightning",
+            // A granule is 0.2-0.5 MB; axum's 2 MB default would reject a
+            // bigger-than-usual one. 32 MB is far above any real GLM file.
+            post(ingest_lightning_handler).layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+        )
         .route("/status", get(status_handler))
         .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))

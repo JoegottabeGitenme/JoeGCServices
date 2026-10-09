@@ -8,6 +8,7 @@
 
 pub mod cache;
 pub mod catalog;
+pub mod lightning;
 pub mod linear_features;
 pub mod object_store;
 pub mod observations;
@@ -25,6 +26,7 @@ pub use catalog::{
     Catalog, CatalogEntry, DatasetInfo, DatasetQuery, ModelStats, ParameterAvailability,
     ParameterStats, PurgePreview,
 };
+pub use lightning::{FlashArea, FlashQuery, LightningCatalog, NewFlash, StoredFlash};
 pub use linear_features::{LinearFeature, LinearFeatureCatalog, LinearFeatureItem};
 pub use observations::{
     Location, Observation, ObservationCatalog, ObservationInsertResult, ObservationQuery,

@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use edr_protocol::responses::ExceptionResponse;
 
-use crate::handlers::{linear_features, storm_events};
+use crate::handlers::{lightning, linear_features, storm_events};
 use crate::state::AppState;
 
 /// Superset of the storm-events and linear-features items params. Both
@@ -44,6 +44,31 @@ pub struct ItemsQueryParams {
     /// output into each feature's properties. See
     /// `linear_features::TrailItemsParams::conditions`.
     pub conditions: Option<String>,
+
+    /// lightning-only: server-relative time window, an ISO-8601 duration
+    /// (e.g. `PT10M`). See `lightning` module docs.
+    pub window: Option<String>,
+
+    /// lightning-only: change-feed cursor -- only flashes with `id` greater than this.
+    pub after: Option<i64>,
+
+    /// lightning-only: `goes-east` (default), `goes-west` or `both`.
+    pub satellite: Option<String>,
+}
+
+/// Translate the generic params into the lightning backend's. A pure function
+/// so a dropped field is caught by a unit test (see radius.rs for the bug that
+/// motivated this pattern).
+fn lightning_items_params(p: &ItemsQueryParams) -> lightning::LightningItemsParams {
+    lightning::LightningItemsParams {
+        bbox: p.bbox.clone(),
+        datetime: p.datetime.clone(),
+        window: p.window.clone(),
+        after: p.after,
+        satellite: p.satellite.clone(),
+        limit: p.limit,
+        f: p.f.clone(),
+    }
 }
 
 /// GET /edr/collections/:collection_id/items
@@ -80,6 +105,14 @@ pub async fn items_handler(
     };
 
     match observation_source.as_deref() {
+        Some("lightning") => {
+            lightning::lightning_items_handler(
+                Extension(state),
+                Path(collection_id),
+                Query(lightning_items_params(&params)),
+            )
+            .await
+        }
         Some("linear_features") => {
             let trail_params = linear_features::TrailItemsParams {
                 bbox: params.bbox.clone(),
@@ -115,5 +148,41 @@ pub async fn items_handler(
             )
             .await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(qs: &str) -> ItemsQueryParams {
+        let uri: axum::http::Uri = format!("/items?{}", qs).parse().unwrap();
+        Query::<ItemsQueryParams>::try_from_uri(&uri).unwrap().0
+    }
+
+    #[test]
+    fn lightning_params_survive_real_query_string_parsing_and_translation() {
+        let p = parse("bbox=-106,39,-105,40&datetime=2026-10-07T20:00:00Z/..&limit=50&window=PT5M&after=42&satellite=both");
+        let l = lightning_items_params(&p);
+        assert_eq!(l.bbox.as_deref(), Some("-106,39,-105,40"));
+        assert_eq!(l.datetime.as_deref(), Some("2026-10-07T20:00:00Z/.."));
+        assert_eq!(
+            (
+                l.limit,
+                l.window.as_deref(),
+                l.after,
+                l.satellite.as_deref()
+            ),
+            (Some(50), Some("PT5M"), Some(42), Some("both"))
+        );
+    }
+
+    #[test]
+    fn omitted_lightning_params_stay_none() {
+        let l = lightning_items_params(&parse("bbox=-106,39,-105,40"));
+        assert_eq!(
+            (l.window, l.after, l.satellite, l.limit),
+            (None, None, None, None)
+        );
     }
 }

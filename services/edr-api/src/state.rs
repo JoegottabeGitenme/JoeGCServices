@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use grid_processor::{GridDataService, MinioConfig};
+use storage::lightning::LightningCatalog;
 use storage::linear_features::LinearFeatureCatalog;
 use storage::observations::ObservationCatalog;
 use storage::segment_conditions::SegmentConditionsCatalog;
@@ -15,6 +16,7 @@ use crate::availability::AvailabilityCache;
 use crate::config::EdrConfig;
 use crate::location_cache::LocationCache;
 use crate::metrics::MetricsCollector;
+use crate::snapshot_cache::SnapshotCache;
 
 /// Shared application state.
 pub struct AppState {
@@ -41,6 +43,14 @@ pub struct AppState {
     /// `crates/storage/src/segment_conditions.rs`'s own module docs for why
     /// this was built ahead of being wired in here).
     pub segment_conditions_catalog: Arc<SegmentConditionsCatalog>,
+
+    /// GLM lightning flashes (the `glm-lightning` feature collection). May
+    /// legitimately be empty: a quiet sky is normal.
+    pub lightning_catalog: Arc<LightningCatalog>,
+
+    /// Stale-while-revalidate snapshot of the `GET /collections` body (the listing
+    /// costs ~575 queries; see `snapshot_cache`).
+    pub collections_snapshot: Arc<SnapshotCache>,
 
     /// EDR configuration (hot-reloadable).
     pub edr_config: Arc<RwLock<EdrConfig>>,
@@ -121,6 +131,9 @@ impl AppState {
         let segment_conditions_catalog =
             Arc::new(SegmentConditionsCatalog::new(catalog.pool_clone()));
 
+        // GLM lightning flashes (written by the ingester)
+        let lightning_catalog = Arc::new(LightningCatalog::new(catalog.pool_clone()));
+
         // Load EDR config
         let edr_dir = format!("{}/edr", config_dir);
         let edr_config = EdrConfig::load_from_dir(&edr_dir)?;
@@ -157,6 +170,14 @@ impl AppState {
             storm_event_catalog,
             linear_feature_catalog,
             segment_conditions_catalog,
+            lightning_catalog,
+            collections_snapshot: Arc::new(SnapshotCache::new(std::time::Duration::from_secs(
+                std::env::var("EDR_COLLECTIONS_SNAPSHOT_TTL_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|s: &u64| *s > 0)
+                    .unwrap_or(60),
+            ))),
             edr_config: Arc::new(RwLock::new(edr_config)),
             base_url,
             location_cache,
@@ -176,6 +197,8 @@ impl AppState {
 
         // Invalidate availability cache when config changes
         self.availability_cache.invalidate_all().await;
+        // The cached /collections body was built from the old config.
+        self.collections_snapshot.invalidate().await;
 
         Ok(())
     }

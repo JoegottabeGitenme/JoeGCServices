@@ -17,9 +17,47 @@ use wms_common::BoundingBox;
 
 use crate::error::{IngestionError, Result};
 use crate::metadata::parse_goes_filename;
-use crate::tables::build_filter_for_model;
+use crate::tables::{build_filter_for_model, ValidRange};
 use crate::upload::upload_zarr_directory;
 use crate::{IngestOptions, IngestionResult};
+
+/// Files at least this large are full-disk scale (a full-disk band-2 grid is
+/// 21696 x 21696 = 470M cells, ~1.9 GB per f32 copy; its file is 250-430 MB).
+/// Everything else the ingester sees (CONUS, band 8/13 full disk, ...) is at
+/// most ~25 MB on disk.
+const LARGE_GOES_FILE_BYTES: usize = 100 * 1024 * 1024;
+
+/// Only one large GOES ingest may run at a time.
+///
+/// Measured on the NUC: a single full-disk band-2 ingest holds several GB, so
+/// two overlapping ones exceed the ingester's memory limit and the kernel
+/// OOM-kills the whole process (dropping every other in-flight ingest). The
+/// downloader happily sends several at once, especially when replaying a
+/// backlog, so the bound has to live here.
+static LARGE_INGEST_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+/// Acquire the large-file gate if `len` calls for it; small files pass freely.
+async fn large_ingest_permit(len: usize) -> Option<tokio::sync::SemaphorePermit<'static>> {
+    if len >= LARGE_GOES_FILE_BYTES {
+        // The semaphore is never closed, so acquire() cannot fail.
+        LARGE_INGEST_GATE.acquire().await.ok()
+    } else {
+        None
+    }
+}
+
+/// Set every value outside `range` to NaN, in place. Returns how many values
+/// were changed (NaNs already present are left alone and not counted).
+fn mask_out_of_range(values: &mut [f32], range: &ValidRange) -> usize {
+    let mut count = 0usize;
+    for v in values.iter_mut() {
+        if !(v.is_nan() || range.is_valid(*v)) {
+            *v = f32::NAN;
+            count += 1;
+        }
+    }
+    count
+}
 
 /// GOES band to parameter/level mapping.
 fn band_to_parameter(band: u8) -> (&'static str, &'static str) {
@@ -55,6 +93,9 @@ pub async fn ingest_netcdf(
     file_path: &str,
     options: &IngestOptions,
 ) -> Result<IngestionResult> {
+    // Held for the whole ingest (dropped on return).
+    let _large_permit = large_ingest_permit(data.len()).await;
+
     let filename = Path::new(file_path)
         .file_name()
         .and_then(|s| s.to_str())
@@ -109,6 +150,9 @@ pub async fn ingest_netcdf(
     let (raw_data, width, height, projection, x_offset, y_offset, x_scale, y_scale) =
         netcdf_parser::load_goes_netcdf_from_bytes(&data)
             .map_err(|e| IngestionError::NetcdfParse(e.to_string()))?;
+    // The file bytes (up to ~430 MB) are fully decoded now; free them before
+    // the big allocations below.
+    drop(data);
 
     info!(
         width = width,
@@ -133,22 +177,14 @@ pub async fn ingest_netcdf(
 
     // Reproject from geostationary to geographic coordinates
     info!("Reprojecting GOES data from geostationary to geographic coordinates");
-    let (reprojected_data, out_width, out_height, gp_bbox) =
+    let (mut filtered_data, out_width, out_height, gp_bbox) =
         reproject_geostationary_to_geographic(&raw_data, width, height, &proj);
+    // Done with the source grid (1.9 GB for full-disk band 2).
+    drop(raw_data);
 
-    // Apply valid_range filtering - convert out-of-range values to NaN
-    let mut out_of_range_count = 0usize;
-    let filtered_data: Vec<f32> = reprojected_data
-        .iter()
-        .map(|&v| {
-            if v.is_nan() || valid_range.is_valid(v) {
-                v
-            } else {
-                out_of_range_count += 1;
-                f32::NAN
-            }
-        })
-        .collect();
+    // Apply valid_range filtering - convert out-of-range values to NaN (in
+    // place: a second full-size copy is another 1.9 GB at full-disk band 2).
+    let out_of_range_count = mask_out_of_range(&mut filtered_data, &valid_range);
 
     // Log warning if significant portion of data was out of range
     let total_points = filtered_data.len();
@@ -366,6 +402,108 @@ fn extract_band_from_filename(filename: &str) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- in-place valid-range mask -------------------------------------
+
+    /// The pre-change implementation (clone + map), kept as the oracle.
+    fn mask_reference(values: &[f32], range: &ValidRange) -> (Vec<f32>, usize) {
+        let mut n = 0usize;
+        let out = values
+            .iter()
+            .map(|&v| {
+                if v.is_nan() || range.is_valid(v) {
+                    v
+                } else {
+                    n += 1;
+                    f32::NAN
+                }
+            })
+            .collect();
+        (out, n)
+    }
+
+    fn same_bits(a: &[f32], b: &[f32]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
+    }
+
+    #[test]
+    fn mask_out_of_range_matches_reference_on_edge_values() {
+        let range = ValidRange::new(0.0, 1.5);
+        let input = vec![
+            -0.0,
+            0.0,
+            1.5,
+            1.5000001,
+            -0.0000001,
+            0.75,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            1e30,
+            -1e30,
+            f32::MIN_POSITIVE,
+        ];
+        let (want, want_n) = mask_reference(&input, &range);
+        let mut got = input.clone();
+        let got_n = mask_out_of_range(&mut got, &range);
+        assert_eq!(got_n, want_n);
+        assert!(same_bits(&got, &want), "got {:?} want {:?}", got, want);
+        // bounds are inclusive; pre-existing NaN is not counted
+        assert_eq!(got_n, 6, "1.5000001, -1e-7, +-inf, 1e30, -1e30");
+    }
+
+    #[test]
+    fn mask_out_of_range_matches_reference_on_pseudo_random_grid() {
+        let range = ValidRange::new(180.0, 330.0); // IR brightness temperature
+        let mut x = 0x9E3779B9u32;
+        let input: Vec<f32> = (0..50_000)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                (x % 60_000) as f32 / 100.0 // 0..600
+            })
+            .collect();
+        let (want, want_n) = mask_reference(&input, &range);
+        let mut got = input;
+        assert_eq!(mask_out_of_range(&mut got, &range), want_n);
+        assert!(same_bits(&got, &want));
+        assert!(want_n > 10_000, "test must actually exercise masking");
+    }
+
+    // ---- large-file gate ----------------------------------------------
+
+    #[tokio::test]
+    async fn small_files_bypass_the_gate_and_large_ones_serialize() {
+        // Small files never take a permit, even while a large one is held.
+        let big = large_ingest_permit(LARGE_GOES_FILE_BYTES).await;
+        assert!(big.is_some(), "a large file must take the permit");
+        assert!(large_ingest_permit(LARGE_GOES_FILE_BYTES - 1)
+            .await
+            .is_none());
+        assert!(large_ingest_permit(25 * 1024 * 1024).await.is_none());
+
+        // A second large file must wait for the first.
+        let second = tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            large_ingest_permit(300 * 1024 * 1024),
+        )
+        .await;
+        assert!(
+            second.is_err(),
+            "second large ingest must block while one is running"
+        );
+
+        // ... and proceeds as soon as the first finishes.
+        drop(big);
+        let third = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            large_ingest_permit(300 * 1024 * 1024),
+        )
+        .await
+        .expect("permit must be released when the holder is dropped");
+        assert!(third.is_some());
+    }
 
     // Tests for band_to_parameter
     #[test]

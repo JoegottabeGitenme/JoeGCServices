@@ -103,6 +103,16 @@ pub struct RadiusQueryParams {
 
     /// linear-features-only: `feature_class` filter (e.g. `mtb_trail`).
     pub class: Option<String>,
+
+    /// lightning-only: server-relative time window, an ISO-8601 duration
+    /// (e.g. `PT10M`). See `lightning` module docs.
+    pub window: Option<String>,
+
+    /// lightning-only: change-feed cursor -- only flashes with `id` greater than this.
+    pub after: Option<i64>,
+
+    /// lightning-only: `goes-east` (default), `goes-west` or `both`.
+    pub satellite: Option<String>,
 }
 
 // The `*_params` functions below translate this generic struct into each
@@ -123,6 +133,22 @@ fn trail_radius_params(
         class: p.class.clone(),
         f: p.f.clone(),
         conditions: p.conditions.clone(),
+    }
+}
+
+fn lightning_radius_params(
+    p: &RadiusQueryParams,
+) -> crate::handlers::lightning::LightningRadiusParams {
+    crate::handlers::lightning::LightningRadiusParams {
+        coords: p.coords.clone(),
+        within: p.within.clone(),
+        within_units: p.within_units.clone(),
+        datetime: p.datetime.clone(),
+        window: p.window.clone(),
+        after: p.after,
+        satellite: p.satellite.clone(),
+        limit: p.limit,
+        f: p.f.clone(),
     }
 }
 
@@ -182,6 +208,16 @@ pub async fn radius_handler(
                 .await;
             }
             if model_config.data_type.is_feature_data() {
+                if model_config.observation_source.as_deref() == Some("lightning") {
+                    let lightning_params = lightning_radius_params(&params);
+                    drop(config);
+                    return crate::handlers::lightning::lightning_radius_handler(
+                        Extension(state.clone()),
+                        Path(collection_id),
+                        Query(lightning_params),
+                    )
+                    .await;
+                }
                 if model_config.observation_source.as_deref() == Some("linear_features") {
                     let trail_params = trail_radius_params(&params);
                     drop(config);
@@ -985,5 +1021,26 @@ mod tests {
             Some("2026-01-01T00:00:00Z")
         );
         assert_eq!(obs_radius_params(&p).limit, Some(7));
+    }
+
+    #[test]
+    fn lightning_translation_threads_every_field() {
+        let p = parse("coords=POINT(-105.2%2039.7)&within=30&within-units=km&datetime=2026-10-07T20:00:00Z/..&limit=9&window=PT30M&after=7&satellite=both");
+        let l = lightning_radius_params(&p);
+        assert_eq!(l.coords.as_deref(), Some("POINT(-105.2 39.7)"));
+        assert_eq!(
+            (l.within.as_deref(), l.within_units.as_deref()),
+            (Some("30"), Some("km"))
+        );
+        assert_eq!(l.datetime.as_deref(), Some("2026-10-07T20:00:00Z/.."));
+        assert_eq!(
+            (
+                l.limit,
+                l.window.as_deref(),
+                l.after,
+                l.satellite.as_deref()
+            ),
+            (Some(9), Some("PT30M"), Some(7), Some("both"))
+        );
     }
 }

@@ -60,3 +60,52 @@ groups:
             edr-api is not exporting trail_conditions_latest_valid_timestamp_seconds
             (edr-api down, the metric endpoint unscraped, or no condition rows exist),
             so the staleness alerts cannot fire.
+
+  # ---------------------------------------------------------------------------
+  # GOES GLM lightning. Freshness is the newest GRANULE processed per satellite,
+  # NOT the newest flash: over CONUS there are legitimately hours without a flash
+  # (clear winter nights), so flash age cannot distinguish a quiet sky from a dead
+  # pipeline. Granules arrive every 20 s regardless, and normal lag is well under
+  # two minutes (~14 s on S3 + <=15 s poll + processing).
+  # ---------------------------------------------------------------------------
+  - name: glm-lightning
+    rules:
+      - alert: GlmGranulesStale
+        expr: time() - glm_latest_granule_end_timestamp_seconds > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GLM lightning granules are stale ({{ $labels.satellite }})"
+          description: >-
+            The newest GLM granule processed for {{ $labels.satellite }} ended
+            {{ $value | humanizeDuration }} ago (normally under 2 minutes). Check the
+            downloader's glm runner and the ingester (docker logs weather-wms-downloader-1 /
+            weather-wms-ingester-1). NOAA also has occasional GLM data gaps of its own;
+            compare against the S3 bucket listing before assuming our fault.
+
+      # `absent(metric)` is true only if EVERY series is missing, so a satellite that
+      # never reports would hide behind the other one. Each gets its own rule.
+      - alert: GlmEastMetricMissing
+        expr: absent(glm_latest_granule_end_timestamp_seconds{satellite="goes-east"})
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No GLM granule has been recorded for goes-east"
+          description: >-
+            edr-api exports no glm_latest_granule_end_timestamp_seconds for goes-east:
+            nothing has ever been ingested for it, edr-api is down, or the metric is
+            unscraped. The staleness alert cannot fire without it.
+
+      - alert: GlmWestMetricMissing
+        expr: absent(glm_latest_granule_end_timestamp_seconds{satellite="goes-west"})
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No GLM granule has been recorded for goes-west"
+          description: >-
+            edr-api exports no glm_latest_granule_end_timestamp_seconds for goes-west:
+            nothing has ever been ingested for it, edr-api is down, or the metric is
+            unscraped. The staleness alert cannot fire without it.

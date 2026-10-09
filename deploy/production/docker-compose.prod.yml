@@ -153,7 +153,17 @@ services:
           # allocator retention across many tile iterations, not a true
           # leak -- see the tiling fix commit). Host has 31G total, ~22G
           # available, so 8G leaves ample headroom for everything else.
-          memory: 8G
+          #
+          # Raised 8G -> 12G after the kernel log showed the ingester being
+          # OOM-killed ~2x/hour (docker's OOMKilled flag stays false for
+          # these, so `docker inspect` hides it; use `dmesg | grep -i
+          # "killed process"`). A single full-disk GOES band-2 ingest alone
+          # reached the 8G cap (21696x21696 grid = 1.9 GB per f32 copy), and
+          # two overlapping ones are fatal. crates/ingestion/src/netcdf.rs now
+          # runs at most one such file at a time and holds fewer copies, but
+          # 12G keeps headroom for it alongside the CONUS bands, GRIB ingests
+          # and the Overpass sync. Host: 31G total, ~23G available.
+          memory: 12G
 
   downloader:
     ports: []

@@ -178,6 +178,9 @@ paths:
           schema:
             type: string
             enum: [mtb_trail, hiking_trail, track, bridleway]
+        - $ref: '#/components/parameters/lightningWindow'
+        - $ref: '#/components/parameters/lightningAfter'
+        - $ref: '#/components/parameters/lightningSatellite'
         - $ref: '#/components/parameters/trailConditions'
         - $ref: '#/components/parameters/f'
         - $ref: '#/components/parameters/width'
@@ -260,6 +263,9 @@ paths:
           schema:
             type: string
             enum: [mtb_trail, hiking_trail, track, bridleway]
+        - $ref: '#/components/parameters/lightningWindow'
+        - $ref: '#/components/parameters/lightningAfter'
+        - $ref: '#/components/parameters/lightningSatellite'
         - $ref: '#/components/parameters/trailConditions'
         - $ref: '#/components/parameters/f'
       responses:
@@ -395,7 +401,25 @@ paths:
       summary: Feature items (trails, storm events)
       description: |
         GeoJSON feature collections. Supported for feature-type collections:
-        `trails` (OSM trail/track/bridleway centerlines) and the storm-event collections.
+        `trails` (OSM trail/track/bridleway centerlines), `glm-lightning` (GOES lightning
+        flashes, see below) and the storm-event collections.
+        
+        ### `glm-lightning`
+        
+        Near-real-time lightning flashes from the GOES-East and GOES-West Geostationary
+        Lightning Mapper, CONUS only, kept for 24 hours. One GeoJSON `Point` per flash.
+        Roughly a minute behind real time (granules land every 20 s, ~14 s after their
+        window closes). `/area` and `/radius` accept the same time/cursor parameters.
+        
+        - Choose the period with `window=PT10M` (default) or `datetime=start/end`.
+        - Poll efficiently with `after=<lastId>`.
+        - An empty `features` array is a valid answer (a quiet sky is normal), not an error.
+        - `numberReturned == limit` means the result was truncated.
+        - Feature `id` is a monotonic cursor, `properties.age_seconds` is the flash's age at
+          the response's `timeStamp` (so clients need no accurate wall clock).
+        
+        GLM detects optical emissions from cloud tops, not ground strikes; treat counts as
+        relative activity.
         
         ### `trails`
         
@@ -449,6 +473,9 @@ paths:
             type: integer
             minimum: 0
             default: 0
+        - $ref: '#/components/parameters/lightningWindow'
+        - $ref: '#/components/parameters/lightningAfter'
+        - $ref: '#/components/parameters/lightningSatellite'
         - $ref: '#/components/parameters/trailConditions'
         - name: datetime
           in: query
@@ -462,7 +489,9 @@ paths:
           content:
             application/geo+json:
               schema:
-                $ref: '#/components/schemas/TrailFeatureCollection'
+                oneOf:
+                  - $ref: '#/components/schemas/TrailFeatureCollection'
+                  - $ref: '#/components/schemas/LightningFeatureCollection'
         '400':
           description: Invalid request parameters, or the collection does not support /items
         '404':
@@ -835,6 +864,48 @@ components:
         type: integer
         enum: [8, 16]
         default: 16
+
+    lightningWindow:
+      name: window
+      in: query
+      required: false
+      description: |
+        `glm-lightning` only. Server-relative time window as an ISO-8601 duration
+        (e.g. `PT10M`, `PT1H`): "the last N minutes, by the server's clock", so a client
+        never has to compute timestamps from its own (often wrong) clock. Default `PT10M`
+        (or the full 24 h when `after` is given); maximum `PT24H`. Mutually exclusive with
+        `datetime`.
+      schema:
+        type: string
+        example: PT10M
+
+    lightningAfter:
+      name: after
+      in: query
+      required: false
+      description: |
+        `glm-lightning` only. Change-feed cursor: return only flashes whose `id` is greater
+        than this -- pass the previous response's `lastId` to receive just the new flashes.
+        With a cursor the OLDEST `limit` matching flashes after it are returned (so a
+        truncated page continues from its `lastId` without gaps); without one, the NEWEST
+        `limit`. Both are returned oldest-first.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+
+    lightningSatellite:
+      name: satellite
+      in: query
+      required: false
+      description: |
+        `glm-lightning` only. `goes-east` (default), `goes-west`, or `both`. East and West
+        both see most of CONUS, so `both` returns the same flash twice (once per satellite)
+        in the overlap -- there is no cross-satellite de-duplication.
+      schema:
+        type: string
+        enum: [goes-east, goes-west, both]
+        default: goes-east
 
     trailConditions:
       name: conditions
@@ -1227,3 +1298,100 @@ components:
           description: Ascending by `valid_time`; empty when the trail has no condition data.
           items:
             $ref: '#/components/schemas/TrailConditionsTimeseriesPoint'
+
+    LightningFeature:
+      type: object
+      required: [type, id, geometry, properties]
+      properties:
+        type:
+          type: string
+          enum: [Feature]
+        id:
+          type: integer
+          format: int64
+          description: Monotonic change-feed cursor; pass the largest seen as `after`.
+        geometry:
+          type: object
+          required: [type, coordinates]
+          properties:
+            type:
+              type: string
+              enum: [Point]
+            coordinates:
+              type: array
+              description: "[longitude, latitude], CRS:84, 4 decimal places (GLM pixels are ~8 km)."
+              minItems: 2
+              maxItems: 2
+              items:
+                type: number
+        properties:
+          type: object
+          required: [flash_time, age_seconds, satellite, quality]
+          properties:
+            flash_time:
+              type: string
+              format: date-time
+              description: Time of the flash's first optical event, UTC, millisecond precision.
+            age_seconds:
+              type: number
+              description: |
+                Seconds between the flash and the response's `timeStamp` (the server's clock
+                when it answered). Add your own time since receiving the response to keep it
+                current without a trustworthy wall clock.
+            satellite:
+              type: string
+              enum: [goes-east, goes-west]
+            energy_j:
+              type: number
+              nullable: true
+              description: Optical radiant energy in joules (typically 1e-15 to 1e-12); null if missing.
+            quality:
+              type: integer
+              description: "0 = good. 1, 3, 5 = degraded (events out of order / too many events / duration exceeded). Degraded flashes are real and are included."
+
+    LightningFeatureCollection:
+      type: object
+      required: [type, features, numberReturned, timeStamp, lastId, dataThrough, dataAgeSeconds]
+      properties:
+        type:
+          type: string
+          enum: [FeatureCollection]
+        features:
+          type: array
+          description: Oldest first. May be empty.
+          items:
+            $ref: '#/components/schemas/LightningFeature'
+        numberReturned:
+          type: integer
+          description: "`numberReturned == limit` means the result may be truncated."
+        timeStamp:
+          type: string
+          format: date-time
+          description: The server's clock when it answered.
+        lastId:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Largest feature `id` returned, to pass as `after` on the next poll. `null` when
+            nothing was returned -- keep the previous cursor.
+        dataThrough:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            **How current the data is, independent of whether anything flashed**: the end of
+            the newest GLM granule processed for the requested `satellite`(s) (for `both`, the
+            older of the two). Read it together with `features`:
+            
+            - empty `features` + recent `dataThrough` = a genuinely quiet sky;
+            - empty `features` + old `dataThrough` = the feed is behind -- **do not tell a
+              user "no lightning"**;
+            - `null` = unknown (nothing has been ingested yet, or a selected satellite has never
+              reported). Never treat `null` as current.
+        dataAgeSeconds:
+          type: number
+          nullable: true
+          description: |
+            Seconds from `dataThrough` to `timeStamp`. Normally under ~90 (GLM's own ~14 s
+            publication delay plus polling). Treat the data as stale beyond a few minutes.
