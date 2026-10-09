@@ -15,6 +15,7 @@
 //! ingester --test-file /path/to/data.grib2 --test-model gfs
 //! ```
 
+mod conditions_retention;
 mod lightning;
 mod obs_retention;
 mod server;
@@ -140,6 +141,8 @@ async fn main() -> Result<()> {
     // A second handle on the same pool for the retention task (ObservationCatalog is
     // not Clone, and `catalog` is moved into the Ingester below).
     let observation_catalog_for_retention = ObservationCatalog::new(catalog.pool_clone());
+    let segment_conditions_for_retention =
+        storage::SegmentConditionsCatalog::new(catalog.pool_clone());
 
     // Create storm event catalog sharing the same connection pool
     let storm_event_catalog = StormEventCatalog::new(catalog.pool_clone());
@@ -276,6 +279,13 @@ async fn main() -> Result<()> {
     tokio::spawn(obs_retention::run(
         observation_catalog_for_retention,
         obs_retention::ObsRetentionConfig::from_env(),
+    ));
+
+    // segment_conditions grew forever too (11.4M rows / 4.5 GB), which made every
+    // `?conditions=latest` request sort hundreds of thousands of old rows.
+    tokio::spawn(conditions_retention::run(
+        segment_conditions_for_retention,
+        conditions_retention::retention_hours_from_env(),
     ));
 
     // GLM lightning is a live feed, not an archive: sweep expired flashes forever.

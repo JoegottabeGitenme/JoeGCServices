@@ -351,6 +351,10 @@ services:
       OBS_RETENTION_HOURS_NDBC: ${OBS_RETENTION_HOURS_NDBC:-168}
       OBS_RETENTION_HOURS_DART: ${OBS_RETENTION_HOURS_DART:-1440}
       TAF_RETENTION_HOURS: ${TAF_RETENTION_HOURS:-168}
+      # Past hours of per-trail conditions to keep (by valid_time; future forecast
+      # hours are never deleted). Floor 8 h: the series endpoint serves the last 6.
+      # See services/ingester/src/conditions_retention.rs.
+      TRAIL_CONDITIONS_RETENTION_HOURS: ${TRAIL_CONDITIONS_RETENTION_HOURS:-12}
     volumes:
       - downloader_data:/data/downloads:ro
       - ./config:/app/config:ro
