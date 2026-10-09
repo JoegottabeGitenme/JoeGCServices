@@ -52,6 +52,7 @@ test-utils = { path = "../../crates/test-utils", features = ["containers"] }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 sqlx = { workspace = true }
+tower = { workspace = true, features = ["util"] }
 
 [[bench]]
 name = "edr_api_benchmarks"

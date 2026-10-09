@@ -309,6 +309,13 @@ fn timeseries_to_json(
     feature_id: i64,
     rows: &[SegmentCondition],
 ) -> Value {
+    timeseries_body(feature.name.as_deref(), feature_id, rows)
+}
+
+/// The per-trail series body. The single-trail endpoint and the batch endpoint
+/// both build their entries here, so a batch entry is the single endpoint's body
+/// by construction (same fields, same formatting), not by parallel maintenance.
+fn timeseries_body(name: Option<&str>, feature_id: i64, rows: &[SegmentCondition]) -> Value {
     // The series is stitched across model runs (newest run per valid_time),
     // so there is no single run it "comes from": top-level `run_time` /
     // `model_version` describe the NEWEST run contributing to it, and every
@@ -334,11 +341,154 @@ fn timeseries_to_json(
 
     json!({
         "feature_id": feature_id,
-        "name": feature.name,
+        "name": name,
         "run_time": run_time,
         "model_version": model_version,
         "conditions": conditions,
     })
+}
+
+// =============================================================================
+// Batch conditions series: GET /edr/collections/:collection_id/conditions?ids=
+// =============================================================================
+
+/// Most ids one batch request may carry. 500 ids is a ~5.6 KB query string, inside
+/// nginx's default 8 KB request-line limit, and ~22,500 index-served rows.
+pub const MAX_BATCH_IDS: usize = 500;
+
+/// Parse the `ids` query value: comma-separated OSM way ids.
+///
+/// - missing, empty, or only commas -> error (a batch of nothing is a client bug)
+/// - more than `MAX_BATCH_IDS` ids *as sent* -> error (counted before de-duplication,
+///   so the limit means what a client reading the docs expects)
+/// - any entry that is not plain decimal digits fitting an `i64` -> error
+///   (no signs, no spaces inside an id, no `1e3`, no hex)
+/// - empty entries ("1,,2," ) are ignored; surrounding whitespace is trimmed
+/// - duplicates are dropped, first occurrence wins, so order is the request's
+pub fn parse_batch_ids(raw: Option<&str>) -> Result<Vec<i64>, String> {
+    let raw = raw.unwrap_or("");
+    let tokens: Vec<&str> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tokens.is_empty() {
+        return Err(
+            "Query parameter 'ids' is required: a comma-separated list of feature ids".to_string(),
+        );
+    }
+    if tokens.len() > MAX_BATCH_IDS {
+        return Err(format!(
+            "Too many ids: {} requested, at most {} are allowed per request",
+            tokens.len(),
+            MAX_BATCH_IDS
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut ids = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        if !token.bytes().all(|b| b.is_ascii_digit()) {
+            // Echo a bounded prefix only: never reflect an arbitrarily long input.
+            let shown: String = token.chars().take(32).collect();
+            return Err(format!("Invalid feature id '{}': ids are integers", shown));
+        }
+        let id: i64 = token.parse().map_err(|_| {
+            let shown: String = token.chars().take(32).collect();
+            format!("Invalid feature id '{}': out of range", shown)
+        })?;
+        if seen.insert(id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+/// Assemble the batch response from the lookups. Pure, so the contract is testable
+/// without a database.
+///
+/// - `series` holds an entry for every id in `names` (known trails), in request
+///   order; each entry is `timeseries_body`, i.e. exactly the single-trail body.
+///   A known trail without rows gets `"conditions": []`, not omission.
+/// - `unknown_ids` lists the ids that are not trails, in request order. It is always
+///   present (an empty array when everything is known).
+/// - `rows` must be grouped as the storage query returns them (any order across
+///   features; ascending `valid_time` within one).
+fn batch_body(
+    ids: &[i64],
+    names: &HashMap<i64, Option<String>>,
+    rows: Vec<SegmentCondition>,
+) -> Value {
+    let mut by_feature: HashMap<i64, Vec<SegmentCondition>> = HashMap::new();
+    for row in rows {
+        by_feature.entry(row.feature_id).or_default().push(row);
+    }
+    let mut series = Vec::new();
+    let mut unknown = Vec::new();
+    for id in ids {
+        match names.get(id) {
+            Some(name) => {
+                let rows = by_feature.get(id).map(Vec::as_slice).unwrap_or(&[]);
+                series.push(timeseries_body(name.as_deref(), *id, rows));
+            }
+            None => unknown.push(*id),
+        }
+    }
+    json!({ "series": series, "unknown_ids": unknown })
+}
+
+/// Hourly condition series for many trails in one request, replacing one
+/// `/items/{id}/conditions` call per segment.
+///
+/// `GET /edr/collections/:collection_id/conditions?ids=956937928,27852725,...`
+///
+/// 200 with `{"series": [...], "unknown_ids": [...]}`. Each `series[i]` is
+/// byte-for-byte the body `/items/{id}/conditions` returns for that id. An unknown
+/// id never fails the batch: it is listed in `unknown_ids`. 400 for a missing,
+/// malformed or oversized `ids` (see `parse_batch_ids`). Same `max-age=300`.
+pub async fn trail_conditions_batch_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(collection_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    if let Err(resp) = resolve_trails_collection(&state, &collection_id).await {
+        return resp;
+    }
+
+    let raw = query
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("ids"))
+        .map(|(_, v)| v.as_str());
+    let ids = match parse_batch_ids(raw) {
+        Ok(ids) => ids,
+        Err(msg) => return bad_request(msg),
+    };
+
+    let names: HashMap<i64, Option<String>> =
+        match state.linear_feature_catalog.get_names_by_ids(&ids).await {
+            Ok(rows) => rows.into_iter().collect(),
+            Err(e) => return internal_error(format!("Feature lookup failed: {}", e)),
+        };
+
+    // Only known trails go to the (much larger) conditions table.
+    let known: Vec<i64> = ids
+        .iter()
+        .copied()
+        .filter(|id| names.contains_key(id))
+        .collect();
+    let rows = if known.is_empty() {
+        Vec::new()
+    } else {
+        match state
+            .segment_conditions_catalog
+            .get_timeseries_for_features(&known)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => return internal_error(format!("Timeseries query failed: {}", e)),
+        }
+    };
+
+    json_response(batch_body(&ids, &names, rows))
 }
 
 // =============================================================================
@@ -946,5 +1096,169 @@ mod tests {
                 .as_deref(),
             Some("track")
         );
+    }
+    // =========================================================================
+    // Batch conditions endpoint: id parsing and response assembly
+    // =========================================================================
+
+    fn ids_of(raw: &str) -> Result<Vec<i64>, String> {
+        parse_batch_ids(Some(raw))
+    }
+
+    #[test]
+    fn batch_ids_parse_in_request_order() {
+        assert_eq!(
+            ids_of("956937928,27852725,5").unwrap(),
+            [956937928, 27852725, 5]
+        );
+        assert_eq!(ids_of(" 1 , 2 ,3 ").unwrap(), [1, 2, 3]);
+        assert_eq!(ids_of("9223372036854775807").unwrap(), [i64::MAX]);
+    }
+
+    #[test]
+    fn batch_ids_drop_duplicates_keeping_the_first_and_tolerate_empty_entries() {
+        assert_eq!(ids_of("3,1,3,2,1").unwrap(), [3, 1, 2]);
+        assert_eq!(ids_of("1,,2,").unwrap(), [1, 2]);
+        assert_eq!(ids_of(",7").unwrap(), [7]);
+        assert_eq!(
+            ids_of("007,7").unwrap(),
+            [7],
+            "leading zeros are the same id"
+        );
+    }
+
+    #[test]
+    fn batch_ids_missing_or_empty_is_an_error() {
+        assert!(parse_batch_ids(None).is_err());
+        assert!(ids_of("").is_err());
+        assert!(ids_of(" , ,").is_err());
+        assert!(ids_of(",").unwrap_err().contains("'ids' is required"));
+    }
+
+    #[test]
+    fn batch_ids_reject_anything_that_is_not_a_plain_integer() {
+        for bad in [
+            "abc",
+            "1,x,2",
+            "12a",
+            "-5",
+            "+5",
+            "1.5",
+            "1e3",
+            "0x1F",
+            "1 2",
+            "٣",                   // Arabic-Indic digit
+            "9223372036854775808", // i64::MAX + 1
+            "99999999999999999999999999",
+        ] {
+            let err = ids_of(bad).unwrap_err();
+            assert!(err.contains("Invalid feature id"), "{bad:?} -> {err}");
+        }
+    }
+
+    #[test]
+    fn batch_ids_error_never_echoes_unbounded_input() {
+        let long = "x".repeat(10_000);
+        let err = ids_of(&long).unwrap_err();
+        assert!(err.len() < 200, "{} bytes", err.len());
+    }
+
+    #[test]
+    fn the_cap_is_500_counted_as_sent() {
+        let n = |k: usize| (1..=k).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+        assert_eq!(ids_of(&n(500)).unwrap().len(), 500);
+        let err = ids_of(&n(501)).unwrap_err();
+        assert!(err.contains("501") && err.contains("500"), "{err}");
+        // counted before de-duplication: 501 entries that collapse to 1 id are still too many
+        assert!(ids_of(&vec!["7"; 501].join(",")).is_err());
+        assert_eq!(ids_of(&vec!["7"; 500].join(",")).unwrap(), [7]);
+    }
+
+    fn names(pairs: &[(i64, Option<&str>)]) -> HashMap<i64, Option<String>> {
+        pairs
+            .iter()
+            .map(|(i, n)| (*i, n.map(str::to_string)))
+            .collect()
+    }
+
+    #[test]
+    fn every_batch_entry_is_exactly_the_single_trail_body() {
+        // Same fixture rows through both builders; compare as serialized bytes.
+        let rows_7 = vec![
+            sample_condition_at(7, 0, 0, 0.20),
+            sample_condition_at(7, 1, 1, 0.21),
+        ];
+        let rows_9 = vec![sample_condition_at(9, 0, 0, 0.30)];
+        let mut all = rows_7.clone();
+        all.extend(rows_9.clone());
+
+        let body = batch_body(&[7, 9], &names(&[(7, Some("Test Trail")), (9, None)]), all);
+        let series = body["series"].as_array().unwrap();
+        assert_eq!(series.len(), 2);
+
+        let single_7 = timeseries_to_json(&sample_feature(7), 7, &rows_7);
+        assert_eq!(
+            serde_json::to_string(&series[0]).unwrap(),
+            serde_json::to_string(&single_7).unwrap(),
+            "batch entry differs from the single-trail body"
+        );
+        let mut f9 = sample_feature(9);
+        f9.name = None;
+        let single_9 = timeseries_to_json(&f9, 9, &rows_9);
+        assert_eq!(
+            serde_json::to_string(&series[1]).unwrap(),
+            serde_json::to_string(&single_9).unwrap()
+        );
+        assert!(
+            series[1]["name"].is_null(),
+            "an unnamed trail keeps name: null"
+        );
+    }
+
+    #[test]
+    fn known_trails_without_rows_are_present_with_empty_conditions() {
+        let body = batch_body(&[5], &names(&[(5, Some("Out Of Coverage"))]), vec![]);
+        let entry = &body["series"][0];
+        assert_eq!(entry["feature_id"], json!(5));
+        assert_eq!(entry["conditions"], json!([]));
+        assert!(entry["run_time"].is_null() && entry["model_version"].is_null());
+        assert_eq!(body["unknown_ids"], json!([]));
+    }
+
+    #[test]
+    fn unknown_ids_are_listed_not_fatal_and_everything_keeps_request_order() {
+        let rows = vec![
+            sample_condition_at(30, 0, 0, 0.3),
+            sample_condition_at(10, 0, 0, 0.1),
+            sample_condition_at(10, 1, 1, 0.2),
+        ];
+        let body = batch_body(
+            &[30, 404, 10, 5, 999],
+            &names(&[(30, Some("c")), (10, Some("a")), (5, Some("b"))]),
+            rows,
+        );
+        let order: Vec<i64> = body["series"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["feature_id"].as_i64().unwrap())
+            .collect();
+        assert_eq!(
+            order,
+            [30, 10, 5],
+            "series follow the request, not the database"
+        );
+        assert_eq!(body["unknown_ids"], json!([404, 999]));
+        // rows were attached to the right trail
+        assert_eq!(body["series"][1]["conditions"].as_array().unwrap().len(), 2);
+        assert_eq!(body["series"][0]["conditions"].as_array().unwrap().len(), 1);
+        assert_eq!(body["series"][2]["conditions"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn an_all_unknown_batch_is_a_normal_empty_series() {
+        let body = batch_body(&[1, 2], &names(&[]), vec![]);
+        assert_eq!(body["series"], json!([]));
+        assert_eq!(body["unknown_ids"], json!([1, 2]));
     }
 }
