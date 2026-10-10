@@ -74,9 +74,9 @@ fn series(body: &Value, param: &str) -> (Vec<String>, Vec<Option<f64>>) {
 }
 
 // The grid reader blocks internally (block_in_place), which needs a multi-threaded runtime.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // Requires Docker
-async fn an_hour_with_no_grid_for_a_parameter_is_null_not_a_neighbours_value() {
+/// Ingest the named fixtures with the real ingester and build the real position route.
+/// Returns the router, the state (for direct grid reads) and the infra guard.
+async fn setup(files: &[&str]) -> (Router, Arc<AppState>, TestInfrastructure) {
     std::env::set_var(
         "CONFIG_DIR",
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config"),
@@ -107,12 +107,7 @@ async fn an_hour_with_no_grid_for_a_parameter_is_null_not_a_neighbours_value() {
         .unwrap(),
     );
     let ingester = Ingester::new(storage, (*catalog).clone());
-    for f in [
-        // QPE_01H valid 15:00Z
-        "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-150000.grib2.gz",
-        // QPE_24H valid 16:00Z -- an hour QPE_01H has no grid for
-        "mrms-qpe_MRMS_MultiSensor_QPE_24H_Pass2_00.00_20261009-160000.grib2.gz",
-    ] {
+    for f in files {
         let r = ingester
             .ingest_file(&fixture(f), IngestOptions::default())
             .await
@@ -159,7 +154,21 @@ async fn an_hour_with_no_grid_for_a_parameter_is_null_not_a_neighbours_value() {
             "/edr/collections/:collection_id/position",
             get(handlers::position::position_handler),
         )
-        .layer(Extension(state));
+        .layer(Extension(Arc::clone(&state)));
+    (app, state, infra)
+}
+
+// The grid reader blocks internally (block_in_place), which needs a multi-threaded runtime.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore] // Requires Docker
+async fn an_hour_with_no_grid_for_a_parameter_is_null_not_a_neighbours_value() {
+    let (app, _state, _infra) = setup(&[
+        // QPE_01H valid 15:00Z
+        "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-150000.grib2.gz",
+        // QPE_24H valid 16:00Z -- an hour QPE_01H has no grid for
+        "mrms-qpe_MRMS_MultiSensor_QPE_24H_Pass2_00.00_20261009-160000.grib2.gz",
+    ])
+    .await;
 
     // Seattle, where it rained at 15:00Z (0.47 mm in the live series).
     let q = |param: &str| {
@@ -195,4 +204,186 @@ async fn an_hour_with_no_grid_for_a_parameter_is_null_not_a_neighbours_value() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(series(&body, "QPE_01H").1[1], None);
     assert_eq!(series(&body, "QPE_24H").1[0], None);
+}
+
+/// The previous per-step behaviour, kept here as the oracle: ask the catalog for the dataset
+/// NEAREST to the instant (`find_by_time[_and_level]` via `read_point`), then discard the answer
+/// if the grid that came back is not that instant's (the guard the handler already had).
+async fn per_step_oracle(
+    state: &AppState,
+    parameter: &str,
+    level: Option<&str>,
+    times: &[chrono::DateTime<chrono::Utc>],
+    lon: f64,
+    lat: f64,
+) -> Vec<Option<f32>> {
+    let mut out = Vec::new();
+    for t in times {
+        let mut q =
+            grid_processor::DatasetQuery::observation("mrms-qpe", parameter).at_valid_time(*t);
+        if let Some(l) = level {
+            q = q.at_level(l);
+        }
+        out.push(
+            match state.grid_data_service.read_point(&q, lon, lat).await {
+                Ok(p) if (p.time - *t).num_seconds().abs() <= 1 => p.value,
+                _ => None,
+            },
+        );
+    }
+    out
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore] // Requires Docker
+async fn the_batched_concurrent_series_equals_the_per_step_path_on_real_grids() {
+    use chrono::{Duration, TimeZone, Utc};
+    let (_app, state, _infra) = setup(&[
+        "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-130000.grib2.gz",
+        "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-140000.grib2.gz",
+        "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-150000.grib2.gz",
+        "mrms-qpe_MRMS_MultiSensor_QPE_24H_Pass2_00.00_20261009-160000.grib2.gz",
+    ])
+    .await;
+    let h = |hour: u32| Utc.with_ymd_and_hms(2026, 10, 9, hour, 0, 0).unwrap();
+
+    // Out of order, with a repeat, a missing hour (12, 16), sub-second and 30 s offsets, and the
+    // far side of the data (00:00 next day).
+    let times = vec![
+        h(15),
+        h(13),
+        h(16),
+        h(14),
+        h(15),
+        h(12),
+        h(14) + Duration::milliseconds(500),
+        h(14) + Duration::seconds(30),
+        Utc.with_ymd_and_hms(2026, 10, 10, 0, 0, 0).unwrap(),
+    ];
+    // Seattle (wet), Boulder, and a point outside the MRMS domain.
+    let points = [(-122.3, 47.6), (-105.27, 40.01), (10.0, 50.0)];
+    // The level the datasets were stored under, a level they were not, and no level.
+    let stored_level: String = {
+        let cands = state
+            .catalog
+            .find_datasets_in_valid_time_range("mrms-qpe", "QPE_01H", None, h(13), h(13))
+            .await
+            .unwrap();
+        cands[0].1.level.clone()
+    };
+    let levels: [Option<&str>; 3] = [
+        None,
+        Some(stored_level.as_str()),
+        Some("999 m above nothing"),
+    ];
+
+    let mut nonnull_seen = 0;
+    for (lon, lat) in points {
+        for level in levels {
+            for param in ["QPE_01H", "QPE_24H"] {
+                let want = per_step_oracle(&state, param, level, &times, lon, lat).await;
+                let got: Vec<Option<f32>> = state
+                    .grid_data_service
+                    .read_point_series("mrms-qpe", param, level, &times, lon, lat, 4)
+                    .await
+                    .into_iter()
+                    .zip(&times)
+                    .map(|(r, t)| match r {
+                        Ok(p) if (p.time - *t).num_seconds().abs() <= 1 => p.value,
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(got, want, "{param} level={level:?} at ({lon},{lat})");
+                nonnull_seen += got.iter().flatten().count();
+            }
+        }
+    }
+    // The comparison must not pass vacuously on all-None.
+    assert!(
+        nonnull_seen > 20,
+        "only {nonnull_seen} real values compared"
+    );
+
+    // Concurrency must not reorder results: the same request at concurrency 1 and 8 agree.
+    let one = state
+        .grid_data_service
+        .read_point_series("mrms-qpe", "QPE_01H", None, &times, -122.3, 47.6, 1)
+        .await;
+    let eight = state
+        .grid_data_service
+        .read_point_series("mrms-qpe", "QPE_01H", None, &times, -122.3, 47.6, 8)
+        .await;
+    let vals = |v: &[Result<grid_processor::PointValue, _>]| -> Vec<Option<f32>> {
+        v.iter()
+            .map(|r| r.as_ref().ok().and_then(|p| p.value))
+            .collect()
+    };
+    assert_eq!(vals(&one), vals(&eight));
+    // and distinct hours really did return distinct grids' values
+    let by_hour = vals(&one);
+    assert_ne!(
+        by_hour[0], by_hour[1],
+        "15:00 and 13:00 must differ at Seattle"
+    );
+    assert_eq!(
+        by_hour[0], by_hour[4],
+        "the repeated 15:00 request returns the same value"
+    );
+
+    // One catalog lookup for the whole series, however many instants; the per-step path pays
+    // one per instant.
+    let before = state.grid_data_service.catalog_lookups();
+    state
+        .grid_data_service
+        .read_point_series("mrms-qpe", "QPE_01H", None, &times, -122.3, 47.6, 8)
+        .await;
+    assert_eq!(state.grid_data_service.catalog_lookups() - before, 1);
+    let before = state.grid_data_service.catalog_lookups();
+    per_step_oracle(&state, "QPE_01H", None, &times, -122.3, 47.6).await;
+    assert_eq!(
+        state.grid_data_service.catalog_lookups() - before,
+        times.len() as u64,
+        "the oracle is the per-step path: one lookup per instant"
+    );
+
+    // No requested instants -> nothing, without querying anything.
+    let before = state.grid_data_service.catalog_lookups();
+    assert!(state
+        .grid_data_service
+        .read_point_series("mrms-qpe", "QPE_01H", None, &[], 0.0, 0.0, 8)
+        .await
+        .is_empty());
+    assert_eq!(
+        state.grid_data_service.catalog_lookups(),
+        before,
+        "nothing requested, nothing queried"
+    );
+}
+
+/// The HTTP route must actually take the batched path: a many-hour series is ONE catalog lookup.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore] // Requires Docker
+async fn the_position_route_resolves_a_whole_series_with_one_catalog_lookup() {
+    let (app, state, _infra) = setup(&[
+        "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-130000.grib2.gz",
+        "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-140000.grib2.gz",
+        "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-150000.grib2.gz",
+    ])
+    .await;
+    let before = state.grid_data_service.catalog_lookups();
+    let (status, body) = get_json(
+        &app,
+        "/edr/collections/mrms-qpe/position?coords=POINT(-122.3%2047.6)&parameter-name=QPE_01H\
+         &datetime=2026-10-09T13:00:00Z/2026-10-09T15:00:00Z",
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let (times, values) = series(&body, "QPE_01H");
+    assert_eq!(times.len(), 3);
+    assert!(values.iter().all(|v| v.is_some()), "{values:?}");
+    assert_eq!(
+        state.grid_data_service.catalog_lookups() - before,
+        1,
+        "3 hours must cost one catalog lookup, not three"
+    );
 }

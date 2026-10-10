@@ -1327,3 +1327,134 @@ async fn test_delete_valid_before_batch_removes_only_old_rows_in_batches() {
         1
     );
 }
+
+// ============================================================================
+// find_datasets_in_valid_time_range: one query for a whole observation series
+// ============================================================================
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_find_datasets_in_valid_time_range() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url())
+        .await
+        .expect("connect");
+    catalog.migrate().await.expect("migrate");
+    let pool = catalog.pool_clone();
+
+    let base = {
+        let now = (Utc::now() - Duration::hours(48)).timestamp();
+        DateTime::<Utc>::from_timestamp(now - now % 3600, 0).unwrap()
+    };
+    let at = |h: i64| base + Duration::hours(h);
+    let put = |param: &str, level: &str, hour: i64| {
+        let mut e = test_entry("mrms-qpe", param, 0);
+        e.level = level.to_string();
+        e.reference_time = at(hour);
+        e.storage_path = format!("grids/{param}/{level}/{hour}.zarr");
+        e
+    };
+
+    // QPE_01H: hours 0..=9 at level A, plus hours 3 and 4 also at level B
+    for hour in 0..=9 {
+        catalog
+            .register_dataset(&put("QPE_01H", "A", hour))
+            .await
+            .unwrap();
+    }
+    for hour in [3, 4] {
+        catalog
+            .register_dataset(&put("QPE_01H", "B", hour))
+            .await
+            .unwrap();
+    }
+    // another parameter and another model with overlapping hours must not leak in
+    catalog
+        .register_dataset(&put("QPE_24H", "A", 5))
+        .await
+        .unwrap();
+    let mut other = put("QPE_01H", "A", 5);
+    other.model = "mrms".to_string();
+    catalog.register_dataset(&other).await.unwrap();
+    // an unavailable dataset is not a candidate
+    catalog
+        .register_dataset(&put("QPE_01H", "A", 20))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE datasets SET status = 'expired' WHERE parameter = 'QPE_01H' AND level = 'A' AND reference_time = $1")
+        .bind(at(20))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let hours = |rows: &[(DateTime<Utc>, storage::CatalogEntry)]| -> Vec<i64> {
+        rows.iter().map(|(t, _)| (*t - base).num_hours()).collect()
+    };
+
+    // all levels, inclusive bounds, oldest first
+    let all = catalog
+        .find_datasets_in_valid_time_range("mrms-qpe", "QPE_01H", None, at(2), at(6))
+        .await
+        .unwrap();
+    assert_eq!(
+        hours(&all),
+        [2, 3, 3, 4, 4, 5, 6],
+        "bounds are inclusive; both levels at 3 and 4"
+    );
+    assert!(
+        all.iter().all(|(t, e)| *t == e.reference_time),
+        "the returned valid time is the entry's"
+    );
+
+    // the level filter keeps only that level
+    let b = catalog
+        .find_datasets_in_valid_time_range("mrms-qpe", "QPE_01H", Some("B"), at(0), at(9))
+        .await
+        .unwrap();
+    assert_eq!(hours(&b), [3, 4]);
+    assert!(b.iter().all(|(_, e)| e.level == "B"));
+    let a = catalog
+        .find_datasets_in_valid_time_range("mrms-qpe", "QPE_01H", Some("A"), at(0), at(9))
+        .await
+        .unwrap();
+    assert_eq!(hours(&a), (0..=9).collect::<Vec<_>>());
+    assert!(catalog
+        .find_datasets_in_valid_time_range("mrms-qpe", "QPE_01H", Some("nope"), at(0), at(9))
+        .await
+        .unwrap()
+        .is_empty());
+
+    // model / parameter scoping and the status filter
+    let h5 = catalog
+        .find_datasets_in_valid_time_range("mrms-qpe", "QPE_01H", None, at(5), at(5))
+        .await
+        .unwrap();
+    assert_eq!(h5.len(), 1);
+    assert_eq!(
+        (h5[0].1.model.as_str(), h5[0].1.parameter.as_str()),
+        ("mrms-qpe", "QPE_01H")
+    );
+    assert!(
+        catalog
+            .find_datasets_in_valid_time_range("mrms-qpe", "QPE_01H", None, at(20), at(20))
+            .await
+            .unwrap()
+            .is_empty(),
+        "expired datasets are not candidates"
+    );
+
+    // empty / inverted ranges
+    assert!(catalog
+        .find_datasets_in_valid_time_range("mrms-qpe", "QPE_01H", None, at(30), at(40))
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(catalog
+        .find_datasets_in_valid_time_range("mrms-qpe", "QPE_01H", None, at(6), at(2))
+        .await
+        .unwrap()
+        .is_empty());
+
+    // the entry carries what a point read needs
+    assert!(all[0].1.storage_path.ends_with(".zarr"));
+}

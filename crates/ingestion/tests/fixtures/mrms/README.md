@@ -9,3 +9,5 @@ Both are 7000x3500, 0.01 degree, ~0.6 MB gzipped.
 - `...QPE_24H_Pass2..._20261009-160000`: GRIB2 discipline 209, category 6, number 41, valid 16:00 UTC
   (an hour for which there is no QPE_01H fixture; used by edr-api's `mrms_qpe_series` test to make
   "another QPE parameter has this hour, QPE_01H does not").
+- `...QPE_01H_Pass2..._20261009-130000` and `..._140000`: the two hours before the 15:00 file, so the
+  edr-api series tests have three distinct QPE_01H grids (13, 14, 15 UTC) to read concurrently.
