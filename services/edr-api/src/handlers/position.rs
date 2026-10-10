@@ -89,6 +89,27 @@ pub struct PositionQueryParams {
     pub forecast_hour: Option<String>,
 }
 
+/// The value a point read found for the instant `requested`, or `None` if the grid that
+/// answered belongs to a different instant.
+///
+/// `GridDataService` resolves a time through `find_by_time`, which returns the NEAREST grid
+/// with no tolerance. A series asks every parameter for every time any parameter has, so a
+/// parameter with no grid at some hour (QPE_01H when neither the Pass2 nor the Pass1 file
+/// for that hour exists yet) would repeat a neighbouring hour's value under this hour's
+/// timestamp, and a repeated rainfall total reads as real rain. For observation data a
+/// grid's `time` is its valid time, so a mismatch means exactly that. Forecast data is left
+/// alone: there `time` is the run's reference time, not the valid time.
+fn value_at_instant(
+    point: &grid_processor::PointValue,
+    requested: chrono::DateTime<chrono::Utc>,
+    is_observation: bool,
+) -> Option<f32> {
+    if is_observation && (point.time - requested).num_seconds().abs() > 1 {
+        return None;
+    }
+    point.value
+}
+
 /// GET /edr/collections/:collection_id/position
 pub async fn position_handler(
     Extension(state): Extension<Arc<AppState>>,
@@ -926,7 +947,11 @@ async fn position_query(
                                         if units_str.is_empty() {
                                             units_str = point_value.units.clone();
                                         }
-                                        point_value.value
+                                        value_at_instant(
+                                            &point_value,
+                                            *query_time,
+                                            is_observation_model,
+                                        )
                                     }
                                     Err(e) => {
                                         tracing::warn!(
@@ -970,7 +995,11 @@ async fn position_query(
                                         if units_str.is_empty() {
                                             units_str = point_value.units.clone();
                                         }
-                                        point_value.value
+                                        value_at_instant(
+                                            &point_value,
+                                            *before_time,
+                                            is_observation_model,
+                                        )
                                     }
                                     Err(e) => {
                                         tracing::warn!(
@@ -1011,7 +1040,11 @@ async fn position_query(
                                         if units_str.is_empty() {
                                             units_str = point_value.units.clone();
                                         }
-                                        point_value.value
+                                        value_at_instant(
+                                            &point_value,
+                                            *after_time,
+                                            is_observation_model,
+                                        )
                                     }
                                     Err(e) => {
                                         tracing::warn!(
@@ -1275,5 +1308,74 @@ mod tests {
         assert_eq!(times[0], "2024-12-29T12:00:00Z");
         assert_eq!(times[1], "2024-12-29T13:00:00Z");
         assert_eq!(times[2], "2024-12-29T14:00:00Z");
+    }
+    // ------------------------------------------------------------------
+    // value_at_instant: never answer an hour with a neighbouring hour's grid
+    // ------------------------------------------------------------------
+
+    fn point(time: DateTime<Utc>, value: Option<f32>) -> grid_processor::PointValue {
+        grid_processor::PointValue {
+            value,
+            units: "mm".into(),
+            model: "mrms-qpe".into(),
+            parameter: "QPE_01H".into(),
+            level: "0 m above MSL".into(),
+            time,
+            forecast_hour: Some(0),
+        }
+    }
+
+    fn t(h: u32, m: u32, s: u32) -> DateTime<Utc> {
+        use chrono::TimeZone;
+        Utc.with_ymd_and_hms(2026, 10, 9, h, m, s).unwrap()
+    }
+
+    #[test]
+    fn an_observation_grid_for_the_requested_instant_is_used() {
+        assert_eq!(
+            value_at_instant(&point(t(23, 0, 0), Some(1.5)), t(23, 0, 0), true),
+            Some(1.5)
+        );
+        // a real zero is a value, not a gap
+        assert_eq!(
+            value_at_instant(&point(t(23, 0, 0), Some(0.0)), t(23, 0, 0), true),
+            Some(0.0)
+        );
+        // a grid whose cell is no-data stays no-data
+        assert_eq!(
+            value_at_instant(&point(t(23, 0, 0), None), t(23, 0, 0), true),
+            None
+        );
+    }
+
+    #[test]
+    fn a_neighbouring_hours_grid_is_not_passed_off_as_the_requested_hour() {
+        // The catalog returned the 23:00 grid for a 00:00 request (nearest, no tolerance).
+        let found = point(t(23, 0, 0), Some(1.5));
+        assert_eq!(value_at_instant(&found, t(23, 59, 0), true), None);
+        let next_day = {
+            use chrono::TimeZone;
+            Utc.with_ymd_and_hms(2026, 10, 10, 0, 0, 0).unwrap()
+        };
+        assert_eq!(value_at_instant(&found, next_day, true), None);
+        // earlier and later neighbours alike
+        assert_eq!(
+            value_at_instant(&point(t(23, 0, 0), Some(1.5)), t(22, 0, 0), true),
+            None
+        );
+    }
+
+    #[test]
+    fn sub_second_representation_differences_are_tolerated_but_two_seconds_are_not() {
+        let found = point(t(15, 0, 0), Some(0.4));
+        assert_eq!(value_at_instant(&found, t(15, 0, 1), true), Some(0.4));
+        assert_eq!(value_at_instant(&found, t(15, 0, 2), true), None);
+    }
+
+    #[test]
+    fn forecast_data_is_left_alone_because_its_time_is_the_run_not_the_valid_time() {
+        // For a forecast grid `time` is the model run's reference time; valid time = run + hour.
+        let found = point(t(12, 0, 0), Some(280.0));
+        assert_eq!(value_at_instant(&found, t(18, 0, 0), false), Some(280.0));
     }
 }

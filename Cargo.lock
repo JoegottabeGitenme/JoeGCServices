@@ -1645,6 +1645,7 @@ dependencies = [
  "dotenvy",
  "edr-protocol",
  "grid-processor",
+ "ingestion",
  "lru",
  "metrics",
  "metrics-exporter-prometheus",
