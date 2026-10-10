@@ -1063,7 +1063,9 @@ retention:
         assert_eq!(m.retention.hours, 2);
         assert_eq!(m.lookback_minutes(), 120, "2 h lookback = 2 h retention");
         let names: Vec<&str> = m.parameters.iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, ["REFL", "PRECIP_RATE"]);
+        // the 2-minute products only; the hourly QPE accumulations are model `mrms-qpe`
+        assert_eq!(names, ["REFL", "PRECIP_RATE", "PRECIP_FLAG", "MESH"]);
+        assert!(!names.iter().any(|n| n.starts_with("QPE")));
         assert!(
             m.parameters.iter().all(|p| p.fallback_product.is_none()),
             "radar products have no fallback"
@@ -1124,5 +1126,96 @@ retention:
             }
         }
         assert!(seen.len() >= 6, "{seen:?}");
+    }
+    // ------------------------------------------------------------------
+    // HRRR selective download: the .idx strings must be ones HRRR really publishes
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn hrrr_selective_download_asks_for_the_idx_lines_hrrr_really_has() {
+        // Strings copied from a live hrrr.t23z.wrfprsf02.grib2.idx:
+        //   REFC:entire atmosphere   TCDC:entire atmosphere   MSLMA:mean sea level
+        let filters = real_model("hrrr").build_param_filters();
+        let has = |p: &str, l: &str| filters.iter().any(|(fp, fl)| fp == p && fl == l);
+        assert!(
+            has("REFC", "entire atmosphere"),
+            "REFC filter missing: level 10 has no derived idx string, so idx_level must carry it"
+        );
+        assert!(has("TCDC", "entire atmosphere"));
+        assert!(has("MSLMA", "mean sea level"));
+        // PWAT's real line is the long form; the plain "entire atmosphere" matches nothing
+        assert!(has(
+            "PWAT",
+            "entire atmosphere (considered as a single layer)"
+        ));
+        assert!(!has("PWAT", "entire atmosphere"));
+        // HRRR has no PRMSL line: asking for it only produced a "not found in index" warning per file
+        assert!(!filters.iter().any(|(p, _)| p == "PRMSL"), "{filters:?}");
+    }
+
+    #[test]
+    fn mrms_downloads_the_precipitation_type_and_hail_products() {
+        let m = real_model("mrms");
+        let products: Vec<&str> = m
+            .parameters
+            .iter()
+            .filter_map(|p| p.product.as_deref())
+            .collect();
+        assert_eq!(
+            products,
+            [
+                "SeamlessHSR_00.00",
+                "PrecipRate_00.00",
+                "PrecipFlag_00.00",
+                "MESH_00.50"
+            ]
+        );
+        // still the 2-hour, 2-minute radar model
+        assert_eq!(m.retention.hours, 2);
+        assert_eq!(m.lookback_minutes(), 120);
+    }
+
+    #[test]
+    fn every_hrrr_selective_download_filter_matches_a_line_hrrr_really_publishes() {
+        // `ParamFilter::matches` needs the parameter AND level strings to equal an index line
+        // exactly, so a filter that is merely close selects nothing and the parameter is silently
+        // never downloaded: PWAT (long-form level), REFC/TCDC (level type 10 has no derived string)
+        // and PRMSL (HRRR has MSLMA) were all like that. `hrrr.t23z.wrfprsf02.grib2.idx` is a real
+        // index file, committed as a fixture.
+        let idx = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/hrrr.t23z.wrfprsf02.grib2.idx"),
+        )
+        .expect("fixture");
+        let published: std::collections::HashSet<(String, String)> = idx
+            .lines()
+            .filter_map(|l| {
+                let p: Vec<&str> = l.split(':').collect();
+                (p.len() > 4).then(|| (p[3].to_string(), p[4].to_string()))
+            })
+            .collect();
+        assert!(
+            published.len() > 500,
+            "fixture looks truncated: {}",
+            published.len()
+        );
+
+        let m = real_model("hrrr");
+        let filters = m.build_param_filters();
+        let dead: Vec<_> = filters.iter().filter(|f| !published.contains(*f)).collect();
+        assert!(
+            dead.is_empty(),
+            "filters that match no HRRR index line: {dead:?}"
+        );
+
+        // and the converse: every configured parameter produced at least one filter, i.e. it can
+        // be downloaded at all
+        for p in &m.parameters {
+            assert!(
+                filters.iter().any(|(name, _)| *name == p.name),
+                "{} is configured but yields no selective-download filter",
+                p.name
+            );
+        }
     }
 }

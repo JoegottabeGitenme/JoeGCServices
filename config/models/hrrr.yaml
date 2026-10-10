@@ -84,13 +84,19 @@ parameters:
   # Pressure
   # ==========================================================================
 
-  # Mean Sea Level Pressure
-  - name: PRMSL
-    description: "Mean Sea Level Pressure"
+  # Mean Sea Level Pressure (MAPS system reduction)
+  #
+  # HRRR publishes this as MSLMA (discipline 0, category 3, number 198), NOT PRMSL (number 1):
+  # a `PRMSL` entry here matched nothing, so HRRR never had sea-level pressure and the
+  # downloader logged "PRMSL:mean sea level not found in index" for every file. Codes read
+  # from a live wrfprs and wrfsfc message (level type 101, template-3 packing); the .idx line is
+  # `MSLMA:mean sea level`.
+  - name: MSLMA
+    description: "Mean Sea Level Pressure (MAPS system reduction)"
     grib2:
       discipline: 0
       category: 3
-      number: 1
+      number: 198
     downsample: mean
     levels:
       - type: mean_sea_level
@@ -367,6 +373,14 @@ parameters:
     valid_range: [-2000, 0] # CIN is typically negative
 
   # Composite Reflectivity
+  #
+  # Level code is 10 ("entire atmosphere"), not 200 ("entire atmosphere as a single layer",
+  # which PWAT/COLMD/AOTK use). Confirmed on a live wrfprs message: discipline 0, category 16,
+  # number 196, level type 10, template-3 packing. With 200 here the ingestion filter rejected
+  # every REFC message (the parameter codes were always right), so HRRR had no reflectivity.
+  # The .idx string is the plain "entire atmosphere". Code 10 has no derived idx string; the
+  # downloader would fall back to `display`, which happens to be the same text, but the match is
+  # exact-string and should not depend on display wording, so `idx_level` spells it out.
   - name: REFC
     description: "Composite Reflectivity"
     grib2:
@@ -376,8 +390,9 @@ parameters:
     downsample: max
     levels:
       - type: entire_atmosphere
-        level_code: 200
+        level_code: 10
         display: "entire atmosphere"
+        idx_level: "entire atmosphere"
     units: dBZ
     valid_range: [-10, 80] # -10 to 80 dBZ
 
@@ -471,6 +486,9 @@ parameters:
   # ==========================================================================
 
   # Total Cloud Cover
+  #
+  # Same level fix as REFC: the message is level type 10, not 200 (confirmed on a live wrfprs
+  # message: discipline 0, category 6, number 1, level type 10).
   - name: TCDC
     description: "Total Cloud Cover"
     grib2:
@@ -480,8 +498,9 @@ parameters:
     downsample: mean
     levels:
       - type: entire_atmosphere
-        level_code: 200
+        level_code: 10
         display: "entire atmosphere"
+        idx_level: "entire atmosphere"
     units: "%"
     valid_range: [0, 100] # Percentage 0-100%
 
@@ -531,6 +550,10 @@ parameters:
     valid_range: [0, 100]
 
   # Precipitable Water
+  # The .idx line is the long form "entire atmosphere (considered as a single layer)"; the plain
+  # "entire atmosphere" derived from level code 200 matches nothing (the selective download needs an
+  # exact string), so PWAT was almost never fetched: one dataset in the production catalog against
+  # ~350 for AOTK/COLMD, which already carried this override.
   - name: PWAT
     description: "Precipitable Water"
     grib2:
@@ -542,6 +565,7 @@ parameters:
       - type: entire_atmosphere
         level_code: 200
         display: "entire atmosphere"
+        idx_level: "entire atmosphere (considered as a single layer)"
     units: kg/m^2
     display_units: mm
     valid_range: [0, 100] # 0-100 mm

@@ -1132,18 +1132,27 @@ mod integration_tests {
         assert!(filter.should_ingest("UGRD", 103, 10), "UGRD at 10m");
         assert!(filter.should_ingest("VGRD", 103, 10), "VGRD at 10m");
 
-        // Check REFC at entire atmosphere (200)
-        println!("Testing REFC at entire atmosphere...");
+        // REFC and TCDC are GRIB2 level type 10 ("entire atmosphere") in real HRRR messages. This
+        // test used to assert level 200 (a different level, used by PWAT), i.e. it pinned the very
+        // bug that made the filter reject every real REFC/TCDC message.
+        println!("Testing REFC at entire atmosphere (level type 10)...");
         assert!(
-            filter.should_ingest("REFC", 200, 0),
+            filter.should_ingest("REFC", 10, 0),
             "REFC at entire atmosphere"
         );
-
-        // Check TCDC at entire atmosphere (200)
-        println!("Testing TCDC at entire atmosphere...");
         assert!(
-            filter.should_ingest("TCDC", 200, 0),
+            !filter.should_ingest("REFC", 200, 0),
+            "REFC is not level 200"
+        );
+
+        println!("Testing TCDC at entire atmosphere (level type 10)...");
+        assert!(
+            filter.should_ingest("TCDC", 10, 0),
             "TCDC at entire atmosphere"
+        );
+        assert!(
+            !filter.should_ingest("TCDC", 200, 0),
+            "TCDC is not level 200"
         );
 
         println!("All HRRR filter tests passed!");
@@ -1204,5 +1213,134 @@ mod integration_tests {
         assert_eq!(filter.get_units("UNKNOWN_PARAM"), "unknown");
 
         println!("All units tests passed!");
+    }
+    // ------------------------------------------------------------------
+    // The real HRRR / MRMS configs: the level codes and GRIB numbers of real messages
+    // ------------------------------------------------------------------
+
+    fn real_models_dir() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/models")
+    }
+
+    fn real_filter(model: &str) -> IngestionFilter {
+        let mut filter = IngestionFilter::new();
+        load_filter_from_config(
+            &real_models_dir().join(format!("{model}.yaml")),
+            &mut filter,
+        )
+        .unwrap();
+        filter
+    }
+
+    type RealTables = (HashMap<(u8, u8, u8), String>, HashMap<u8, LevelDescription>);
+
+    fn real_tables(model: &str) -> RealTables {
+        let mut params = HashMap::new();
+        let mut levels = HashMap::new();
+        load_model_config(
+            &real_models_dir().join(format!("{model}.yaml")),
+            &mut params,
+            &mut levels,
+        )
+        .unwrap();
+        (params, levels)
+    }
+
+    #[test]
+    fn hrrr_composite_reflectivity_and_cloud_cover_are_accepted_at_level_type_10() {
+        // Real wrfprs messages: REFC (0,16,196) and TCDC (0,6,1) are level type 10. The config said
+        // 200, which is a different level (PWAT/COLMD/AOTK use it), so every message was dropped.
+        let f = real_filter("hrrr");
+        for p in ["REFC", "TCDC"] {
+            assert!(f.should_ingest(p, 10, 0), "{p} at level type 10");
+            assert!(
+                !f.should_ingest(p, 200, 0),
+                "{p} must not be keyed to level 200"
+            );
+        }
+        // ... while the level-200 parameters keep working next to them
+        assert!(f.should_ingest("PWAT", 200, 0));
+    }
+
+    #[test]
+    fn hrrr_sea_level_pressure_is_mslma_not_prmsl() {
+        let f = real_filter("hrrr");
+        assert!(f.should_ingest("MSLMA", 101, 0));
+        assert!(!f.should_ingest("PRMSL", 101, 0), "HRRR publishes no PRMSL");
+        let (params, _) = real_tables("hrrr");
+        assert_eq!(params.get(&(0, 3, 198)).map(String::as_str), Some("MSLMA"));
+        assert_eq!(
+            params.get(&(0, 3, 1)),
+            None,
+            "(0,3,1) is PRMSL, not an HRRR message"
+        );
+        assert_eq!(params.get(&(0, 16, 196)).map(String::as_str), Some("REFC"));
+        assert_eq!(params.get(&(0, 6, 1)).map(String::as_str), Some("TCDC"));
+        assert!(f.get_valid_range("MSLMA").is_some());
+    }
+
+    #[test]
+    fn hrrr_level_type_10_is_described_as_the_entire_atmosphere() {
+        let (_, levels) = real_tables("hrrr");
+        assert_eq!(
+            levels.get(&10).map(|d| d.format(0)).as_deref(),
+            Some("entire atmosphere")
+        );
+        assert_eq!(
+            levels.get(&101).map(|d| d.format(0)).as_deref(),
+            Some("mean sea level")
+        );
+    }
+
+    #[test]
+    fn mrms_precipitation_type_and_hail_size_match_the_real_messages() {
+        // Real granules: PrecipFlag (209,6,0) at 0 m, MESH (209,3,28) at 500 m, both level type 102.
+        let f = real_filter("mrms");
+        assert!(f.should_ingest("PRECIP_FLAG", 102, 0));
+        assert!(
+            !f.should_ingest("PRECIP_FLAG", 102, 500),
+            "PrecipFlag is a 0 m product"
+        );
+        assert!(f.should_ingest("MESH", 102, 500));
+        assert!(!f.should_ingest("MESH", 102, 0), "MESH is a 500 m product");
+        // the radar products are untouched
+        assert!(f.should_ingest("REFL", 102, 0));
+        assert!(f.should_ingest("PRECIP_RATE", 102, 0));
+        let (params, _) = real_tables("mrms");
+        assert_eq!(
+            params.get(&(209, 6, 0)).map(String::as_str),
+            Some("PRECIP_FLAG")
+        );
+        assert_eq!(params.get(&(209, 3, 28)).map(String::as_str), Some("MESH"));
+        // QPE moved to its own model; it must not be ingested by `mrms` any more
+        assert!(!f.should_ingest("QPE_01H", 102, 0));
+    }
+
+    #[test]
+    fn mrms_precipitation_type_keeps_no_coverage_out_and_hail_size_keeps_no_hail() {
+        let f = real_filter("mrms");
+        let flag = f.get_valid_range("PRECIP_FLAG").unwrap();
+        assert!(
+            !flag.is_valid(-3.0),
+            "-3 = outside radar coverage must become null"
+        );
+        assert!(flag.is_valid(0.0) && flag.is_valid(96.0));
+        let mesh = f.get_valid_range("MESH").unwrap();
+        assert!(
+            !mesh.is_valid(-3.0),
+            "-3 = outside radar coverage must become null"
+        );
+        assert!(mesh.is_valid(-1.0), "-1 = covered, no hail, is kept");
+        assert!(mesh.is_valid(19.3));
+    }
+
+    #[test]
+    fn the_mrms_level_description_names_the_real_height_of_each_product() {
+        // One description per level code serves every MRMS parameter, so it is a template: the 0 m
+        // products keep the exact label they have always had, MESH (500 m) is not mislabelled "0 m".
+        let (_, levels) = real_tables("mrms");
+        let d = levels.get(&102).expect("level 102");
+        assert_eq!(d.format(0), "0 m above MSL");
+        assert_eq!(d.format(500), "500 m above MSL");
     }
 }
