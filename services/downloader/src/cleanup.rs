@@ -337,17 +337,7 @@ impl CleanupTask {
             }
         }
 
-        // 2. Process pending files (retry recent ones, delete stale ones)
-        match self.process_pending_files().await {
-            Ok(pending_stats) => stats.merge(pending_stats),
-            Err(e) => {
-                let msg = format!("Failed to process pending files: {}", e);
-                warn!("{}", msg);
-                stats.errors.push(msg);
-            }
-        }
-
-        // 3. Clean orphan files (ingested but still on disk)
+        // 2. Clean orphan files (ingested but still on disk)
         match self.cleanup_orphan_files().await {
             Ok(orphan_stats) => stats.merge(orphan_stats),
             Err(e) => {
@@ -357,7 +347,7 @@ impl CleanupTask {
             }
         }
 
-        // 4. Prune database records
+        // 3. Prune database records
         match self.prune_database().await {
             Ok(db_stats) => stats.merge(db_stats),
             Err(e) => {
@@ -367,12 +357,27 @@ impl CleanupTask {
             }
         }
 
-        // 5. Delete files nothing refers to any more. After step 4, so a file whose only row was
+        // 4. Delete files nothing refers to any more. After step 3, so a file whose only row was
         // just pruned is handled in the same pass.
         match self.cleanup_unreferenced_files().await {
             Ok(s) => stats.merge(s),
             Err(e) => {
                 let msg = format!("Failed to cleanup unreferenced files: {}", e);
+                warn!("{}", msg);
+                stats.errors.push(msg);
+            }
+        }
+
+        // 5. Process pending files (retry recent ones, delete stale ones).
+        //
+        // LAST on purpose. It re-POSTs each downloaded-but-unconfirmed file to the ingester one at
+        // a time, and after an ingester restart that is dozens of 420 MB GOES frames at about a
+        // minute each. The steps above are cheap and local (pruning, deleting files); they must not
+        // wait behind it, or a slow ingester postpones freeing disk and shrinking the state DB.
+        match self.process_pending_files().await {
+            Ok(pending_stats) => stats.merge(pending_stats),
+            Err(e) => {
+                let msg = format!("Failed to process pending files: {}", e);
                 warn!("{}", msg);
                 stats.errors.push(msg);
             }
@@ -1783,7 +1788,7 @@ mod tests {
     #[tokio::test]
     async fn one_periodic_pass_prunes_a_stale_pending_row_and_then_sweeps_its_file() {
         // The order matters: the file's only reference is the stale `pending` row. Pruning
-        // first (step 4) makes the file unreferenced for the sweep (step 5) in the SAME pass.
+        // first (step 3) makes the file unreferenced for the sweep (step 4) in the SAME pass.
         use crate::state::DownloadState;
         let temp = TempDir::new().unwrap();
         let out = TempDir::new().unwrap();
@@ -1811,5 +1816,72 @@ mod tests {
         // both are reflected in the Prometheus counters
         assert!(metrics.files_deleted_total.load(Ordering::Relaxed) >= 1);
         assert!(metrics.db_records_pruned_total.load(Ordering::Relaxed) >= 1);
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_hung_ingester_does_not_delay_pruning_or_freeing_disk() {
+        // The ingest retries are the slow step (one GOES frame is about a minute); the cheap local
+        // hygiene must already be done by the time they start, not queued behind them.
+        use crate::state::DownloadState;
+        use tokio::net::TcpListener;
+
+        // An "ingester" that accepts connections and never answers.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock); // keep it open, say nothing
+            }
+        });
+
+        let temp = TempDir::new().unwrap();
+        let out = TempDir::new().unwrap();
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+
+        // 1) something to retry: downloaded 10 minutes ago, never confirmed ingested
+        write_aged(out.path(), "needs_retry.nc", 10, 0);
+        state
+            .insert_completed_for_test(
+                "http://x/retry",
+                "needs_retry.nc",
+                Some(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            )
+            .await
+            .unwrap();
+        // 2) something to prune and sweep
+        write_aged(out.path(), "stale.nc", 100, 24 * 30);
+        state
+            .queue_download("http://x/stale", "stale.nc", "nldas-noah")
+            .await
+            .unwrap();
+        state.age_all_downloads_for_test(30).await.unwrap();
+
+        let task = CleanupTask::new(
+            config_for(out.path(), temp.path(), false, 48 * 3600),
+            state.clone(),
+            Arc::new(CleanupMetrics::new()),
+            Some(format!("http://{addr}/ingest")),
+        );
+        let running = tokio::spawn(async move { task.run_periodic_cleanup().await });
+
+        // Within a couple of seconds the stale row is gone and its file deleted ...
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if state.count_unfinished().await.unwrap() == 0 && !out.path().join("stale.nc").exists()
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "pruning/sweeping did not happen while the ingester hung"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        // ... while the cleanup itself is still stuck waiting on the ingester.
+        assert!(
+            !running.is_finished(),
+            "the retry should still be waiting on the hung ingester"
+        );
+        running.abort();
     }
 }
