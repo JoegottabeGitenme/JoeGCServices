@@ -120,16 +120,13 @@ The first rollout had two operational surprises worth knowing.
        c.execute(\"delete from downloads where url like '%MultiSensor_QPE_%'\")"
    docker compose up -d downloader
    ```
-2. **Downloader startup vs. autoheal.** At startup the downloader first retries every file that finished
-   downloading 5 min-2 h ago but was never confirmed ingested, one at a time and *before* it serves
-   `/health` or starts polling. After an ingester restart that set can be dozens of 250-430 MB
-   full-disk GOES frames (~1 min each), longer than autoheal's health window, so autoheal restarts the
-   container and the retry starts over, forever. All downloads are paused meanwhile. The workaround used:
-   delete those rows (and files) from `completed_downloads` so normal polling re-fetches them. A proper fix
-   is to run the startup cleanup in the background; it is not done here.
-3. Expect `database is locked` warnings in the downloader log during a large backfill (SQLite
-   contention in its 340 MB state file). A download that exhausts its 5 retries is just listed again on the
-   next 10-minute poll.
+2. ~~Downloader startup vs. autoheal~~ (fixed in `docs/trail-data-performance-notes.md`): the first rollout
+   lost about 7 minutes of downloads because the startup cleanup blocked `/health` while it re-ingested
+   dozens of full-disk GOES frames, and autoheal kept restarting it. The downloader now answers `/health`
+   within seconds and runs the cleanup in the background.
+3. ~~`database is locked` during a large backfill~~ (fixed in the same change: the state database is in WAL
+   mode with a 30 s busy timeout, and no longer carries 694k dead rows). A download that exhausts its retries
+   is listed again on the next poll.
 
 ## Checking it
 
