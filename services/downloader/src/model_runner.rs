@@ -553,7 +553,7 @@ impl ModelRunner {
             self.discover_nldas_files().await
         } else if model.source.source_type == "http" || model.model.id == "ndfd" {
             self.discover_ndfd_files().await
-        } else if model.model.id == "mrms" {
+        } else if is_mrms_model(&model.model.id) {
             self.discover_mrms_files(now, earliest_time, lookback).await
         } else if model.model.id.starts_with("goes") {
             self.discover_goes_files(now, earliest_time, lookback).await
@@ -834,6 +834,10 @@ impl ModelRunner {
     }
 
     /// Discover MRMS files within the lookback period.
+    ///
+    /// For each parameter, lists its `product` over every UTC date the window touches and,
+    /// when the parameter names a `fallback_product`, lists that too and adds its files for
+    /// hours the primary product is still missing (see `select_mrms_files`).
     async fn discover_mrms_files(
         &self,
         now: DateTime<Utc>,
@@ -843,89 +847,57 @@ impl ModelRunner {
         let mut files = Vec::new();
         let model = &self.model;
 
-        // Determine which dates we need to check
-        let mut dates_to_check = Vec::new();
-        let today = now.format("%Y%m%d").to_string();
-        dates_to_check.push(today.clone());
-
-        let earliest_date = earliest_time.format("%Y%m%d").to_string();
-        if earliest_date != today {
-            dates_to_check.push(earliest_date.clone());
-        }
-
+        let dates_to_check = mrms_dates_to_check(now, earliest_time);
         info!(
             model = %model.model.id,
             dates = ?dates_to_check,
             "Checking MRMS date folders"
         );
 
+        // S3 pages at 1000 keys regardless; this is only the cap on what we keep.
+        let max_results = ((lookback / 2) as usize + 10).clamp(50, 5000);
+
         for param in &model.parameters {
-            if let Some(product) = param.product.as_ref() {
-                for date_str in &dates_to_check {
-                    let prefix = format!("CONUS/{}/{}/", product, date_str);
+            let Some(product) = param.product.as_ref() else {
+                continue;
+            };
 
-                    let start_time = if date_str == &earliest_date {
-                        earliest_time
-                    } else {
-                        now.date_naive()
-                            .and_hms_opt(0, 0, 0)
-                            .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
-                            .unwrap_or(earliest_time)
-                    };
-
-                    let start_after_key = format!(
-                        "CONUS/{}/{}/MRMS_{}_{}",
-                        product,
-                        date_str,
-                        product,
-                        start_time.format("%Y%m%d-%H%M00")
-                    );
-
-                    let max_results = ((lookback / 2) as usize + 10).max(50);
-
-                    match self
-                        .list_s3_files(
-                            &model.source.bucket,
-                            &prefix,
-                            max_results,
-                            Some(&start_after_key),
-                        )
+            let primary = self
+                .list_mrms_product(product, &dates_to_check, now, earliest_time, max_results)
+                .await;
+            let fallback = match param.fallback_product.as_ref() {
+                Some(fb) => {
+                    self.list_mrms_product(fb, &dates_to_check, now, earliest_time, max_results)
                         .await
-                    {
-                        Ok(keys) => {
-                            for key in keys {
-                                if key.ends_with(".grib2.gz") && key.contains(product) {
-                                    if let Some(file_time) = Self::parse_mrms_timestamp(&key) {
-                                        if file_time >= earliest_time && file_time <= now {
-                                            let url = format!(
-                                                "https://{}.s3.amazonaws.com/{}",
-                                                model.source.bucket, key
-                                            );
-
-                                            let filename =
-                                                key.split('/').next_back().unwrap_or(&key);
-                                            let output_filename = format!("mrms_{}", filename);
-
-                                            files.push(DownloadFile {
-                                                url,
-                                                filename: output_filename,
-                                                timestamp: Some(file_time),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                model = %model.model.id,
-                                prefix = %prefix,
-                                error = %e,
-                                "Failed to list MRMS files from S3"
-                            );
-                        }
-                    }
                 }
+                None => Vec::new(),
+            };
+
+            let (primary_files, fallback_files) = select_mrms_files(primary, fallback, now);
+            if !fallback_files.is_empty() {
+                info!(
+                    model = %model.model.id,
+                    parameter = %param.name,
+                    count = fallback_files.len(),
+                    "Using fallback product for hours missing from the primary product"
+                );
+            }
+            for candidate in primary_files.into_iter().chain(fallback_files) {
+                let filename = candidate
+                    .key
+                    .split('/')
+                    .next_back()
+                    .unwrap_or(&candidate.key);
+                files.push(DownloadFile {
+                    url: format!(
+                        "https://{}.s3.amazonaws.com/{}",
+                        model.source.bucket, candidate.key
+                    ),
+                    // Prefixed with the downloader model id: the ingester derives the dataset
+                    // model from the filename, and `mrms-qpe_` must not read as `mrms_`.
+                    filename: mrms_output_filename(&model.model.id, filename),
+                    timestamp: Some(candidate.time),
+                });
             }
         }
 
@@ -938,6 +910,57 @@ impl ModelRunner {
         }
 
         Ok(files)
+    }
+
+    /// List one MRMS product's files in `[earliest_time, now]` across `dates`.
+    /// A listing failure is logged and yields nothing for that date, never an error:
+    /// the next poll retries.
+    async fn list_mrms_product(
+        &self,
+        product: &str,
+        dates: &[String],
+        now: DateTime<Utc>,
+        earliest_time: DateTime<Utc>,
+        max_results: usize,
+    ) -> Vec<MrmsCandidate> {
+        let model = &self.model;
+        let mut out = Vec::new();
+        for date_str in dates {
+            let prefix = format!("CONUS/{}/{}/", product, date_str);
+            let start_after = mrms_start_after_key(product, date_str, earliest_time);
+
+            match self
+                .list_s3_files(
+                    &model.source.bucket,
+                    &prefix,
+                    max_results,
+                    start_after.as_deref(),
+                )
+                .await
+            {
+                Ok(keys) => {
+                    for key in keys {
+                        if !(key.ends_with(".grib2.gz") && key.contains(product)) {
+                            continue;
+                        }
+                        if let Some(time) = Self::parse_mrms_timestamp(&key) {
+                            if time >= earliest_time && time <= now {
+                                out.push(MrmsCandidate { key, time });
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        model = %model.model.id,
+                        prefix = %prefix,
+                        error = %e,
+                        "Failed to list MRMS files from S3"
+                    );
+                }
+            }
+        }
+        out
     }
 
     /// Parse timestamp from MRMS filename.
@@ -1192,6 +1215,108 @@ impl ModelRunner {
     }
 }
 
+// ============================================================================
+// MRMS discovery helpers (pure, so the rules are testable without S3)
+// ============================================================================
+
+/// How long after its nominal time a primary-product file may be missing before the
+/// fallback product is used for that hour. The Pass2 QPE files normally land about an
+/// hour after their nominal time, so 90 minutes means "late, not just on schedule";
+/// waiting that long also keeps us from ingesting a Pass1 grid a moment before the
+/// better Pass2 grid for the same hour appears.
+pub const MRMS_FALLBACK_GRACE_MINUTES: i64 = 90;
+
+/// A file found in an MRMS S3 listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MrmsCandidate {
+    pub key: String,
+    pub time: DateTime<Utc>,
+}
+
+/// `mrms` and any `mrms-*` model (e.g. `mrms-qpe`) are discovered the same way.
+pub fn is_mrms_model(id: &str) -> bool {
+    id == "mrms" || id.starts_with("mrms-")
+}
+
+/// Local filename for a downloaded MRMS file: `{model id}_{upstream filename}`.
+/// For `mrms` this is the historical `mrms_MRMS_...`; for `mrms-qpe` it is
+/// `mrms-qpe_MRMS_...`, which the ingester maps to the `mrms-qpe` model.
+pub fn mrms_output_filename(model_id: &str, upstream_filename: &str) -> String {
+    format!("{}_{}", model_id, upstream_filename)
+}
+
+/// Every UTC date folder (`YYYYMMDD`) from the day of `earliest` through the day of
+/// `now`, oldest first.
+///
+/// This used to be just "today and the earliest day", which is only right while the
+/// window spans at most two days. A 72-hour window touches four dates and the two in
+/// between were silently never listed.
+pub fn mrms_dates_to_check(now: DateTime<Utc>, earliest: DateTime<Utc>) -> Vec<String> {
+    let mut dates = Vec::new();
+    let mut day = earliest.date_naive();
+    let last = now.date_naive();
+    while day <= last {
+        dates.push(day.format("%Y%m%d").to_string());
+        day = match day.succ_opt() {
+            Some(d) => d,
+            None => break,
+        };
+    }
+    dates
+}
+
+/// S3 `StartAfter` key for one product/date folder, or `None` to list the whole folder.
+///
+/// Only the folder containing `earliest_time` needs a start point. `StartAfter` is
+/// exclusive, so the key is built from one second BEFORE `earliest_time`: a file stamped
+/// exactly `earliest_time` is kept (it is inside the window). Every other date lists the
+/// full folder, which also keeps its `HH0000`-stamped midnight file; the previous code
+/// started those folders at `...-000000`, which excluded exactly that file and dropped
+/// the 00:00 hour of every day from an hourly product.
+pub fn mrms_start_after_key(
+    product: &str,
+    date_str: &str,
+    earliest_time: DateTime<Utc>,
+) -> Option<String> {
+    if earliest_time.format("%Y%m%d").to_string() != date_str {
+        return None;
+    }
+    let just_before = earliest_time - ChronoDuration::seconds(1);
+    Some(format!(
+        "CONUS/{}/{}/MRMS_{}_{}",
+        product,
+        date_str,
+        product,
+        just_before.format("%Y%m%d-%H%M%S")
+    ))
+}
+
+/// Choose which listed files to download for one parameter: every `primary` file, plus
+/// each `fallback` file whose time has no primary file and is at least
+/// `MRMS_FALLBACK_GRACE_MINUTES` old. Both lists are returned sorted oldest first with
+/// duplicates (the same key listed twice) removed.
+pub fn select_mrms_files(
+    primary: Vec<MrmsCandidate>,
+    fallback: Vec<MrmsCandidate>,
+    now: DateTime<Utc>,
+) -> (Vec<MrmsCandidate>, Vec<MrmsCandidate>) {
+    let dedup_sorted = |mut v: Vec<MrmsCandidate>| {
+        v.sort_by(|a, b| (a.time, &a.key).cmp(&(b.time, &b.key)));
+        v.dedup_by(|a, b| a.key == b.key);
+        v
+    };
+    let primary = dedup_sorted(primary);
+    let have: std::collections::HashSet<DateTime<Utc>> = primary.iter().map(|c| c.time).collect();
+    let cutoff = now - ChronoDuration::minutes(MRMS_FALLBACK_GRACE_MINUTES);
+    let fallback = dedup_sorted(
+        fallback
+            .into_iter()
+            .filter(|c| !have.contains(&c.time) && c.time <= cutoff)
+            .collect(),
+    );
+    (primary, fallback)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1372,5 +1497,157 @@ mod tests {
             timestamp: None,
         };
         assert!(file.timestamp.is_none());
+    }
+    // ------------------------------------------------------------------
+    // MRMS discovery rules
+    // ------------------------------------------------------------------
+
+    fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> DateTime<Utc> {
+        use chrono::TimeZone;
+        Utc.with_ymd_and_hms(y, mo, d, h, mi, s).unwrap()
+    }
+
+    fn cand(h: u32, d: u32) -> MrmsCandidate {
+        let t = utc(2026, 10, d, h, 0, 0);
+        MrmsCandidate {
+            key: format!("CONUS/P/2026100{d}/MRMS_P_2026100{d}-{h:02}0000.grib2.gz"),
+            time: t,
+        }
+    }
+
+    #[test]
+    fn mrms_models_are_recognised_by_id() {
+        assert!(is_mrms_model("mrms"));
+        assert!(is_mrms_model("mrms-qpe"));
+        assert!(!is_mrms_model("mrmsx"));
+        assert!(!is_mrms_model("hrrr"));
+        assert!(!is_mrms_model("nbm-conus"));
+    }
+
+    #[test]
+    fn output_filename_keeps_mrms_and_distinguishes_mrms_qpe() {
+        let up = "MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-150000.grib2.gz";
+        assert_eq!(mrms_output_filename("mrms", up), format!("mrms_{up}"));
+        assert_eq!(
+            mrms_output_filename("mrms-qpe", up),
+            format!("mrms-qpe_{up}")
+        );
+    }
+
+    #[test]
+    fn a_two_hour_window_checks_today_and_yesterday_only_when_it_crosses_midnight() {
+        let now = utc(2026, 10, 9, 15, 30, 0);
+        assert_eq!(
+            mrms_dates_to_check(now, now - ChronoDuration::hours(2)),
+            ["20261009"]
+        );
+        let now = utc(2026, 10, 9, 0, 40, 0);
+        assert_eq!(
+            mrms_dates_to_check(now, now - ChronoDuration::hours(2)),
+            ["20261008", "20261009"]
+        );
+    }
+
+    #[test]
+    fn a_seventy_two_hour_window_checks_every_date_in_between() {
+        // The old code listed only "today" and "the earliest day": the two middle days
+        // of a 72 h window were never looked at.
+        let now = utc(2026, 10, 10, 0, 40, 0);
+        assert_eq!(
+            mrms_dates_to_check(now, now - ChronoDuration::hours(72)),
+            ["20261007", "20261008", "20261009", "20261010"]
+        );
+        // month and year boundaries
+        let now = utc(2027, 1, 2, 3, 0, 0);
+        assert_eq!(
+            mrms_dates_to_check(now, now - ChronoDuration::hours(72)),
+            ["20261230", "20261231", "20270101", "20270102"]
+        );
+    }
+
+    #[test]
+    fn only_the_earliest_folder_gets_a_start_after_key() {
+        let earliest = utc(2026, 10, 7, 0, 40, 0);
+        let key = mrms_start_after_key("PROD", "20261007", earliest).unwrap();
+        // one second before the window start, with seconds (StartAfter is exclusive)
+        assert_eq!(key, "CONUS/PROD/20261007/MRMS_PROD_20261007-003959");
+        for later in ["20261008", "20261009", "20261010"] {
+            assert_eq!(
+                mrms_start_after_key("PROD", later, earliest),
+                None,
+                "{later}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_start_after_key_sorts_before_a_file_stamped_exactly_at_the_window_start() {
+        let earliest = utc(2026, 10, 7, 1, 0, 0);
+        let key = mrms_start_after_key("PROD", "20261007", earliest).unwrap();
+        let file_at_start = "CONUS/PROD/20261007/MRMS_PROD_20261007-010000.grib2.gz";
+        assert!(
+            key.as_str() < file_at_start,
+            "{key} must precede {file_at_start}"
+        );
+        // and after the previous hour's file
+        assert!(key.as_str() > "CONUS/PROD/20261007/MRMS_PROD_20261007-000000.grib2.gz");
+    }
+
+    #[test]
+    fn midnight_files_of_full_day_folders_are_not_excluded() {
+        // The previous start key for a full day was `...-000000`, which equals the
+        // midnight file's own stamp and (exclusive StartAfter) skipped it.
+        let earliest = utc(2026, 10, 7, 12, 0, 0);
+        assert_eq!(mrms_start_after_key("PROD", "20261008", earliest), None);
+    }
+
+    #[test]
+    fn fallback_fills_only_hours_the_primary_is_missing_and_old_enough() {
+        let now = utc(2026, 10, 9, 20, 0, 0);
+        let primary = vec![cand(10, 9), cand(12, 9), cand(18, 9)];
+        // fallback has every hour 10..=19
+        let fallback: Vec<_> = (10..=19).map(|h| cand(h, 9)).collect();
+        let (p, f) = select_mrms_files(primary, fallback, now);
+        assert_eq!(p.len(), 3);
+        let hours: Vec<u32> = f.iter().map(|c| chrono::Timelike::hour(&c.time)).collect();
+        // missing from primary: 11, 13..=17, 19. 19:00 is only 60 min old (< 90) -> wait.
+        assert_eq!(hours, [11, 13, 14, 15, 16, 17]);
+    }
+
+    #[test]
+    fn the_grace_period_is_ninety_minutes_exactly() {
+        let t = utc(2026, 10, 9, 15, 0, 0);
+        let fb = vec![MrmsCandidate {
+            key: "k".into(),
+            time: t,
+        }];
+        let just_inside = t + ChronoDuration::minutes(89);
+        let at_limit = t + ChronoDuration::minutes(90);
+        assert!(select_mrms_files(vec![], fb.clone(), just_inside)
+            .1
+            .is_empty());
+        assert_eq!(select_mrms_files(vec![], fb, at_limit).1.len(), 1);
+    }
+
+    #[test]
+    fn without_a_fallback_nothing_changes_and_output_is_sorted_and_deduplicated() {
+        let now = utc(2026, 10, 9, 20, 0, 0);
+        let (p, f) = select_mrms_files(
+            vec![cand(12, 9), cand(10, 9), cand(12, 9), cand(11, 9)],
+            vec![],
+            now,
+        );
+        assert!(f.is_empty());
+        let hours: Vec<u32> = p.iter().map(|c| chrono::Timelike::hour(&c.time)).collect();
+        assert_eq!(hours, [10, 11, 12]);
+    }
+
+    #[test]
+    fn a_late_primary_file_wins_over_a_fallback_for_the_same_hour() {
+        // Pass2 for 15:00 shows up late (at 17:00): the fallback for 15:00 is no longer chosen.
+        let now = utc(2026, 10, 9, 17, 0, 0);
+        let (p, f) = select_mrms_files(vec![cand(15, 9)], vec![cand(15, 9)], now);
+        assert_eq!(p.len(), 1);
+        assert!(f.is_empty());
     }
 }

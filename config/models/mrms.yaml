@@ -1,5 +1,10 @@
 # MRMS - Multi-Radar Multi-Sensor Configuration
 # High-resolution radar and precipitation analysis
+#
+# The ~2-minute products only (reflectivity, precipitation rate), 2 hours of history.
+# The hourly QPE accumulations live in `mrms-qpe.yaml`: retention is per model and (for
+# observation models) doubles as the downloader's lookback, so they could not share a
+# model with a 72-hour window.
 
 model:
   id: mrms
@@ -95,61 +100,3 @@ parameters:
     units: "mm/hr"
     display_units: "mm/hr"
     valid_range: [0, 100]
-
-  # Quantitative Precipitation Estimate - 1 hour
-  # GRIB2 codes from actual file inspection: disc=209, cat=6, num=37
-  - name: QPE_01H
-    description: "1-Hour Precipitation Accumulation"
-    downsample: mean
-    grib2:
-      discipline: 209
-      category: 6
-      number: 37
-    product: "MultiSensor_QPE_01H_Pass2_00.00"
-    levels:
-      - type: height_above_msl
-        level_code: 102
-        value: 0
-        display: "0 m above MSL"
-    units: "mm"
-    display_units: "mm"
-    valid_range: [-10, 200]
-
-  # Quantitative Precipitation Estimate - 24 hour
-  # GRIB2 codes from actual file inspection: disc=209, cat=6, num=41
-  - name: QPE_24H
-    description: "24-Hour Precipitation Accumulation"
-    downsample: mean
-    grib2:
-      discipline: 209
-      category: 6
-      number: 41
-    product: "MultiSensor_QPE_24H_Pass2_00.00"
-    levels:
-      - type: height_above_msl
-        level_code: 102
-        value: 0
-        display: "0 m above MSL"
-    units: "mm"
-    display_units: "mm"
-    valid_range: [-10, 500]
-
-  # Quantitative Precipitation Estimate - 72 hour
-  # GRIB2 codes from actual file inspection: disc=209, cat=6, num=43
-  # (updated hourly like the other Pass2 accumulations)
-  - name: QPE_72H
-    description: "72-Hour Precipitation Accumulation"
-    downsample: mean
-    grib2:
-      discipline: 209
-      category: 6
-      number: 43
-    product: "MultiSensor_QPE_72H_Pass2_00.00"
-    levels:
-      - type: height_above_msl
-        level_code: 102
-        value: 0
-        display: "0 m above MSL"
-    units: "mm"
-    display_units: "mm"
-    valid_range: [-10, 1000]

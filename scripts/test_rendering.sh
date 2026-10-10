@@ -308,7 +308,14 @@ if [ "$MRMS_AVAILABLE" = "1" ]; then
     
     echo "--- Precipitation ---"
     test_getmap "mrms_PRECIP_RATE" "MRMS Precip Rate (CONUS)" "-130,20,-60,55" 768 384 "precip_rate"
-    test_getmap "mrms_QPE_01H" "MRMS QPE 1hr (CONUS)" "-130,20,-60,55" 768 384 "precipitation"
+fi
+
+# QPE accumulations are their own model (mrms-qpe), with layers mrms-qpe_QPE_01H / mrms-qpe_QPE_24H
+if echo "$CAPS" | grep -q "mrms-qpe_QPE_01H"; then
+    echo ""
+    echo "=== MRMS QPE ==="
+    echo ""
+    test_getmap "mrms-qpe_QPE_01H" "MRMS QPE 1hr (CONUS)" "-130,20,-60,55" 768 384 "precipitation"
 fi
 
 # ============================================================================

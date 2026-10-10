@@ -435,6 +435,16 @@ fn load_model_config(
                     .or_insert(name.clone());
             }
 
+            // A second GRIB2 code that means the same parameter. MRMS Pass1 and Pass2 hourly
+            // QPE are the same quantity under different parameter numbers (30 vs 37); a file
+            // whose code is not mapped is ingested as nothing at all.
+            if let Some(grib2) = param.get("fallback_grib2") {
+                let code = |key: &str| grib2.get(key).and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+                params
+                    .entry((code("discipline"), code("category"), code("number")))
+                    .or_insert(name.clone());
+            }
+
             // Extract level definitions
             if let Some(param_levels) = param.get("levels").and_then(|l| l.as_sequence()) {
                 for level in param_levels {
@@ -520,6 +530,40 @@ mod tests {
         let path = dir.join(format!("{}.yaml", name));
         let mut file = fs::File::create(path).unwrap();
         file.write_all(content.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn a_fallback_grib2_code_maps_to_the_same_parameter() {
+        let dir = tempdir().unwrap();
+        let config = r#"
+parameters:
+  - name: QPE_01H
+    grib2: { discipline: 209, category: 6, number: 37 }
+    fallback_grib2: { discipline: 209, category: 6, number: 30 }
+    levels:
+      - { type: height_above_msl, level_code: 102, display: "0 m above MSL" }
+  - name: QPE_24H
+    grib2: { discipline: 209, category: 6, number: 41 }
+    levels:
+      - { type: height_above_msl, level_code: 102, display: "0 m above MSL" }
+"#;
+        create_test_config(dir.path(), "qpe", config);
+        let mut params = HashMap::new();
+        let mut levels = HashMap::new();
+        load_model_config(&dir.path().join("qpe.yaml"), &mut params, &mut levels).unwrap();
+        assert_eq!(
+            params.get(&(209, 6, 37)).map(String::as_str),
+            Some("QPE_01H")
+        );
+        assert_eq!(
+            params.get(&(209, 6, 30)).map(String::as_str),
+            Some("QPE_01H")
+        );
+        assert_eq!(
+            params.get(&(209, 6, 41)).map(String::as_str),
+            Some("QPE_24H")
+        );
+        assert_eq!(params.len(), 3, "no other codes appear");
     }
 
     #[test]

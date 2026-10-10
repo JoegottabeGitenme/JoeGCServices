@@ -1,0 +1,133 @@
+# MRMS QPE - Multi-Sensor Quantitative Precipitation Estimates
+#
+# Split out of the `mrms` model so it can have its own history. `mrms` carries the
+# ~2-minute radar products (reflectivity, precipitation rate) and keeps 2 hours of
+# them; retention is per model, and for observation models `retention.hours` is ALSO
+# how far back the downloader looks on startup, so one model could not hold both
+# "2 hours of 2-minute grids" and "72 hours of hourly grids". This model holds the
+# hourly accumulations for 72 hours: enough for an hourly past-rain curve.
+#
+# Cadence and gaps (measured against the upstream bucket, Oct 2026):
+#   - Pass2 24H / 72H: 24 files/day, each ~1 h after its nominal time.
+#   - Pass2 01H: ~1 h after its nominal time WHEN PRESENT, but 18-22 files/day: it drops
+#     2-3 hours a day and was 5+ hours behind on the day we looked. QPE_01H therefore
+#     prefers Pass2 and falls back to Pass1 (24 files/day, ~20 min after the hour,
+#     fewer gauges) for an hour whose Pass2 is still missing 90 minutes after its
+#     nominal time. If Pass2 turns up later it replaces the Pass1 grid for that hour
+#     (same dataset key and storage path). `source_file` in each dataset's zarr
+#     metadata says which file an hour came from.
+#   - Pass1 uses a different GRIB2 parameter number (30) than Pass2 (37), so the
+#     fallback needs its own `fallback_grib2` mapping or the file would ingest as nothing.
+
+model:
+  id: mrms-qpe
+  name: "MRMS QPE - Multi-Sensor Precipitation Estimates"
+  description: "Hourly 1/24/72-hour precipitation accumulations on the CONUS ~1km MRMS grid, 72 hours of history"
+  enabled: true
+
+dimensions:
+  type: observation # TIME dimension (ISO8601 timestamps)
+  time: true
+  elevation: false
+
+source:
+  type: aws_s3_grib2
+  bucket: noaa-mrms-pds
+  path_pattern: "CONUS/{product}/{date:yyyyMMdd}/MRMS_{product}.{timestamp}.grib2.gz"
+  region: us-east-1
+  compression: gzip
+
+grid:
+  projection: latlon
+  resolution: "0.01deg" # ~1km
+  bbox:
+    min_lon: -130.0
+    min_lat: 20.0
+    max_lon: -60.0
+    max_lat: 55.0
+  dimensions:
+    x: 7000
+    y: 3500
+
+schedule:
+  type: observation
+  poll_interval_secs: 600 # hourly products; a new hour appears ~1 h after its nominal time
+  max_concurrent: 2
+
+# 72 hours of hourly grids. For observation models the downloader's startup lookback is
+# this same number, so the two cannot disagree (no delete -> re-download churn).
+# keep_latest_observations protects the newest N distinct times from expiry regardless
+# of age, so a long outage cannot empty the catalog.
+retention:
+  hours: 72
+  keep_latest_observations: 24
+
+precaching:
+  enabled: false
+  keep_recent: 3
+  warm_on_ingest: false
+  poll_interval_secs: 600
+  parameters: []
+
+# GRIB2 level type codes reference:
+#   102 = height above MSL (in m)
+
+parameters:
+  # 1-hour accumulation. Pass2 (disc=209, cat=6, num=37) preferred; Pass1 (num=30) fills gaps.
+  - name: QPE_01H
+    description: "1-Hour Precipitation Accumulation"
+    downsample: mean
+    grib2:
+      discipline: 209
+      category: 6
+      number: 37
+    product: "MultiSensor_QPE_01H_Pass2_00.00"
+    fallback_product: "MultiSensor_QPE_01H_Pass1_00.00"
+    fallback_grib2:
+      discipline: 209
+      category: 6
+      number: 30
+    levels:
+      - type: height_above_msl
+        level_code: 102
+        value: 0
+        display: "0 m above MSL"
+    units: "mm"
+    display_units: "mm"
+    valid_range: [-10, 200]
+
+  # 24-hour accumulation. GRIB2 codes from actual file inspection: disc=209, cat=6, num=41
+  - name: QPE_24H
+    description: "24-Hour Precipitation Accumulation"
+    downsample: mean
+    grib2:
+      discipline: 209
+      category: 6
+      number: 41
+    product: "MultiSensor_QPE_24H_Pass2_00.00"
+    levels:
+      - type: height_above_msl
+        level_code: 102
+        value: 0
+        display: "0 m above MSL"
+    units: "mm"
+    display_units: "mm"
+    valid_range: [-10, 500]
+
+  # 72-hour accumulation. GRIB2 codes from actual file inspection: disc=209, cat=6, num=43
+  - name: QPE_72H
+    description: "72-Hour Precipitation Accumulation"
+    downsample: mean
+    grib2:
+      discipline: 209
+      category: 6
+      number: 43
+    product: "MultiSensor_QPE_72H_Pass2_00.00"
+    levels:
+      - type: height_above_msl
+        level_code: 102
+        value: 0
+        display: "0 m above MSL"
+    units: "mm"
+    display_units: "mm"
+    valid_range: [-10, 1000]

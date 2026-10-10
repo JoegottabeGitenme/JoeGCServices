@@ -33,7 +33,7 @@ layers:
         default: true
 
   # ==========================================================================
-  # Precipitation
+  # Precipitation rate (hourly QPE accumulations are layers of the `mrms-qpe` model)
   # ==========================================================================
   
   - id: mrms_PRECIP_RATE
@@ -44,32 +44,6 @@ layers:
     units:
       native: "mm/hr"
       display: "mm/hr"
-    levels:
-      - value: "0 m above MSL"
-        default: true
-
-  - id: mrms_QPE_01H
-    parameter: QPE_01H
-    title: "1-Hour QPE"
-    abstract: "1-hour quantitative precipitation estimate"
-    style_file: precipitation.json
-    units:
-      native: mm
-      display: mm
-    accumulation: true
-    levels:
-      - value: "0 m above MSL"
-        default: true
-
-  - id: mrms_QPE_24H
-    parameter: QPE_24H
-    title: "24-Hour QPE"
-    abstract: "24-hour quantitative precipitation estimate"
-    style_file: precipitation.json
-    units:
-      native: mm
-      display: mm
-    accumulation: true
     levels:
       - value: "0 m above MSL"
         default: true

@@ -1,0 +1,77 @@
+# MRMS QPE EDR Configuration
+# Multi-sensor quantitative precipitation estimates (hourly accumulations)
+#
+# Coverage: CONUS (-130 to -60 lon, 20 to 55 lat), ~1km (0.01 deg)
+# Update frequency: hourly (each hour appears ~1 h after its nominal time)
+# History: 72 hours of hourly grids (model `mrms-qpe`, config/models/mrms-qpe.yaml)
+#
+# Observation data: instances are observation timestamps, not model runs. An hourly
+# past-precipitation curve at a point is one position query over a datetime range:
+#   GET /edr/collections/mrms-qpe/position?coords=POINT(-105.27 40.01)
+#       &parameter-name=QPE_01H&datetime=2026-10-08T00:00:00Z/2026-10-10T00:00:00Z
+#
+# QPE_01H prefers the gauge-corrected Pass2 product and falls back to Pass1 for hours
+# whose Pass2 file is missing (see config/models/mrms-qpe.yaml). These collections were
+# part of config/edr/mrms.yaml (model `mrms`, 2 hours of history); the collection ids are
+# unchanged.
+
+model: mrms-qpe
+data_type: observation
+
+collections:
+  - id: mrms-qpe
+    title: "MRMS - Quantitative Precipitation Estimates"
+    description: "Hourly 1/24/72-hour multi-sensor precipitation accumulations with 72 hours of history (Pass 2; the 1-hour product falls back to Pass 1 for hours whose Pass 2 file is missing)"
+    level_filter:
+      level_type: height_above_msl
+      level_code: 102
+    parameters:
+      - name: QPE_01H
+        levels: [0]
+        valid_range: { min: -10, max: 200 }  # mm
+      - name: QPE_24H
+        levels: [0]
+        valid_range: { min: -10, max: 500 }  # mm
+      - name: QPE_72H
+        levels: [0]
+        valid_range: { min: -10, max: 1000 }  # mm
+    run_mode: instances
+
+  - id: mrms-qpe-latest
+    title: "MRMS - Quantitative Precipitation Estimates (Latest)"
+    description: "Most recent 1/24/72-hour precipitation accumulations"
+    level_filter:
+      level_type: height_above_msl
+      level_code: 102
+    parameters:
+      - name: QPE_01H
+        levels: [0]
+        valid_range: { min: -10, max: 200 }  # mm
+      - name: QPE_24H
+        levels: [0]
+        valid_range: { min: -10, max: 500 }  # mm
+      - name: QPE_72H
+        levels: [0]
+        valid_range: { min: -10, max: 1000 }  # mm
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+    - image/png  # 16-bit encoded PNG for GPU shaders (area queries only)
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
+
+# Same ~1km grid as MRMS radar, so the same size limits apply.
+limits:
+  max_parameters_per_request: 3       # QPE_01H, QPE_24H, QPE_72H
+  max_time_steps: 350                  # 72 hourly steps fit with room to spare
+  max_vertical_levels: 1
+  max_response_size_mb: 50
+  max_area_sq_degrees: 250
+  max_area_sq_degrees_png: 2500
+  max_radius_km: 2500

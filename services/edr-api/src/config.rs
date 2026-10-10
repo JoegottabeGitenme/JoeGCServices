@@ -1308,4 +1308,82 @@ collections:
             );
         }
     }
+    // ------------------------------------------------------------------
+    // MRMS radar / QPE split (config/edr/mrms.yaml, mrms-qpe.yaml)
+    // ------------------------------------------------------------------
+
+    fn real_edr_config() -> EdrConfig {
+        EdrConfig::load_from_dir(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../config/edr")
+                .to_str()
+                .unwrap(),
+        )
+        .expect("load real config/edr")
+    }
+
+    fn param_names(c: &CollectionDefinition) -> Vec<&str> {
+        c.parameters.iter().map(|p| p.name.as_str()).collect()
+    }
+
+    #[test]
+    fn the_qpe_collections_keep_their_ids_but_read_the_mrms_qpe_model() {
+        let cfg = real_edr_config();
+        for id in ["mrms-qpe", "mrms-qpe-latest"] {
+            let (model, coll) = cfg
+                .find_collection(id)
+                .unwrap_or_else(|| panic!("{id} missing"));
+            assert_eq!(model.model, "mrms-qpe", "{id}");
+            assert_eq!(param_names(coll), ["QPE_01H", "QPE_24H", "QPE_72H"], "{id}");
+        }
+    }
+
+    #[test]
+    fn the_radar_collections_no_longer_advertise_parameters_their_model_does_not_have() {
+        let cfg = real_edr_config();
+        for id in ["mrms-single-level", "mrms-single-level-latest"] {
+            let (model, coll) = cfg
+                .find_collection(id)
+                .unwrap_or_else(|| panic!("{id} missing"));
+            assert_eq!(model.model, "mrms", "{id}");
+            assert_eq!(param_names(coll), ["REFL", "PRECIP_RATE"], "{id}");
+        }
+    }
+
+    #[test]
+    fn every_edr_collection_parameter_is_defined_by_its_models_config() {
+        // A collection listing a parameter its model never ingests answers every query with
+        // "no data"; this is how QPE would have been left behind in the radar collections.
+        let models_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/models");
+        for (_, model_cfg) in real_edr_config()
+            .models
+            .iter()
+            .filter(|(k, _)| k.starts_with("mrms"))
+        {
+            let yaml: serde_yaml::Value = serde_yaml::from_str(
+                &std::fs::read_to_string(models_dir.join(format!("{}.yaml", model_cfg.model)))
+                    .unwrap_or_else(|_| panic!("no config/models/{}.yaml", model_cfg.model)),
+            )
+            .unwrap();
+            let defined: Vec<String> = yaml["parameters"]
+                .as_sequence()
+                .unwrap()
+                .iter()
+                .filter_map(|p| p["name"].as_str().map(String::from))
+                .collect();
+            for coll in &model_cfg.collections {
+                for p in &coll.parameters {
+                    assert!(
+                        defined.contains(&p.name),
+                        "collection {} lists {} but model {} defines only {:?}",
+                        coll.id,
+                        p.name,
+                        model_cfg.model,
+                        defined
+                    );
+                }
+            }
+        }
+    }
 }
