@@ -607,6 +607,56 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
     }
 
     /// Read a single value at grid coordinates (used for bilinear interpolation)
+    /// Fractional grid coordinates `(x, y)` of a geographic point, where integer values are cell
+    /// centres, or `None` if the point is outside the grid. Longitude is normalised for grids using
+    /// the 0-360 convention. Shared by `read_point` (bilinear) and `read_point_nearest`.
+    fn point_to_grid(&self, lon: f64, lat: f64) -> Option<(f64, f64)> {
+        let grid_bbox = &self.metadata.bbox;
+
+        // Normalize longitude for grids using 0-360 convention (e.g., GFS)
+        let normalized_lon = if grid_bbox.uses_0_360_longitude() && lon < 0.0 {
+            lon + 360.0
+        } else {
+            lon
+        };
+
+        // Check if point is within grid bounds
+        if !grid_bbox.contains(normalized_lon, lat) {
+            return None;
+        }
+
+        // Calculate grid indices (floating point for interpolation)
+        let (res_x, res_y) = self.metadata.resolution();
+        let grid_x = (normalized_lon - grid_bbox.min_lon) / res_x;
+        let grid_y = match self.metadata.row_origin {
+            RowOrigin::North => (grid_bbox.max_lat - lat) / res_y,
+            RowOrigin::South => (lat - grid_bbox.min_lat) / res_y,
+        };
+        Some((grid_x, grid_y))
+    }
+
+    /// The value of the single grid cell nearest to a point, with NO interpolation.
+    ///
+    /// For categorical fields (MRMS precipitation type: 0 none, 7 hail, ...) a bilinear blend of two
+    /// neighbouring cells is not a value at all: halfway between a 0 cell and a 7 cell it would
+    /// answer 3.5. `None` outside the grid or where the cell is missing.
+    pub async fn read_point_nearest(&self, lon: f64, lat: f64) -> Result<Option<f32>> {
+        let Some((grid_x, grid_y)) = self.point_to_grid(lon, lat) else {
+            return Ok(None);
+        };
+        let (grid_w, grid_h) = self.metadata.shape;
+        let col = grid_x.round() as usize;
+        let row = grid_y.round() as usize;
+        if col >= grid_w || row >= grid_h {
+            return Ok(None);
+        }
+        let value = self.read_single_value(col, row).await?;
+        if value.is_nan() || value == self.metadata.fill_value {
+            return Ok(None);
+        }
+        Ok(Some(value))
+    }
+
     async fn read_single_value(&self, col: usize, row: usize) -> Result<f32> {
         let (grid_w, grid_h) = self.metadata.shape;
         if col >= grid_w || row >= grid_h {
@@ -733,29 +783,11 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
     }
 
     async fn read_point(&self, lon: f64, lat: f64) -> Result<Option<f32>> {
-        let grid_bbox = &self.metadata.bbox;
-
-        // Normalize longitude for grids using 0-360 convention (e.g., GFS)
-        let normalized_lon = if grid_bbox.uses_0_360_longitude() && lon < 0.0 {
-            lon + 360.0
-        } else {
-            lon
-        };
-
-        // Check if point is within grid bounds
-        if !grid_bbox.contains(normalized_lon, lat) {
+        let Some((grid_x, grid_y)) = self.point_to_grid(lon, lat) else {
             return Ok(None);
-        }
-
-        // Calculate grid indices (floating point for interpolation)
-        let (res_x, res_y) = self.metadata.resolution();
-        let (grid_w, grid_h) = self.metadata.shape;
-
-        let grid_x = (normalized_lon - grid_bbox.min_lon) / res_x;
-        let grid_y = match self.metadata.row_origin {
-            RowOrigin::North => (grid_bbox.max_lat - lat) / res_y,
-            RowOrigin::South => (lat - grid_bbox.min_lat) / res_y,
         };
+        let grid_bbox = &self.metadata.bbox;
+        let (grid_w, grid_h) = self.metadata.shape;
 
         // Check if we're very close to an exact grid point (within 1% of cell size)
         // If so, return the exact grid cell value without interpolation
