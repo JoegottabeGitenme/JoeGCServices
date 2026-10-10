@@ -4,10 +4,13 @@
 //! to survive service restarts.
 
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
 
 use tracing::{debug, info};
 
@@ -75,9 +78,18 @@ impl DownloadState {
             std::fs::create_dir_all(parent)?;
         }
 
+        // sqlx leaves the journal alone unless asked, so this database was in the default rollback
+        // ("delete") mode, where a writer blocks readers and every writer queues behind one lock;
+        // its default busy timeout is 5 s, and a backfill's dozens of concurrent writers (or a
+        // VACUUM) outlast that, so downloads failed with "database is locked" and waited for the
+        // next poll. WAL lets the status endpoints read while a writer works, and a 30 s timeout
+        // lets writers queue instead of failing.
         let options = SqliteConnectOptions::new()
             .filename(path)
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .busy_timeout(Duration::from_secs(30));
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -761,6 +773,67 @@ impl DownloadState {
         Ok(result.rows_affected())
     }
 
+    /// Delete `downloads` rows that never finished and have not been touched for `max_age_days`
+    /// (status `pending`, `in_progress` or `retrying`), in batches. Returns the number deleted.
+    ///
+    /// `queue_download` is `INSERT OR IGNORE`, so a URL that can never be fetched (NLDAS has 404ed
+    /// for months) leaves a `pending` row forever; only `failed` rows were ever pruned. Production
+    /// had 694k rows, 683k of them `pending` and 98% from one model, which made the startup scan
+    /// and every status call slow. A URL that is still being discovered is simply queued again on
+    /// the next poll, so pruning a live one costs nothing.
+    ///
+    /// `max_age_days` is floored at 1: a mis-set `0` must not delete downloads in flight.
+    pub async fn prune_stale_unfinished(&self, max_age_days: u32) -> Result<u64> {
+        const BATCH: i64 = 20_000;
+        let days = max_age_days.max(1);
+        let cutoff = (Utc::now() - chrono::Duration::days(days as i64)).to_rfc3339();
+
+        let mut total = 0u64;
+        loop {
+            // Batched so no single statement holds the (single) SQLite writer for long.
+            let result = sqlx::query(
+                r#"
+                DELETE FROM downloads WHERE rowid IN (
+                    SELECT rowid FROM downloads
+                    WHERE status IN ('pending', 'in_progress', 'retrying') AND updated_at < ?
+                    LIMIT ?
+                )
+                "#,
+            )
+            .bind(&cutoff)
+            .bind(BATCH)
+            .execute(&self.pool)
+            .await?;
+            let n = result.rows_affected();
+            total += n;
+            if (n as i64) < BATCH {
+                return Ok(total);
+            }
+        }
+    }
+
+    /// How many downloads are queued, running or retrying. A COUNT, not `get_in_progress`: that
+    /// loads every row (694k in production) just to take its length.
+    pub async fn count_unfinished(&self) -> Result<u64> {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM downloads WHERE status IN ('pending', 'in_progress', 'retrying')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n as u64)
+    }
+
+    /// Every filename the state database still refers to (a download in any state, or a
+    /// completed one). A file in the output directory that is not in this set is unreferenced.
+    pub async fn referenced_filenames(&self) -> Result<std::collections::HashSet<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT filename FROM downloads UNION SELECT filename FROM completed_downloads",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(f,)| f).collect())
+    }
+
     /// Vacuum the database to reclaim space after deletions.
     pub async fn vacuum(&self) -> Result<()> {
         sqlx::query("VACUUM")
@@ -769,6 +842,18 @@ impl DownloadState {
             .context("Failed to vacuum database")?;
 
         debug!("Database vacuumed");
+        Ok(())
+    }
+
+    /// Make every `downloads` row look untouched for `days` days (for testing).
+    #[cfg(test)]
+    pub async fn age_all_downloads_for_test(&self, days: i64) -> Result<()> {
+        let at = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+        sqlx::query("UPDATE downloads SET created_at = ?, updated_at = ?")
+            .bind(&at)
+            .bind(&at)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -826,6 +911,7 @@ pub struct DownloadStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_state_create_and_update() {
@@ -880,5 +966,165 @@ mod tests {
         // Get in-progress
         let in_progress = state.get_in_progress().await.unwrap();
         assert_eq!(in_progress.len(), 2);
+    }
+    // ------------------------------------------------------------------
+    // Pruning rows that never finished, referenced filenames, SQLite settings
+    // ------------------------------------------------------------------
+
+    /// `n` rows with the given status and `updated_at` days ago (one INSERT, so tens of
+    /// thousands are cheap).
+    async fn seed_rows(state: &DownloadState, tag: &str, status: &str, n: u32, days_ago: i64) {
+        let at = (Utc::now() - chrono::Duration::days(days_ago)).to_rfc3339();
+        sqlx::query(
+            "WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < ?) \
+             INSERT INTO downloads (url, filename, model, status, created_at, updated_at) \
+             SELECT ? || i, ? || i || '.grib2', 'test', ?, ?, ? FROM c",
+        )
+        .bind(n as i64)
+        .bind(format!("http://x/{tag}/"))
+        .bind(tag)
+        .bind(status)
+        .bind(&at)
+        .bind(&at)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    }
+
+    async fn count_status(state: &DownloadState, status: &str) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM downloads WHERE status = ?")
+            .bind(status)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn stale_unfinished_rows_are_pruned_in_every_unfinished_status_and_nothing_else() {
+        let state = DownloadState::open_memory().await.unwrap();
+        for status in ["pending", "in_progress", "retrying"] {
+            seed_rows(&state, &format!("old-{status}"), status, 5, 10).await;
+            seed_rows(&state, &format!("new-{status}"), status, 3, 1).await;
+        }
+        // finished rows are other cleanups' business, however old
+        seed_rows(&state, "old-completed", "completed", 4, 30).await;
+        seed_rows(&state, "old-failed", "failed", 4, 30).await;
+
+        let pruned = state.prune_stale_unfinished(7).await.unwrap();
+        assert_eq!(pruned, 15, "5 old rows in each of 3 unfinished statuses");
+        assert_eq!(count_status(&state, "pending").await, 3);
+        assert_eq!(count_status(&state, "in_progress").await, 3);
+        assert_eq!(count_status(&state, "retrying").await, 3);
+        assert_eq!(
+            count_status(&state, "completed").await,
+            4,
+            "completed rows untouched"
+        );
+        assert_eq!(
+            count_status(&state, "failed").await,
+            4,
+            "failed rows untouched"
+        );
+        assert_eq!(
+            state.prune_stale_unfinished(7).await.unwrap(),
+            0,
+            "idempotent"
+        );
+    }
+
+    #[tokio::test]
+    async fn pruning_works_through_many_batches() {
+        let state = DownloadState::open_memory().await.unwrap();
+        seed_rows(&state, "ancient", "pending", 45_000, 200).await; // > 2 batches of 20k
+        seed_rows(&state, "fresh", "pending", 7, 0).await;
+        assert_eq!(state.prune_stale_unfinished(7).await.unwrap(), 45_000);
+        assert_eq!(
+            count_status(&state, "pending").await,
+            7,
+            "fresh rows survive every batch"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_zero_day_setting_cannot_delete_downloads_in_flight() {
+        let state = DownloadState::open_memory().await.unwrap();
+        seed_rows(&state, "running", "in_progress", 4, 0).await; // touched just now
+        seed_rows(&state, "dayold", "pending", 2, 2).await;
+        // 0 is floored to 1 day: the in-flight rows stay, the 2-day-old ones go
+        assert_eq!(state.prune_stale_unfinished(0).await.unwrap(), 2);
+        assert_eq!(count_status(&state, "in_progress").await, 4);
+    }
+
+    #[tokio::test]
+    async fn count_unfinished_counts_the_three_unfinished_statuses() {
+        let state = DownloadState::open_memory().await.unwrap();
+        seed_rows(&state, "a", "pending", 3, 0).await;
+        seed_rows(&state, "b", "in_progress", 2, 0).await;
+        seed_rows(&state, "c", "retrying", 1, 0).await;
+        seed_rows(&state, "d", "completed", 9, 0).await;
+        seed_rows(&state, "e", "failed", 9, 0).await;
+        assert_eq!(state.count_unfinished().await.unwrap(), 6);
+    }
+
+    #[tokio::test]
+    async fn referenced_filenames_covers_downloads_and_completed_downloads() {
+        let state = DownloadState::open_memory().await.unwrap();
+        seed_rows(&state, "q", "pending", 2, 0).await; // q1.grib2, q2.grib2
+        state
+            .insert_completed_for_test("http://x/done", "done.grib2", None)
+            .await
+            .unwrap();
+        let names = state.referenced_filenames().await.unwrap();
+        for expected in ["q1.grib2", "q2.grib2", "done.grib2"] {
+            assert!(
+                names.contains(expected),
+                "{expected} missing from {names:?}"
+            );
+        }
+        assert_eq!(names.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn the_state_database_opens_in_wal_with_a_long_busy_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = DownloadState::open(&dir.path().join("downloads.db"))
+            .await
+            .unwrap();
+        let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        assert_eq!(mode, "wal");
+        let timeout: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        assert_eq!(timeout, 30_000);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn many_concurrent_writers_do_not_fail_with_database_is_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(
+            DownloadState::open(&dir.path().join("downloads.db"))
+                .await
+                .unwrap(),
+        );
+        let mut tasks = Vec::new();
+        for t in 0..16 {
+            let state = Arc::clone(&state);
+            tasks.push(tokio::spawn(async move {
+                for i in 0..100 {
+                    state
+                        .queue_download(&format!("http://x/{t}/{i}"), &format!("f{t}_{i}"), "m")
+                        .await?;
+                }
+                anyhow::Ok(())
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap().expect("a concurrent write failed");
+        }
+        assert_eq!(count_status(&state, "pending").await, 1600);
     }
 }

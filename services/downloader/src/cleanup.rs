@@ -44,6 +44,12 @@ pub struct CleanupConfig {
     pub completed_record_retention_days: u32,
     /// Days to retain failed download records (default: 7)
     pub failed_record_retention_days: u32,
+    /// Days after which a download that never finished (pending / in_progress / retrying) and
+    /// has not been touched is forgotten (default: 7, minimum 1)
+    pub stale_unfinished_retention_days: u32,
+    /// Files in the output directory that no database row refers to are deleted once they are
+    /// older than this many seconds (default: 172800 = 48 h, minimum 21600 = 6 h)
+    pub unreferenced_file_min_age_secs: u64,
     /// Output directory for completed downloads
     pub output_dir: PathBuf,
     /// Temp directory for partial downloads
@@ -60,10 +66,23 @@ impl Default for CleanupConfig {
             pending_ingestion_max_age_secs: 7200, // 2 hours
             completed_record_retention_days: 7,
             failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS,
             output_dir: PathBuf::from("/data/downloads"),
             temp_dir: PathBuf::from("/tmp/weather-downloads"),
         }
     }
+}
+
+/// Default age before an unreferenced output file is deleted.
+pub const DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS: u64 = 48 * 3600;
+/// Floor for that age. A file this young may be a download that just finished and whose row is
+/// about to be written, so it is never touched whatever the setting.
+pub const MIN_UNREFERENCED_FILE_AGE_SECS: u64 = 6 * 3600;
+
+/// The age actually used for unreferenced files: the configured value, never below the floor.
+pub fn effective_unreferenced_min_age(configured_secs: u64) -> Duration {
+    Duration::from_secs(configured_secs.max(MIN_UNREFERENCED_FILE_AGE_SECS))
 }
 
 /// Statistics from a cleanup run.
@@ -85,6 +104,10 @@ pub struct CleanupStats {
     pub ingestion_retries_succeeded: u64,
     /// Number of stale pending files deleted (failed ingestion > max age)
     pub stale_pending_files_deleted: u64,
+    /// Files deleted because no database row refers to them
+    pub unreferenced_files_deleted: u64,
+    /// `downloads` rows that never finished and went untouched for the retention period
+    pub stale_unfinished_pruned: u64,
     /// Errors encountered during cleanup
     pub errors: Vec<String>,
 }
@@ -100,6 +123,8 @@ impl CleanupStats {
         self.ingestion_retries += other.ingestion_retries;
         self.ingestion_retries_succeeded += other.ingestion_retries_succeeded;
         self.stale_pending_files_deleted += other.stale_pending_files_deleted;
+        self.unreferenced_files_deleted += other.unreferenced_files_deleted;
+        self.stale_unfinished_pruned += other.stale_unfinished_pruned;
         self.errors.extend(other.errors);
     }
 }
@@ -131,13 +156,16 @@ impl CleanupMetrics {
         self.files_deleted_total.fetch_add(
             stats.partial_files_deleted
                 + stats.orphan_files_deleted
-                + stats.stale_pending_files_deleted,
+                + stats.stale_pending_files_deleted
+                + stats.unreferenced_files_deleted,
             Ordering::Relaxed,
         );
         self.bytes_reclaimed_total
             .fetch_add(stats.bytes_reclaimed, Ordering::Relaxed);
         self.db_records_pruned_total.fetch_add(
-            stats.completed_records_pruned + stats.failed_records_pruned,
+            stats.completed_records_pruned
+                + stats.failed_records_pruned
+                + stats.stale_unfinished_pruned,
             Ordering::Relaxed,
         );
         self.last_run_timestamp.store(
@@ -334,6 +362,17 @@ impl CleanupTask {
             Ok(db_stats) => stats.merge(db_stats),
             Err(e) => {
                 let msg = format!("Failed to prune database: {}", e);
+                warn!("{}", msg);
+                stats.errors.push(msg);
+            }
+        }
+
+        // 5. Delete files nothing refers to any more. After step 4, so a file whose only row was
+        // just pruned is handled in the same pass.
+        match self.cleanup_unreferenced_files().await {
+            Ok(s) => stats.merge(s),
+            Err(e) => {
+                let msg = format!("Failed to cleanup unreferenced files: {}", e);
                 warn!("{}", msg);
                 stats.errors.push(msg);
             }
@@ -591,6 +630,75 @@ impl CleanupTask {
         Ok(stats)
     }
 
+    /// Delete files in the output directory that no database row refers to, once they are older
+    /// than `unreferenced_file_min_age_secs` (never less than 6 h).
+    ///
+    /// `cleanup_orphan_files` only recognises a file through a `completed_downloads` row with
+    /// `ingested = 1`, and those rows are pruned after 7 days, so a file that outlived its row
+    /// (a lost ingest, a pruned `pending` row, an old model) became invisible to every cleanup
+    /// and stayed forever: production held 1,314 such files, 40 GB, some from August.
+    /// Directories and anything younger than the floor are left alone, so a download that has
+    /// just finished and is about to get its row is safe.
+    async fn cleanup_unreferenced_files(&self) -> Result<CleanupStats> {
+        let mut stats = CleanupStats::default();
+        if !self.config.output_dir.exists() {
+            return Ok(stats);
+        }
+
+        let min_age = effective_unreferenced_min_age(self.config.unreferenced_file_min_age_secs);
+        let referenced = self.state.referenced_filenames().await?;
+        let now = SystemTime::now();
+
+        let mut entries = tokio::fs::read_dir(&self.config.output_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if referenced.contains(&filename) {
+                continue;
+            }
+            let metadata = match entry.metadata().await {
+                Ok(m) if m.is_file() => m,
+                _ => continue,
+            };
+            let age = metadata
+                .modified()
+                .ok()
+                .and_then(|m| now.duration_since(m).ok());
+            // Unknown age (clock skew, no mtime) is treated as young: never delete on a guess.
+            if age.is_none_or(|a| a < min_age) {
+                continue;
+            }
+
+            let size = metadata.len();
+            if self.config.dry_run {
+                info!(file = %filename, size, "[DRY RUN] Would delete unreferenced file");
+                stats.unreferenced_files_deleted += 1;
+                stats.bytes_reclaimed += size;
+                continue;
+            }
+            match tokio::fs::remove_file(entry.path()).await {
+                Ok(()) => {
+                    debug!(file = %filename, size, "Deleted unreferenced file");
+                    stats.unreferenced_files_deleted += 1;
+                    stats.bytes_reclaimed += size;
+                }
+                Err(e) => {
+                    let msg = format!("Failed to delete unreferenced file {}: {}", filename, e);
+                    warn!("{}", msg);
+                    stats.errors.push(msg);
+                }
+            }
+        }
+
+        if stats.unreferenced_files_deleted > 0 {
+            info!(
+                files = stats.unreferenced_files_deleted,
+                bytes = stats.bytes_reclaimed,
+                "Deleted unreferenced files"
+            );
+        }
+        Ok(stats)
+    }
+
     /// Process pending ingestion files: retry recent ones, clean up stale ones.
     ///
     /// This combines retry logic and stale cleanup to avoid double DB queries.
@@ -825,8 +933,30 @@ impl CleanupTask {
             }
         }
 
+        // Prune downloads that never finished (a URL that can never be fetched leaves a
+        // `pending` row forever otherwise)
+        match self
+            .state
+            .prune_stale_unfinished(self.config.stale_unfinished_retention_days)
+            .await
+        {
+            Ok(count) => {
+                if count > 0 {
+                    info!(count = count, "Pruned stale unfinished download records");
+                }
+                stats.stale_unfinished_pruned = count;
+            }
+            Err(e) => {
+                let msg = format!("Failed to prune stale unfinished records: {}", e);
+                warn!("{}", msg);
+                stats.errors.push(msg);
+            }
+        }
+
         // Vacuum if we deleted a significant number of records
-        let total_pruned = stats.completed_records_pruned + stats.failed_records_pruned;
+        let total_pruned = stats.completed_records_pruned
+            + stats.failed_records_pruned
+            + stats.stale_unfinished_pruned;
         if total_pruned > 1000 {
             match self.state.vacuum().await {
                 Ok(()) => {
@@ -890,6 +1020,8 @@ mod tests {
             ingestion_retries: 3,
             ingestion_retries_succeeded: 2,
             stale_pending_files_deleted: 1,
+            unreferenced_files_deleted: 4,
+            stale_unfinished_pruned: 100,
             errors: vec!["error1".to_string()],
         };
 
@@ -902,6 +1034,8 @@ mod tests {
             ingestion_retries: 2,
             ingestion_retries_succeeded: 1,
             stale_pending_files_deleted: 2,
+            unreferenced_files_deleted: 6,
+            stale_unfinished_pruned: 50,
             errors: vec!["error2".to_string()],
         };
 
@@ -915,6 +1049,8 @@ mod tests {
         assert_eq!(stats1.ingestion_retries, 5);
         assert_eq!(stats1.ingestion_retries_succeeded, 3);
         assert_eq!(stats1.stale_pending_files_deleted, 3);
+        assert_eq!(stats1.unreferenced_files_deleted, 10);
+        assert_eq!(stats1.stale_unfinished_pruned, 150);
         assert_eq!(stats1.errors.len(), 2);
     }
 
@@ -958,6 +1094,8 @@ mod tests {
             pending_ingestion_max_age_secs: 7200, // 2 hours max age
             completed_record_retention_days: 7,
             failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS,
             output_dir: output_dir.path().to_path_buf(),
             temp_dir: temp_dir.path().to_path_buf(),
         };
@@ -1052,6 +1190,8 @@ mod tests {
             pending_ingestion_max_age_secs: 7200,
             completed_record_retention_days: 7,
             failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS,
             output_dir: output_dir.path().to_path_buf(),
             temp_dir: temp_dir.path().to_path_buf(),
         };
@@ -1139,6 +1279,8 @@ mod tests {
             pending_ingestion_max_age_secs: 7200,
             completed_record_retention_days: 7,
             failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS,
             output_dir: output_dir.path().to_path_buf(),
             temp_dir: temp_dir.path().to_path_buf(),
         };
@@ -1189,6 +1331,8 @@ mod tests {
             pending_ingestion_max_age_secs: 7200,
             completed_record_retention_days: 7,
             failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS,
             output_dir: output_dir.path().to_path_buf(),
             temp_dir: temp_dir.path().to_path_buf(),
         };
@@ -1286,6 +1430,8 @@ mod tests {
             pending_ingestion_max_age_secs: 7200,
             completed_record_retention_days: 7,
             failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS,
             output_dir: output_dir.path().to_path_buf(),
             temp_dir: temp_dir.path().to_path_buf(),
         };
@@ -1358,6 +1504,8 @@ mod tests {
             pending_ingestion_max_age_secs: 7200,
             completed_record_retention_days: 7,
             failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS,
             output_dir: output_dir.path().to_path_buf(),
             temp_dir: temp_dir.path().to_path_buf(),
         };
@@ -1413,6 +1561,8 @@ mod tests {
             pending_ingestion_max_age_secs: 7200, // 2 hours
             completed_record_retention_days: 7,
             failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS,
             output_dir: output_dir.path().to_path_buf(),
             temp_dir: temp_dir.path().to_path_buf(),
         };
@@ -1462,6 +1612,8 @@ mod tests {
             pending_ingestion_max_age_secs: 7200,
             completed_record_retention_days: 7,
             failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS,
             output_dir: output_dir.path().to_path_buf(),
             temp_dir: temp_dir.path().to_path_buf(),
         };
@@ -1485,5 +1637,179 @@ mod tests {
         // DB record should still be pending
         let pending = state.get_pending_ingestion().await.unwrap();
         assert_eq!(pending.len(), 1, "Recent pending file should remain");
+    }
+    // ------------------------------------------------------------------
+    // Unreferenced-file sweep and stale-row pruning (periodic cleanup)
+    // ------------------------------------------------------------------
+
+    fn config_for(
+        output: &std::path::Path,
+        temp: &std::path::Path,
+        dry_run: bool,
+        min_age_secs: u64,
+    ) -> CleanupConfig {
+        CleanupConfig {
+            enabled: true,
+            dry_run,
+            interval_secs: 3600,
+            partial_file_max_age_secs: 3600,
+            pending_ingestion_max_age_secs: 7200,
+            completed_record_retention_days: 7,
+            failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: min_age_secs,
+            output_dir: output.to_path_buf(),
+            temp_dir: temp.to_path_buf(),
+        }
+    }
+
+    /// Write `name` with `bytes` bytes and set its mtime `age_hours` in the past.
+    fn write_aged(dir: &std::path::Path, name: &str, bytes: usize, age_hours: u64) {
+        let path = dir.join(name);
+        std::fs::write(&path, vec![b'x'; bytes]).unwrap();
+        let t = std::time::SystemTime::now() - Duration::from_secs(age_hours * 3600);
+        filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(t)).unwrap();
+    }
+
+    #[test]
+    fn the_unreferenced_file_age_is_never_below_six_hours() {
+        assert_eq!(
+            effective_unreferenced_min_age(0),
+            Duration::from_secs(6 * 3600)
+        );
+        assert_eq!(
+            effective_unreferenced_min_age(60),
+            Duration::from_secs(6 * 3600)
+        );
+        assert_eq!(
+            effective_unreferenced_min_age(172_800),
+            Duration::from_secs(172_800)
+        );
+    }
+
+    #[tokio::test]
+    async fn only_old_files_that_no_row_refers_to_are_deleted() {
+        use crate::state::DownloadState;
+        let temp = TempDir::new().unwrap();
+        let out = TempDir::new().unwrap();
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+
+        // 100 h old, on disk
+        write_aged(out.path(), "nothing_refers_to_me.grib2", 1000, 100); // delete
+        write_aged(out.path(), "has_a_queue_row.grib2", 10, 100); // keep: downloads row
+        write_aged(out.path(), "awaiting_ingest.grib2", 10, 100); // keep: completed row
+        write_aged(out.path(), "young_unreferenced.grib2", 10, 1); // keep: too young
+        write_aged(out.path(), "just_inside_floor.grib2", 10, 5); // keep: < 6 h even though min age is 0
+        std::fs::create_dir(out.path().join("a_directory")).unwrap(); // keep: not a file
+
+        state
+            .queue_download("http://x/q", "has_a_queue_row.grib2", "m")
+            .await
+            .unwrap();
+        state
+            .insert_completed_for_test("http://x/c", "awaiting_ingest.grib2", None)
+            .await
+            .unwrap();
+
+        // min age 0 -> floored to 6 h
+        let task = CleanupTask::new(
+            config_for(out.path(), temp.path(), false, 0),
+            state,
+            Arc::new(CleanupMetrics::new()),
+            None,
+        );
+        let stats = task.cleanup_unreferenced_files().await.unwrap();
+
+        assert_eq!(stats.unreferenced_files_deleted, 1);
+        assert_eq!(stats.bytes_reclaimed, 1000);
+        assert!(stats.errors.is_empty());
+        assert!(!out.path().join("nothing_refers_to_me.grib2").exists());
+        for kept in [
+            "has_a_queue_row.grib2",
+            "awaiting_ingest.grib2",
+            "young_unreferenced.grib2",
+            "just_inside_floor.grib2",
+            "a_directory",
+        ] {
+            assert!(out.path().join(kept).exists(), "{kept} must survive");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_configured_age_is_honoured_above_the_floor() {
+        use crate::state::DownloadState;
+        let temp = TempDir::new().unwrap();
+        let out = TempDir::new().unwrap();
+        write_aged(out.path(), "thirty_hours.grib2", 10, 30);
+        write_aged(out.path(), "sixty_hours.grib2", 10, 60);
+        let task = CleanupTask::new(
+            config_for(out.path(), temp.path(), false, 48 * 3600),
+            Arc::new(DownloadState::open_memory().await.unwrap()),
+            Arc::new(CleanupMetrics::new()),
+            None,
+        );
+        let stats = task.cleanup_unreferenced_files().await.unwrap();
+        assert_eq!(stats.unreferenced_files_deleted, 1);
+        assert!(
+            out.path().join("thirty_hours.grib2").exists(),
+            "30 h < 48 h"
+        );
+        assert!(
+            !out.path().join("sixty_hours.grib2").exists(),
+            "60 h > 48 h"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dry_run_counts_but_deletes_nothing() {
+        use crate::state::DownloadState;
+        let temp = TempDir::new().unwrap();
+        let out = TempDir::new().unwrap();
+        write_aged(out.path(), "old.grib2", 500, 100);
+        let task = CleanupTask::new(
+            config_for(out.path(), temp.path(), true, 48 * 3600),
+            Arc::new(DownloadState::open_memory().await.unwrap()),
+            Arc::new(CleanupMetrics::new()),
+            None,
+        );
+        let stats = task.cleanup_unreferenced_files().await.unwrap();
+        assert_eq!(
+            (stats.unreferenced_files_deleted, stats.bytes_reclaimed),
+            (1, 500)
+        );
+        assert!(out.path().join("old.grib2").exists());
+    }
+
+    #[tokio::test]
+    async fn one_periodic_pass_prunes_a_stale_pending_row_and_then_sweeps_its_file() {
+        // The order matters: the file's only reference is the stale `pending` row. Pruning
+        // first (step 4) makes the file unreferenced for the sweep (step 5) in the SAME pass.
+        use crate::state::DownloadState;
+        let temp = TempDir::new().unwrap();
+        let out = TempDir::new().unwrap();
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+        write_aged(out.path(), "stale_pending.nc", 2000, 24 * 30);
+        state
+            .queue_download("http://x/stale", "stale_pending.nc", "nldas-noah")
+            .await
+            .unwrap();
+        state.age_all_downloads_for_test(30).await.unwrap();
+
+        let metrics = Arc::new(CleanupMetrics::new());
+        let task = CleanupTask::new(
+            config_for(out.path(), temp.path(), false, 48 * 3600),
+            state.clone(),
+            metrics.clone(),
+            None,
+        );
+        let stats = task.run_periodic_cleanup().await.unwrap();
+
+        assert_eq!(stats.stale_unfinished_pruned, 1);
+        assert_eq!(stats.unreferenced_files_deleted, 1);
+        assert!(!out.path().join("stale_pending.nc").exists());
+        assert_eq!(state.count_unfinished().await.unwrap(), 0);
+        // both are reflected in the Prometheus counters
+        assert!(metrics.files_deleted_total.load(Ordering::Relaxed) >= 1);
+        assert!(metrics.db_records_pruned_total.load(Ordering::Relaxed) >= 1);
     }
 }
