@@ -94,7 +94,7 @@ impl ModelRunner {
     }
 
     /// Run the model download loop forever until shutdown.
-    pub async fn run_forever(&self, mut shutdown: broadcast::Receiver<()>) -> Result<()> {
+    pub async fn run_forever(&self, shutdown: broadcast::Receiver<()>) -> Result<()> {
         let interval = Duration::from_secs(self.model.schedule.poll_interval_secs);
         let model_id = &self.model.model.id;
 
@@ -105,25 +105,17 @@ impl ModelRunner {
             "Starting model runner"
         );
 
-        // Run first cycle immediately
-        if let Err(e) = self.run_cycle().await {
-            error!(model = %model_id, error = %e, "Initial download cycle failed");
-        }
-
-        loop {
-            tokio::select! {
-                _ = shutdown.recv() => {
-                    info!(model = %model_id, "Shutting down model runner");
-                    break;
-                }
-                _ = tokio::time::sleep(interval) => {
-                    debug!(model = %model_id, "Running scheduled download cycle");
-                    if let Err(e) = self.run_cycle().await {
-                        error!(model = %model_id, error = %e, "Download cycle failed");
-                    }
-                }
+        // Fixed period, first cycle immediately. The old loop ran a cycle and *then* slept for the
+        // interval, so the period was `interval + the cycle's own run time` (5-13 min for HRRR):
+        // polls slid later every hour and whole cycles (20z, 7z, 15z ...) were never looked at.
+        run_on_fixed_period(interval, shutdown, || async {
+            debug!(model = %model_id, "Running scheduled download cycle");
+            if let Err(e) = self.run_cycle().await {
+                error!(model = %model_id, error = %e, "Download cycle failed");
             }
-        }
+        })
+        .await;
+        info!(model = %model_id, "Shutting down model runner");
 
         Ok(())
     }
@@ -432,12 +424,23 @@ impl ModelRunner {
     /// Also supports `file_types` expansion for models like AIGFS that have multiple
     /// file types per forecast hour (e.g., "pres" and "sfc" files).
     async fn discover_forecast_files(&self) -> Result<Vec<DownloadFile>> {
+        self.discover_forecast_files_at(Utc::now()).await
+    }
+
+    /// [`discover_forecast_files`](Self::discover_forecast_files) as of `now`.
+    async fn discover_forecast_files_at(&self, now: DateTime<Utc>) -> Result<Vec<DownloadFile>> {
         let mut files = Vec::new();
         let model = &self.model;
+        let always_redownload = model.source.always_redownload;
 
-        // Get the most recent available cycle
-        let (date, cycle) =
-            self.latest_available_cycle(&model.schedule.cycles, model.schedule.delay_hours);
+        // The newest available cycle plus `cycle_lookback` before it, newest first. A cycle is
+        // published over time, so looking at it once loses whatever appears later.
+        let cycles = recent_cycles(
+            now,
+            &model.schedule.cycles,
+            model.schedule.delay_hours,
+            model.schedule.cycle_lookback,
+        );
 
         // Determine if this is an HTTP source (vs S3)
         let is_http_source = model.source.source_type == "http" || model.source.base_url.is_some();
@@ -453,78 +456,51 @@ impl ModelRunner {
 
         info!(
             model = %model.model.id,
-            date = %date,
-            cycle = cycle,
+            cycles = ?cycles,
             is_http = is_http_source,
             file_types = ?file_types,
             "Checking for available forecast files"
         );
 
-        // For forecast models, we want files in forecast hour order (f000 first)
-        // since they represent the same model run, ordered by lead time
-        for forecast_hour in model.forecast_hours() {
-            // Expand file_types if configured (e.g., ["pres", "sfc"] for AIGFS)
-            for file_type in &file_types {
-                let filename = model
-                    .source
-                    .file_pattern
-                    .replace("{file_type}", file_type)
-                    .replace("{cycle:02}", &format!("{:02}", cycle))
-                    .replace("{forecast:03}", &format!("{:03}", forecast_hour))
-                    .replace("{forecast:02}", &format!("{:02}", forecast_hour));
+        for (date, cycle) in cycles {
+            // For forecast models, we want files in forecast hour order (f000 first)
+            // since they represent the same model run, ordered by lead time
+            for forecast_hour in model.forecast_hours_for_cycle(cycle) {
+                // Expand file_types if configured (e.g., ["pres", "sfc"] for AIGFS)
+                for file_type in &file_types {
+                    let (url, output_filename) = forecast_file(
+                        model,
+                        &date,
+                        cycle,
+                        forecast_hour,
+                        file_type,
+                        is_http_source,
+                    );
 
-                let prefix = model
-                    .source
-                    .prefix_template
-                    .replace("{date}", &date)
-                    .replace("{cycle:02}", &format!("{:02}", cycle));
-
-                // Build URL based on source type
-                let url = if is_http_source {
-                    let base_url = model
-                        .source
-                        .base_url
-                        .as_deref()
-                        .unwrap_or("https://nomads.ncep.noaa.gov");
-                    format!("{}/{}/{}", base_url, prefix, filename)
-                } else {
-                    format!(
-                        "https://{}.s3.amazonaws.com/{}/{}",
-                        model.source.bucket, prefix, filename
-                    )
-                };
-
-                // Check if file exists (HEAD request)
-                match self.check_file_exists(&url).await {
-                    Ok(true) => {
-                        // Include file_type in output filename if present
-                        let output_filename = if file_type.is_empty() {
-                            format!(
-                                "{}_{}_{:02}z_f{:03}.grib2",
-                                model.model.id, date, cycle, forecast_hour
-                            )
-                        } else {
-                            format!(
-                                "{}_{}_{}_{:02}z_f{:03}.grib2",
-                                model.model.id, file_type, date, cycle, forecast_hour
-                            )
-                        };
-
-                        // For forecast files, we don't use timestamps for priority sorting.
-                        // Files are discovered in forecast hour order (f000, f001, f002, ...)
-                        // which is the desired download order (earliest forecasts first).
-                        // The sort_by_priority function preserves order for files without timestamps.
-                        files.push(DownloadFile {
-                            url,
-                            filename: output_filename,
-                            timestamp: None,
-                        });
+                    // Already have it: no network request. This is what makes revisiting a
+                    // finished cycle free and a truncated one cost only its missing hours.
+                    if !always_redownload && self.state.is_already_downloaded(&url).await? {
+                        continue;
                     }
-                    Ok(false) => {
-                        debug!(url = %url, "File not yet available");
-                    }
-                    Err(e) => {
-                        debug!(url = %url, error = %e, "Error checking file");
+
+                    // Check if file exists (HEAD request)
+                    match self.check_file_exists(&url).await {
+                        Ok(true) => {
+                            // For forecast files, we don't use timestamps for priority sorting.
+                            // Files are discovered newest cycle first, then in forecast hour order
+                            // (f000, f001, f002, ...), which is the desired download order.
+                            files.push(DownloadFile {
+                                url,
+                                filename: output_filename,
+                                timestamp: None,
+                            });
+                        }
+                        Ok(false) => {
+                            debug!(url = %url, "File not yet available");
+                        }
+                        Err(e) => {
+                            debug!(url = %url, error = %e, "Error checking file");
+                        }
                     }
                 }
             }
@@ -1129,22 +1105,6 @@ impl ModelRunner {
     // Helper Methods
     // ========================================================================
 
-    /// Calculate the most recent available model cycle.
-    fn latest_available_cycle(&self, cycles: &[u32], delay_hours: u32) -> (String, u32) {
-        let now = Utc::now() - ChronoDuration::hours(delay_hours as i64);
-        let date = now.format("%Y%m%d").to_string();
-        let current_hour = now.hour();
-
-        let cycle = cycles
-            .iter()
-            .filter(|&&c| c <= current_hour)
-            .max()
-            .copied()
-            .unwrap_or_else(|| *cycles.last().unwrap_or(&0));
-
-        (date, cycle)
-    }
-
     /// Check if a file exists via HEAD request.
     async fn check_file_exists(&self, url: &str) -> Result<bool> {
         let response = self
@@ -1315,6 +1275,124 @@ pub fn select_mrms_files(
             .collect(),
     );
     (primary, fallback)
+}
+
+/// Run `tick` immediately and then every `period`, on a fixed grid.
+///
+/// The next tick is scheduled from the *previous tick time*, not from when `tick` returned, so a
+/// slow `tick` does not push later ones back. If `tick` outlasts a period, the tick that came due
+/// fires as soon as it returns, further missed ticks are dropped (no catch-up burst), and the
+/// grid resumes.
+async fn run_on_fixed_period<F, Fut>(
+    period: Duration,
+    mut shutdown: broadcast::Receiver<()>,
+    mut tick: F,
+) where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    // `interval` panics on a zero period
+    let mut interval = tokio::time::interval(period.max(Duration::from_secs(1)));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = shutdown.recv() => break,
+            _ = interval.tick() => tick().await,
+        }
+    }
+}
+
+/// The `(date, cycle)` pairs a poll should examine, newest first: the newest cycle that has had
+/// `delay_hours` to publish, and `lookback` earlier ones. Crosses midnight correctly (at 01:30Z
+/// with hourly cycles and `lookback = 2` this is today 01, today 00, yesterday 23).
+fn recent_cycles(
+    now: DateTime<Utc>,
+    cycles: &[u32],
+    delay_hours: u32,
+    lookback: u32,
+) -> Vec<(String, u32)> {
+    let mut sorted: Vec<u32> = cycles.iter().copied().filter(|c| *c < 24).collect();
+    sorted.sort_unstable();
+    sorted.dedup();
+    if sorted.is_empty() {
+        return Vec::new();
+    }
+
+    let available_until = now - ChronoDuration::hours(delay_hours as i64);
+    let wanted = lookback as usize + 1;
+    let mut out = Vec::with_capacity(wanted);
+    let mut day = available_until.date_naive();
+    // every day holds at least one cycle, so `wanted` days always suffice (+1 for the first,
+    // possibly partial, day)
+    for _ in 0..=wanted {
+        for &cycle in sorted.iter().rev() {
+            let start = day.and_hms_opt(cycle, 0, 0).expect("cycle < 24").and_utc();
+            if start <= available_until {
+                out.push((day.format("%Y%m%d").to_string(), cycle));
+                if out.len() == wanted {
+                    return out;
+                }
+            }
+        }
+        match day.pred_opt() {
+            Some(d) => day = d,
+            None => break,
+        }
+    }
+    out
+}
+
+/// URL and local file name of one forecast file.
+fn forecast_file(
+    model: &ModelConfig,
+    date: &str,
+    cycle: u32,
+    forecast_hour: u32,
+    file_type: &str,
+    is_http_source: bool,
+) -> (String, String) {
+    let filename = model
+        .source
+        .file_pattern
+        .replace("{file_type}", file_type)
+        .replace("{cycle:02}", &format!("{:02}", cycle))
+        .replace("{forecast:03}", &format!("{:03}", forecast_hour))
+        .replace("{forecast:02}", &format!("{:02}", forecast_hour));
+
+    let prefix = model
+        .source
+        .prefix_template
+        .replace("{date}", date)
+        .replace("{cycle:02}", &format!("{:02}", cycle));
+
+    let url = if is_http_source {
+        let base_url = model
+            .source
+            .base_url
+            .as_deref()
+            .unwrap_or("https://nomads.ncep.noaa.gov");
+        format!("{}/{}/{}", base_url, prefix, filename)
+    } else {
+        format!(
+            "https://{}.s3.amazonaws.com/{}/{}",
+            model.source.bucket, prefix, filename
+        )
+    };
+
+    // Include file_type in the output filename if present
+    let output_filename = if file_type.is_empty() {
+        format!(
+            "{}_{}_{:02}z_f{:03}.grib2",
+            model.model.id, date, cycle, forecast_hour
+        )
+    } else {
+        format!(
+            "{}_{}_{}_{:02}z_f{:03}.grib2",
+            model.model.id, file_type, date, cycle, forecast_hour
+        )
+    };
+
+    (url, output_filename)
 }
 
 #[cfg(test)]
@@ -1649,5 +1727,379 @@ mod tests {
         let (p, f) = select_mrms_files(vec![cand(15, 9)], vec![cand(15, 9)], now);
         assert_eq!(p.len(), 1);
         assert!(f.is_empty());
+    }
+
+    // =========================================================================
+    // Cycle selection, per-cycle files, and revisiting recent cycles
+    // =========================================================================
+
+    fn cyc(v: &[(&str, u32)]) -> Vec<(String, u32)> {
+        v.iter().map(|(d, c)| (d.to_string(), *c)).collect()
+    }
+
+    fn hourly() -> Vec<u32> {
+        (0..24).collect()
+    }
+
+    #[test]
+    fn zero_lookback_is_the_single_newest_available_cycle() {
+        // 20:30Z with a 1 h delay: 19:30Z is available, so cycle 19 is the newest
+        assert_eq!(
+            recent_cycles(utc(2026, 10, 11, 20, 30, 0), &hourly(), 1, 0),
+            cyc(&[("20261011", 19)])
+        );
+        // 6-hourly: 12:59Z with a 4 h delay is 08:59Z, so the 06Z cycle
+        assert_eq!(
+            recent_cycles(utc(2026, 10, 11, 12, 59, 0), &[0, 6, 12, 18], 4, 0),
+            cyc(&[("20261011", 6)])
+        );
+        // the cycle's own hour counts as available
+        assert_eq!(
+            recent_cycles(utc(2026, 10, 11, 7, 0, 0), &[0, 6, 12, 18], 1, 0),
+            cyc(&[("20261011", 6)])
+        );
+    }
+
+    #[test]
+    fn lookback_returns_that_many_earlier_cycles_newest_first() {
+        assert_eq!(
+            recent_cycles(utc(2026, 10, 11, 20, 30, 0), &hourly(), 1, 3),
+            cyc(&[
+                ("20261011", 19),
+                ("20261011", 18),
+                ("20261011", 17),
+                ("20261011", 16)
+            ])
+        );
+        assert_eq!(
+            recent_cycles(utc(2026, 10, 11, 23, 0, 0), &[0, 6, 12, 18], 0, 2),
+            cyc(&[("20261011", 18), ("20261011", 12), ("20261011", 6)])
+        );
+    }
+
+    #[test]
+    fn lookback_crosses_midnight_into_the_previous_date() {
+        // 01:30Z with a 1 h delay: newest is 00Z today, then 23Z and 22Z yesterday
+        assert_eq!(
+            recent_cycles(utc(2026, 10, 11, 1, 30, 0), &hourly(), 1, 2),
+            cyc(&[("20261011", 0), ("20261010", 23), ("20261010", 22)])
+        );
+        // the delay itself can push the newest cycle into yesterday
+        assert_eq!(
+            recent_cycles(utc(2026, 10, 11, 0, 20, 0), &[0, 6, 12, 18], 4, 1),
+            cyc(&[("20261010", 18), ("20261010", 12)])
+        );
+        // and across a month and a year end
+        assert_eq!(
+            recent_cycles(utc(2027, 1, 1, 2, 0, 0), &hourly(), 1, 2),
+            cyc(&[("20270101", 1), ("20270101", 0), ("20261231", 23)])
+        );
+    }
+
+    #[test]
+    fn a_lookback_longer_than_a_day_keeps_walking_back() {
+        let got = recent_cycles(utc(2026, 10, 11, 12, 0, 0), &[0, 12], 0, 4);
+        assert_eq!(
+            got,
+            cyc(&[
+                ("20261011", 12),
+                ("20261011", 0),
+                ("20261010", 12),
+                ("20261010", 0),
+                ("20261009", 12)
+            ])
+        );
+    }
+
+    #[test]
+    fn unsorted_duplicate_and_out_of_range_cycles_are_tolerated() {
+        assert_eq!(
+            recent_cycles(utc(2026, 10, 11, 14, 0, 0), &[18, 6, 6, 0, 12, 99], 0, 1),
+            cyc(&[("20261011", 12), ("20261011", 6)])
+        );
+        assert!(recent_cycles(utc(2026, 10, 11, 14, 0, 0), &[], 0, 3).is_empty());
+    }
+
+    fn http_model(base_url: &str, extra_schedule: &str, extra_source: &str) -> ModelConfig {
+        serde_yaml::from_str(&format!(
+            r#"
+model: {{ id: hrrr, name: "HRRR", enabled: true }}
+source:
+  type: http
+  base_url: "{base_url}"
+  prefix_template: "hrrr.{{date}}/conus"
+  file_pattern: "hrrr.t{{cycle:02}}z.wrfprsf{{forecast:02}}.grib2"
+{extra_source}
+grid:
+  projection: geographic
+  resolution: "0.25deg"
+  bbox: {{ min_lon: 0.0, min_lat: -90.0, max_lon: 360.0, max_lat: 90.0 }}
+schedule:
+  cycles: [0, 6, 12, 18, 16, 17, 19]
+  forecast_hours: {{ start: 0, end: 2 }}
+  extended_cycles: [18]
+  extended_forecast_hours: {{ start: 0, end: 4 }}
+  delay_hours: 1
+{extra_schedule}
+"#
+        ))
+        .expect("test model parses")
+    }
+
+    #[test]
+    fn forecast_file_builds_the_nomads_url_and_the_local_name() {
+        let m = http_model("https://nomads.example", "", "");
+        let (url, name) = forecast_file(&m, "20261011", 18, 7, "", true);
+        assert_eq!(
+            url,
+            "https://nomads.example/hrrr.20261011/conus/hrrr.t18z.wrfprsf07.grib2"
+        );
+        assert_eq!(name, "hrrr_20261011_18z_f007.grib2");
+    }
+
+    #[test]
+    fn forecast_file_expands_file_types_and_uses_s3_urls_without_a_base_url() {
+        let mut m = http_model("https://x", "", "");
+        m.source.base_url = None;
+        m.source.source_type = "aws_s3".into();
+        m.source.bucket = "bkt".into();
+        m.source.file_pattern = "f.{file_type}.{cycle:02}.{forecast:03}".into();
+        let (url, name) = forecast_file(&m, "20261011", 6, 12, "pres", false);
+        assert_eq!(
+            url,
+            "https://bkt.s3.amazonaws.com/hrrr.20261011/conus/f.pres.06.012"
+        );
+        assert_eq!(name, "hrrr_pres_20261011_06z_f012.grib2");
+    }
+
+    struct Harness {
+        runner: ModelRunner,
+        server: wiremock::MockServer,
+        state: Arc<DownloadState>,
+        _dir: tempfile::TempDir,
+    }
+
+    async fn harness(extra_schedule: &str, extra_source: &str) -> Harness {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let server = wiremock::MockServer::start().await;
+        // t18z f04 is not published yet on the first look (consumed once), then it is; every other
+        // file exists
+        Mock::given(method("HEAD"))
+            .and(path("/hrrr.20261011/conus/hrrr.t18z.wrfprsf04.grib2"))
+            .respond_with(ResponseTemplate::new(404))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(
+            DownloadState::open(&dir.path().join("state.db"))
+                .await
+                .unwrap(),
+        );
+        let model = http_model(&server.uri(), extra_schedule, extra_source);
+        let download_manager = Arc::new(
+            DownloadManager::new(crate::download::DownloadConfig {
+                temp_dir: dir.path().join("tmp"),
+                output_dir: dir.path().join("out"),
+                ..Default::default()
+            })
+            .unwrap(),
+        );
+        let permit = ModelDownloadPermit::new(
+            "hrrr".into(),
+            Arc::new(tokio::sync::Semaphore::new(1)),
+            1,
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        );
+        let runner = ModelRunner::new(
+            model,
+            download_manager,
+            state.clone(),
+            permit,
+            None,
+            Client::new(),
+            None,
+            dir.path().join("out"),
+        );
+        Harness {
+            runner,
+            server,
+            state,
+            _dir: dir,
+        }
+    }
+
+    async fn head_paths(server: &wiremock::MockServer) -> Vec<String> {
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.method == wiremock::http::Method::HEAD)
+            .map(|r| r.url.path().to_string())
+            .collect()
+    }
+
+    async fn mark_completed(state: &DownloadState, files: &[DownloadFile]) {
+        for f in files {
+            state.get_or_create(&f.url, &f.filename).await.unwrap();
+            state
+                .update_status(&f.url, crate::state::DownloadStatus::Completed)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_asks_each_cycle_only_for_the_hours_it_publishes() {
+        let h = harness("  cycle_lookback: 3", "").await;
+        let files = h
+            .runner
+            .discover_forecast_files_at(utc(2026, 10, 11, 20, 30, 0))
+            .await
+            .unwrap();
+        let heads = head_paths(&h.server).await;
+        // cycles 19, 18, 17, 16: three hours each except extended 18Z, whose f04 is not yet there
+        let names: Vec<&str> = files.iter().map(|f| f.filename.as_str()).collect();
+        assert_eq!(files.len(), 3 + 4 + 3 + 3, "{names:?}");
+        assert_eq!(
+            names[0], "hrrr_20261011_19z_f000.grib2",
+            "newest cycle first"
+        );
+        assert!(names.contains(&"hrrr_20261011_18z_f003.grib2"));
+        assert!(!names.contains(&"hrrr_20261011_18z_f004.grib2"));
+        // short cycles never probe past their own horizon
+        assert!(!heads.iter().any(|p| p.contains("t17z.wrfprsf03")));
+        assert!(!heads.iter().any(|p| p.contains("t19z.wrfprsf04")));
+        assert_eq!(heads.len(), 3 + 5 + 3 + 3);
+    }
+
+    #[tokio::test]
+    async fn a_later_poll_fetches_the_tail_of_a_cycle_without_re_probing_what_it_has() {
+        let h = harness("  cycle_lookback: 3", "").await;
+        let now = utc(2026, 10, 11, 20, 30, 0);
+        let first = h.runner.discover_forecast_files_at(now).await.unwrap();
+        mark_completed(&h.state, &first).await;
+        let before = head_paths(&h.server).await.len();
+
+        // an hour-ish later in the same cycle window: f04 has been published meanwhile
+        let second = h.runner.discover_forecast_files_at(now).await.unwrap();
+        let heads = head_paths(&h.server).await;
+        let new: Vec<&str> = second.iter().map(|f| f.filename.as_str()).collect();
+        assert_eq!(
+            new,
+            ["hrrr_20261011_18z_f004.grib2"],
+            "only the missing tail"
+        );
+        assert_eq!(
+            heads.len() - before,
+            1,
+            "the 13 files already downloaded must not be probed again: {:?}",
+            &heads[before..]
+        );
+        assert!(heads[before].contains("t18z.wrfprsf04"));
+    }
+
+    #[tokio::test]
+    async fn without_lookback_the_tail_of_an_older_cycle_is_never_found() {
+        // This is the bug: cycle 18 was looked at once, f04 was missing, and by the time it
+        // existed the poll was on cycle 19.
+        let h = harness("", "").await;
+        let now = utc(2026, 10, 11, 20, 30, 0);
+        // the poll that happened while cycle 18 was the newest
+        let during_18 = h
+            .runner
+            .discover_forecast_files_at(utc(2026, 10, 11, 19, 30, 0))
+            .await
+            .unwrap();
+        mark_completed(&h.state, &during_18).await;
+        let later = h.runner.discover_forecast_files_at(now).await.unwrap();
+        assert!(
+            !later.iter().any(|f| f.filename.contains("18z_f004")),
+            "{:?}",
+            later.iter().map(|f| &f.filename).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn always_redownload_models_still_probe_files_they_already_have() {
+        let h = harness("  cycle_lookback: 0", "  always_redownload: true").await;
+        let now = utc(2026, 10, 11, 20, 30, 0);
+        let first = h.runner.discover_forecast_files_at(now).await.unwrap();
+        mark_completed(&h.state, &first).await;
+        let before = head_paths(&h.server).await.len();
+        let again = h.runner.discover_forecast_files_at(now).await.unwrap();
+        assert_eq!(again.len(), first.len());
+        assert_eq!(head_paths(&h.server).await.len() - before, first.len());
+    }
+
+    // =========================================================================
+    // Fixed-period scheduling (virtual time)
+    // =========================================================================
+
+    /// Start offsets (seconds since the first tick) of a body whose n-th run takes `works[n]`
+    /// seconds (the last value repeats), for `run_for` seconds.
+    async fn tick_offsets(period: u64, works: Vec<u64>, run_for: u64) -> Vec<u64> {
+        use std::sync::Mutex;
+        let (tx, rx) = broadcast::channel(1);
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let t0 = tokio::time::Instant::now();
+        let s2 = starts.clone();
+        let task = tokio::spawn(run_on_fixed_period(
+            Duration::from_secs(period),
+            rx,
+            move || {
+                let s = s2.clone();
+                let works = works.clone();
+                async move {
+                    let n = {
+                        let mut g = s.lock().unwrap();
+                        g.push(t0.elapsed().as_secs());
+                        g.len() - 1
+                    };
+                    let work = works[n.min(works.len() - 1)];
+                    tokio::time::sleep(Duration::from_secs(work)).await;
+                }
+            },
+        ));
+        tokio::time::sleep(Duration::from_secs(run_for)).await;
+        tx.send(()).unwrap();
+        task.await.unwrap();
+        let v = starts.lock().unwrap().clone();
+        v
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn polls_stay_on_the_period_however_long_a_cycle_takes() {
+        // A 10 minute cycle used to push every later poll 10 minutes further out.
+        let offsets = tick_offsets(3600, vec![600], 4 * 3600 - 10).await;
+        assert_eq!(offsets, [0, 3600, 7200, 10800]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cycle_overrunning_several_periods_causes_no_burst_of_catch_up_polls() {
+        // The first cycle takes 10000 s, so the 3600 and 7200 ticks come due while it runs. One
+        // poll starts as soon as it ends (10000), the other missed tick is dropped, and the grid
+        // resumes at 10800. A catch-up burst would start the second poll right after the 100 s
+        // run at 10100.
+        let offsets = tick_offsets(3600, vec![10000, 100], 14500).await;
+        assert_eq!(offsets, [0, 10000, 10800, 14400]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_stops_the_loop() {
+        let offsets = tick_offsets(3600, vec![1], 10).await;
+        assert_eq!(
+            offsets,
+            [0],
+            "ran once immediately, then stopped on shutdown"
+        );
     }
 }

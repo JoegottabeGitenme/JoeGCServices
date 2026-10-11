@@ -48,12 +48,24 @@ grid:
 
 schedule:
   cycles: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] # Hourly
+  # Only the 00/06/12/18Z cycles run to 48 h; the other hourly cycles stop at 18 h (NOMADS:
+  # t17z.wrfprsf18 exists, wrfprsf19 is 404). Asking every cycle for 48 h cost ~30 pointless
+  # probes per cycle.
   forecast_hours:
     start: 0
-    end: 48 # 48-hour forecast (available for 00/06/12/18Z cycles)
-    step: 1 # Every hour
+    end: 18
+    step: 1
+  extended_cycles: [0, 6, 12, 18]
+  extended_forecast_hours:
+    start: 0
+    end: 48
+    step: 1
   poll_interval_secs: 3600 # Check every hour
   delay_hours: 1 # Data typically available 1-2 hours after cycle
+  # A cycle is published over time (f00 ~50 min after the cycle, f48 ~2 h 05 min). Re-examine the
+  # newest cycle and the 3 before it on every poll, so the tail of a long run is fetched after it
+  # appears instead of being lost. Already-downloaded files cost no network request.
+  cycle_lookback: 3
   max_concurrent: 3 # Allow up to 3 concurrent downloads
 
 retention:
