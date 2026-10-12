@@ -1,7 +1,7 @@
 # HRRR 15-minute data (`hrrr-subh`)
 
 Composite reflectivity, precipitation rate and precipitation type every 15 minutes, for the first
-6 hours of every HRRR cycle. EDR only (no WMS layer).
+18 hours of every HRRR cycle (the most NCEP publishes). EDR only (no WMS layer).
 
 ## For the frontend
 
@@ -22,7 +22,9 @@ returns one value per 15 minutes (`domain.axes.t.values` are the valid times). A
 newer cycle wins (this is guaranteed by the catalog ordering, see
 `docs/projected-grid-point-reads.md`), so a loop ending "now" is stitched from the latest run.
 
-* Lead time 0-6 h of each cycle. Past 6 h (out to 48 h) use `hrrr-atmosphere` (model `hrrr`), which
+* Lead time 0-18 h of each cycle, so a 15-minute loop runs roughly 16-17 h ahead of now (the newest cycle is available about 1 h 15 min
+  after its cycle time). Past 18 h (out to
+  48 h, synoptic cycles only) use `hrrr-atmosphere` (model `hrrr`), which
   is hourly.
 * A cycle's 15-minute data appears about an hour after the cycle time, as HRRR publishes it.
 * 12 hours of 15-minute data are kept, and at least the 3 latest cycles.
@@ -45,14 +47,18 @@ parameter, which the platform could not represent:
   mean something else (accumulation and average templates), so it stays off.
   Storage paths gain `m15`/`m30`/`m45` for non-zero minutes; hourly paths are unchanged.
 * **Model name**: `hrrr-subh_*` files must not be filed under `hrrr` (`contains("hrrr")` would).
-* **Downloader** reads `wrfsubhf00-06` (S3 mirror, selective download by `.idx`: about 2.8 MB of a
+* **Downloader** reads `wrfsubhf00-18` (S3 mirror, selective download by `.idx`: about 2.8 MB of a
   ~230 MB file), with the cycle lookback from `docs/downloader-cycle-lookback.md`.
 
-Cost: about 25 time steps x 6 parameters per cycle, ~1.1 MB per reflectivity grid, so roughly 60 MB
-per cycle and ~0.7 GB retained.
+Cost, measured on production (Zarr per 15-minute step: REFC 869 kB, PRATE 406 kB, CRAIN 172 kB,
+CSNOW 67 kB, CICEP 46 kB, CFRZR 44 kB, ~1.6 MB together): 73 steps x 6 parameters = 438 datasets and
+~114 MB per cycle, so ~1.4 GB resident at 12 h retention (with the 3-cycle lookback each cycle is also
+re-examined, but already-downloaded files cost no request). Download is ~2.5 MB per file, 19 files per
+cycle, ~1.2 GB a day.
 
-Extending beyond 6 hours is `forecast_hours.end` in `config/models/hrrr-subh.yaml` (files exist to
-`wrfsubhf18`; `wrfsubhf19` is 404).
+History: it started at 0-6 h (25 steps, 39 MB a cycle). Frames then went from 15 to 60 minutes apart
+about 5 h ahead, which looked like a gap in an animation; 18 h is the most there is, since
+`wrfsubhf19` is 404, and the 15 -> 60 minute step now happens at the end of what NCEP offers.
 
 ## Deploying / rolling back
 

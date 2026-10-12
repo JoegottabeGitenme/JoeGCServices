@@ -31,7 +31,7 @@ values). In overview pyramids it is downsampled by nearest; `REFC` and `MESH` by
 ## Notes
 
 - REFC / TCDC / MSLMA history accumulates from the deploy (2026-10-10 ~19:45Z); HRRR retention is 24 h (and at least the 4 latest runs).
-- 15-minute HRRR reflectivity, precipitation rate and type (first 6 h of each cycle) is now available: see
+- 15-minute HRRR reflectivity, precipitation rate and type (first 18 h of each cycle) is now available: see
   `docs/hrrr-subhourly.md`.
 - Not done: a single HRRR precipitation-type grid.
   The four HRRR categorical masks (`CRAIN`, `CSNOW`, `CFRZR`, `CICEP`) are already in EDR.
