@@ -254,7 +254,9 @@ async fn the_newest_run_answers_for_an_instant_whatever_the_ingest_order() {
     let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
     catalog.migrate().await.unwrap();
 
-    let t = |h: i64| now_micros().trunc_subsecs(0) - Duration::hours(10) + Duration::hours(h);
+    // one fixed base: re-reading the clock per call would shift the paths below by a second
+    let base = now_micros().trunc_subsecs(0) - Duration::hours(10);
+    let t = |h: i64| base + Duration::hours(h);
     let valid = t(5); // the instant every run below covers
                       // (run reference time, forecast hour that reaches `valid`)
     let runs = [(t(5), 0u32), (t(4), 1), (t(3), 2), (t(1), 4)];

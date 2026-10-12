@@ -31,8 +31,11 @@ values). In overview pyramids it is downsampled by nearest; `REFC` and `MESH` by
 ## Notes
 
 - REFC / TCDC / MSLMA history accumulates from the deploy (2026-10-10 ~19:45Z); HRRR retention is 24 h (and at least the 4 latest runs).
-- Not done: sub-hourly (15-minute) HRRR precipitation/reflectivity, and a single HRRR precipitation-type grid.
+- 15-minute HRRR reflectivity, precipitation rate and type (first 6 h of each cycle) is now available: see
+  `docs/hrrr-subhourly.md`.
+- Not done: a single HRRR precipitation-type grid.
   The four HRRR categorical masks (`CRAIN`, `CSNOW`, `CFRZR`, `CICEP`) are already in EDR.
 - Existing bug, not fixed here: `GridMetadata::resolution()` divides the first-to-last cell-centre span by
-  the cell count instead of count-1, so regular-grid point reads drift from 0 up to about one cell at the
-  east edge (about 1 km for MRMS). Separate fix.
+  the cell count instead of count-1, so regular lat/lon grid point reads (MRMS, GFS) drift from 0 up to
+  about one cell at the east edge (about 1 km for MRMS). Separate fix. (Point reads on the projected
+  grids - HRRR, NDFD, NBM - had a much larger error and are fixed: `docs/projected-grid-point-reads.md`.)
