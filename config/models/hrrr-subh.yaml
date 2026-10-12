@@ -1,0 +1,177 @@
+# HRRR sub-hourly - 15-minute output of the High-Resolution Rapid Refresh
+#
+# HRRR writes four files per forecast hour: wrfprsf (pressure levels), wrfsfcf (surface),
+# wrfnatf (native) and wrfsubhf (sub-hourly). The last holds the 15, 30, 45 and 60 minute
+# fields of ONE hour in a single file: wrfsubhf01 is 15/30/45/60 minutes after the cycle,
+# wrfsubhf02 is 75/90/105/120, and wrfsubhf00 is the analysis only. Every cycle publishes
+# wrfsubhf00-18 (wrfsubhf19 is 404, measured on the S3 mirror).
+#
+# This is a separate model from `hrrr`, not extra hours of it:
+#  - the 60-minute step is the same valid time as the hourly file, and datasets are keyed by
+#    (model, parameter, level, run, hour, minute) -- two writers of one slot would overwrite;
+#  - it has its own, much shorter retention.
+# Only the first 6 hours are fetched (a short-range radar loop); extending it to 18 is one
+# number below. Sub-hourly REFC is ~1.1 MB a grid, so 6 h of 15-minute steps is ~25 grids a
+# parameter per cycle.
+
+model:
+  id: hrrr-subh
+  name: "HRRR - 15-minute output"
+  description: "HRRR composite reflectivity, precipitation rate and precipitation type every 15 minutes, 0-6 h"
+  enabled: true
+
+dimensions:
+  type: forecast
+  run: true
+  forecast: true
+  elevation: false
+
+source:
+  type: aws_s3
+  bucket: noaa-hrrr-bdp-pds
+  prefix_template: "hrrr.{date}/conus"
+  file_pattern: "hrrr.t{cycle:02}z.wrfsubhf{forecast:02}.grib2"
+  region: us-east-1
+  # Mandatory here: a wrfsubhf file is ~230 MB and we want about 2 MB of it
+  use_index_file: true
+
+# One file holds several lead times of the same parameter, so each message must carry its own
+# lead time instead of the one hour in the file name.
+ingest:
+  lead_time_from_messages: true
+
+# Same grid as `hrrr` (3 km Lambert conformal, 1799 x 1059)
+grid:
+  projection: lambert_conformal
+  resolution: "3km"
+  bbox:
+    min_lon: -122.719528
+    min_lat: 21.138123
+    max_lon: -60.917193
+    max_lat: 47.842195
+  projection_params:
+    lat1: 21.138123
+    lon1: -122.719528
+    lov: -97.5 # Central meridian
+    latin1: 38.5 # Standard parallel
+    latin2: 38.5 # Standard parallel (tangent cone)
+    dx: 3000.0 # meters
+    dy: 3000.0 # meters
+    nx: 1799
+    ny: 1059
+
+schedule:
+  cycles: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] # Hourly
+  # File numbers, not lead hours: wrfsubhf00 (analysis) through wrfsubhf06 (6 h). 0-18 exist.
+  forecast_hours:
+    start: 0
+    end: 6
+    step: 1
+  poll_interval_secs: 3600
+  # Sub-hourly files land at the same time as the other HRRR files of their hour, about 50
+  # minutes after the cycle for the first and up to ~2 h for the deepest; the lookback below
+  # picks up whatever was not there yet.
+  delay_hours: 1
+  cycle_lookback: 3
+  max_concurrent: 2
+
+retention:
+  hours: 12
+  keep_latest_runs: 3
+
+precaching:
+  enabled: false
+
+parameters:
+  # Composite reflectivity. GRIB2 level type 10 ("entire atmosphere"), the same as in `hrrr`
+  # (200 is a different level type that carries PWAT and friends).
+  - name: REFC
+    description: "Composite Reflectivity"
+    grib2:
+      discipline: 0
+      category: 16
+      number: 196
+    downsample: max
+    levels:
+      - type: entire_atmosphere
+        level_code: 10
+        display: "entire atmosphere"
+        idx_level: "entire atmosphere"
+    units: dBZ
+    valid_range: [-10, 80]
+
+  - name: PRATE
+    description: "Precipitation Rate"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 7
+    downsample: mean
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: kg/m^2/s
+    display_units: kg/m^2/s
+    valid_range: [0, 0.05]
+
+  # Categorical precipitation type masks (1 = that type is occurring)
+  - name: CRAIN
+    description: "Categorical Rain"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 33
+    downsample: nearest
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "1"
+    display_units: ""
+    valid_range: [0, 1]
+
+  - name: CSNOW
+    description: "Categorical Snow"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 36
+    downsample: nearest
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "1"
+    display_units: ""
+    valid_range: [0, 1]
+
+  - name: CFRZR
+    description: "Categorical Freezing Rain"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 34
+    downsample: nearest
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "1"
+    display_units: ""
+    valid_range: [0, 1]
+
+  - name: CICEP
+    description: "Categorical Ice Pellets"
+    grib2:
+      discipline: 0
+      category: 1
+      number: 35
+    downsample: nearest
+    levels:
+      - type: surface
+        level_code: 1
+        display: "surface"
+    units: "1"
+    display_units: ""
+    valid_range: [0, 1]

@@ -12,6 +12,7 @@ use zarrs::storage::ReadableStorageTraits;
 use crate::cache::{hash_path, ChunkCache};
 use crate::config::GridProcessorConfig;
 use crate::error::{GridProcessorError, Result};
+use crate::projection::NativeGrid;
 use crate::types::{
     BoundingBox, CacheStats, GridMetadata, GridRegion, MultiscaleMetadata, ProjectionType,
     RowOrigin,
@@ -34,6 +35,9 @@ pub struct ZarrGridProcessor<S: ReadableStorageTraits> {
     path_hash: u64,
     /// Grid metadata extracted from Zarr attributes.
     metadata: GridMetadata,
+    /// The grid's own projection, for locating a point on a Lambert / polar / Mercator grid.
+    /// `None` for geographic grids (and for a projected model this build does not know).
+    native: Option<NativeGrid>,
     /// Shared chunk cache for decompressed data.
     chunk_cache: Arc<RwLock<ChunkCache>>,
     /// Configuration.
@@ -77,11 +81,13 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
 
         let path_hash = hash_path(path);
 
+        let native = NativeGrid::for_model(&metadata.model, metadata.projection);
         Ok(Self {
             array,
             path: path.to_string(),
             path_hash,
             metadata,
+            native,
             chunk_cache,
             config,
         })
@@ -146,11 +152,13 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             "Successfully opened Zarr array"
         );
 
+        let native = NativeGrid::for_model(&metadata.model, metadata.projection);
         Ok(Self {
             array,
             path: path.to_string(),
             path_hash,
             metadata,
+            native,
             chunk_cache,
             config,
         })
@@ -611,6 +619,32 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
     /// centres, or `None` if the point is outside the grid. Longitude is normalised for grids using
     /// the 0-360 convention. Shared by `read_point` (bilinear) and `read_point_nearest`.
     fn point_to_grid(&self, lon: f64, lat: f64) -> Option<(f64, f64)> {
+        // A projected grid (HRRR, NDFD, NBM) is not laid out in degrees: its rows and columns follow
+        // projected metres. Interpolating linearly across the bounding box is only right for a
+        // regular lat/lon grid and put every such point in the wrong cell (Denver's HRRR answer
+        // came from ~470 km away), so use the grid's own projection.
+        if let Some(native) = &self.native {
+            let (col, from_south) = native.geo_to_grid(lon, lat);
+            let (w, h) = self.metadata.shape;
+            let (max_col, max_row) = ((w - 1) as f64, (h - 1) as f64);
+            // Cell centres are integers, so the grid's footprint reaches half a cell past the first
+            // and last centre; a point there is in the grid (and a cell's own coordinates may come
+            // back a rounding error beyond its centre). Negated comparisons so NaN is "outside".
+            if !(col >= -0.5
+                && col <= max_col + 0.5
+                && from_south >= -0.5
+                && from_south <= max_row + 0.5)
+            {
+                return None;
+            }
+            let (col, from_south) = (col.clamp(0.0, max_col), from_south.clamp(0.0, max_row));
+            let row = match self.metadata.row_origin {
+                RowOrigin::South => from_south,
+                RowOrigin::North => max_row - from_south,
+            };
+            return Some((col, row));
+        }
+
         let grid_bbox = &self.metadata.bbox;
 
         // Normalize longitude for grids using 0-360 convention (e.g., GFS)

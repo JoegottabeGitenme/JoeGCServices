@@ -232,14 +232,16 @@ impl Catalog {
                 id, model, parameter, level,
                 reference_time, forecast_hour, valid_time,
                 bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y,
-                storage_path, file_size, ingested_at, status, zarr_metadata
+                storage_path, file_size, ingested_at, status, zarr_metadata,
+                forecast_minute
             ) VALUES (
                 $1, $2, $3, $4,
                 $5, $6, $7,
                 $8, $9, $10, $11,
-                $12, $13, $14, $15, $16
+                $12, $13, $14, $15, $16,
+                $17
             )
-            ON CONFLICT (model, parameter, level, reference_time, forecast_hour)
+            ON CONFLICT (model, parameter, level, reference_time, forecast_hour, forecast_minute)
             DO UPDATE SET
                 storage_path = EXCLUDED.storage_path,
                 file_size = EXCLUDED.file_size,
@@ -264,6 +266,7 @@ impl Catalog {
         .bind(Utc::now())
         .bind("available")
         .bind(&entry.zarr_metadata)
+        .bind(entry.forecast_minute as i16)
         .execute(&self.pool)
         .await
         .map_err(|e| WmsError::DatabaseError(format!("Insert failed: {}", e)))?;
@@ -275,7 +278,7 @@ impl Catalog {
     pub async fn find_datasets(&self, query: &DatasetQuery) -> WmsResult<Vec<CatalogEntry>> {
         // TODO: implement dynamic query building using these variables
         let mut _sql = String::from(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets WHERE status = 'available'",
         );
@@ -297,7 +300,7 @@ impl Catalog {
 
         // For now, use a simpler approach - full query building would need runtime SQL
         let rows = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets WHERE status = 'available' \
              ORDER BY valid_time DESC LIMIT 100",
@@ -371,7 +374,7 @@ impl Catalog {
         parameter: &str,
     ) -> WmsResult<Option<CatalogEntry>> {
         let row = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
@@ -394,7 +397,7 @@ impl Catalog {
         valid_time: DateTime<Utc>,
     ) -> WmsResult<Option<CatalogEntry>> {
         let row = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
@@ -434,7 +437,7 @@ impl Catalog {
         }
 
         let rows = sqlx::query_as::<_, RangeRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata, valid_time FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
@@ -466,7 +469,7 @@ impl Catalog {
         level: &str,
     ) -> WmsResult<Option<CatalogEntry>> {
         let row = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND level = $4 AND status = 'available' \
@@ -491,10 +494,10 @@ impl Catalog {
         forecast_hour: u32,
     ) -> WmsResult<Option<CatalogEntry>> {
         let row = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
-             WHERE model = $1 AND parameter = $2 AND forecast_hour = $3 AND status = 'available' \
+             WHERE model = $1 AND parameter = $2 AND forecast_hour = $3 AND forecast_minute = 0 AND status = 'available' \
              ORDER BY reference_time DESC LIMIT 1",
         )
         .bind(model)
@@ -556,7 +559,7 @@ impl Catalog {
     pub async fn get_recent_ingestions(&self, minutes: i64) -> WmsResult<Vec<CatalogEntry>> {
         let cutoff = Utc::now() - chrono::Duration::minutes(minutes);
         let rows = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
              WHERE ingested_at > $1 AND status = 'available' \
@@ -833,10 +836,10 @@ impl Catalog {
         level: &str,
     ) -> WmsResult<Option<CatalogEntry>> {
         let row = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
-             WHERE model = $1 AND parameter = $2 AND forecast_hour = $3 AND level = $4 AND status = 'available' \
+             WHERE model = $1 AND parameter = $2 AND forecast_hour = $3 AND forecast_minute = 0 AND level = $4 AND status = 'available' \
              ORDER BY reference_time DESC LIMIT 1",
         )
         .bind(model)
@@ -858,7 +861,7 @@ impl Catalog {
         level: &str,
     ) -> WmsResult<Option<CatalogEntry>> {
         let row = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available' \
@@ -882,7 +885,7 @@ impl Catalog {
         parameter: &str,
     ) -> WmsResult<Option<CatalogEntry>> {
         let row = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
@@ -905,7 +908,7 @@ impl Catalog {
         level: &str,
     ) -> WmsResult<Option<CatalogEntry>> {
         let row = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available' \
@@ -1070,7 +1073,7 @@ impl Catalog {
 
         let row = if let Some(lvl) = level {
             sqlx::query_as::<_, DatasetRow>(
-                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
                  bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
                  storage_path, file_size, zarr_metadata FROM datasets \
                  WHERE model = $1 AND parameter = $2 AND level = $3 AND status = 'available' \
@@ -1086,7 +1089,7 @@ impl Catalog {
             .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
         } else {
             sqlx::query_as::<_, DatasetRow>(
-                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
                  bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
                  storage_path, file_size, zarr_metadata FROM datasets \
                  WHERE model = $1 AND parameter = $2 AND status = 'available' \
@@ -1218,7 +1221,7 @@ impl Catalog {
         limit: usize,
     ) -> WmsResult<Vec<CatalogEntry>> {
         let rows = sqlx::query_as::<_, DatasetRow>(
-            "SELECT model, parameter, level, reference_time, forecast_hour, \
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND status = 'available' \
@@ -1242,7 +1245,7 @@ impl Catalog {
     ) -> WmsResult<Option<CatalogEntry>> {
         let row = if let Some(param) = parameter {
             sqlx::query_as::<_, DatasetRow>(
-                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
                  bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
                  storage_path, file_size, zarr_metadata FROM datasets \
                  WHERE model = $1 AND parameter = $2 AND status = 'available' \
@@ -1255,7 +1258,7 @@ impl Catalog {
             .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?
         } else {
             sqlx::query_as::<_, DatasetRow>(
-                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
                  bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
                  storage_path, file_size, zarr_metadata FROM datasets \
                  WHERE model = $1 AND status = 'available' \
@@ -1593,6 +1596,7 @@ impl Catalog {
         let rows = sqlx::query_scalar::<_, i32>(
             "SELECT DISTINCT forecast_hour FROM datasets \
              WHERE model = $1 AND reference_time = $2 AND status = 'available' \
+               AND forecast_minute = 0 \
              ORDER BY forecast_hour ASC",
         )
         .bind(model)
@@ -1669,11 +1673,11 @@ impl Catalog {
     ) -> WmsResult<CatalogEntry> {
         let row = if let Some(lvl) = level {
             sqlx::query_as::<_, DatasetRow>(
-                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
                  bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
                  storage_path, file_size, zarr_metadata FROM datasets \
                  WHERE model = $1 AND parameter = $2 AND reference_time = $3 \
-                   AND forecast_hour = $4 AND level = $5 AND status = 'available' \
+                   AND forecast_hour = $4 AND forecast_minute = 0 AND level = $5 AND status = 'available' \
                  LIMIT 1",
             )
             .bind(model)
@@ -1685,11 +1689,11 @@ impl Catalog {
             .await
         } else {
             sqlx::query_as::<_, DatasetRow>(
-                "SELECT model, parameter, level, reference_time, forecast_hour, \
+                "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
                  bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
                  storage_path, file_size, zarr_metadata FROM datasets \
                  WHERE model = $1 AND parameter = $2 AND reference_time = $3 \
-                   AND forecast_hour = $4 AND status = 'available' \
+                   AND forecast_hour = $4 AND forecast_minute = 0 AND status = 'available' \
                  LIMIT 1",
             )
             .bind(model)
@@ -1733,7 +1737,7 @@ impl Catalog {
         let rows = if let Some(lvl) = level {
             sqlx::query_as::<_, DatasetRow>(
                 "WITH ranked AS (
-                    SELECT model, parameter, level, reference_time, forecast_hour, \
+                    SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
                            bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
                            storage_path, file_size, zarr_metadata, valid_time,
                            ROW_NUMBER() OVER (
@@ -1745,7 +1749,7 @@ impl Catalog {
                       AND valid_time >= $4 AND valid_time <= $5
                       AND status = 'available'
                 )
-                SELECT model, parameter, level, reference_time, forecast_hour, \
+                SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
                        bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
                        storage_path, file_size, zarr_metadata
                 FROM ranked WHERE rn = 1
@@ -1761,7 +1765,7 @@ impl Catalog {
         } else {
             sqlx::query_as::<_, DatasetRow>(
                 "WITH ranked AS (
-                    SELECT model, parameter, level, reference_time, forecast_hour, \
+                    SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
                            bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
                            storage_path, file_size, zarr_metadata, valid_time,
                            ROW_NUMBER() OVER (
@@ -1773,7 +1777,7 @@ impl Catalog {
                       AND valid_time >= $3 AND valid_time <= $4
                       AND status = 'available'
                 )
-                SELECT model, parameter, level, reference_time, forecast_hour, \
+                SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
                        bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
                        storage_path, file_size, zarr_metadata
                 FROM ranked WHERE rn = 1
@@ -1855,6 +1859,11 @@ pub struct CatalogEntry {
     pub level: String,
     pub reference_time: DateTime<Utc>,
     pub forecast_hour: u32,
+    /// Minutes past `forecast_hour` (0-59). Zero for every hourly product; sub-hourly products
+    /// (HRRR's 15-minute steps) use it so that 15, 30 and 45 minutes are distinct datasets.
+    /// The lead time is `forecast_hour` hours plus `forecast_minute` minutes.
+    #[serde(default)]
+    pub forecast_minute: u32,
     pub bbox: BoundingBox,
     pub storage_path: String,
     pub file_size: u64,
@@ -1867,7 +1876,9 @@ pub struct CatalogEntry {
 
 impl CatalogEntry {
     pub fn valid_time(&self) -> DateTime<Utc> {
-        self.reference_time + chrono::Duration::hours(self.forecast_hour as i64)
+        self.reference_time
+            + chrono::Duration::hours(self.forecast_hour as i64)
+            + chrono::Duration::minutes(self.forecast_minute as i64)
     }
 
     pub fn layer_id(&self) -> LayerId {
@@ -1917,6 +1928,9 @@ struct DatasetRow {
     level: String,
     reference_time: DateTime<Utc>,
     forecast_hour: i32,
+    /// Absent from the few queries that do not select it, which then read as 0.
+    #[sqlx(default)]
+    forecast_minute: i16,
     bbox_min_x: f64,
     bbox_min_y: f64,
     bbox_max_x: f64,
@@ -1934,6 +1948,7 @@ impl From<DatasetRow> for CatalogEntry {
             level: row.level,
             reference_time: row.reference_time,
             forecast_hour: row.forecast_hour as u32,
+            forecast_minute: row.forecast_minute.max(0) as u32,
             bbox: BoundingBox::new(
                 row.bbox_min_x,
                 row.bbox_min_y,
@@ -1971,6 +1986,7 @@ CREATE TABLE IF NOT EXISTS datasets (
     level VARCHAR(50) NOT NULL,
     reference_time TIMESTAMPTZ NOT NULL,
     forecast_hour INTEGER NOT NULL,
+    forecast_minute SMALLINT NOT NULL DEFAULT 0,
     valid_time TIMESTAMPTZ NOT NULL,
     bbox_min_x DOUBLE PRECISION NOT NULL,
     bbox_min_y DOUBLE PRECISION NOT NULL,
@@ -1980,10 +1996,17 @@ CREATE TABLE IF NOT EXISTS datasets (
     file_size BIGINT NOT NULL,
     ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status VARCHAR(20) NOT NULL DEFAULT 'available',
-    zarr_metadata JSONB,
-
-    UNIQUE(model, parameter, level, reference_time, forecast_hour)
+    zarr_metadata JSONB
 );
+
+-- Sub-hourly products (HRRR wrfsubhf) put four datasets in one forecast hour, so the lead time
+-- is hour + minute. Existing databases get the column (instantly, with every row at 0), then the
+-- unique key that includes it, and only then lose the old key -- never a moment without one.
+-- A fresh database skips the table's old key entirely: the CREATE TABLE above has none.
+ALTER TABLE datasets ADD COLUMN IF NOT EXISTS forecast_minute SMALLINT NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX IF NOT EXISTS datasets_model_parameter_level_ref_fh_fm_key
+    ON datasets(model, parameter, level, reference_time, forecast_hour, forecast_minute);
+ALTER TABLE datasets DROP CONSTRAINT IF EXISTS datasets_model_parameter_level_reference_time_forecast_hour_key;
 
 CREATE INDEX IF NOT EXISTS idx_datasets_model_param ON datasets(model, parameter);
 CREATE INDEX IF NOT EXISTS idx_datasets_valid_time ON datasets(valid_time DESC);
@@ -2504,6 +2527,7 @@ mod tests {
             level: "surface".to_string(),
             reference_time,
             forecast_hour,
+            forecast_minute: 0,
             bbox: BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
             storage_path: "/data/gfs/2024/01/15/12z/000/temperature_2m.zarr".to_string(),
             file_size: 1024 * 1024,
@@ -2526,6 +2550,43 @@ mod tests {
         let entry = create_test_entry(ref_time, 6);
         let expected = Utc.with_ymd_and_hms(2024, 1, 15, 18, 0, 0).unwrap();
         assert_eq!(entry.valid_time(), expected);
+    }
+
+    #[test]
+    fn test_catalog_entry_valid_time_adds_the_forecast_minute() {
+        // HRRR sub-hourly: 75 minutes after the cycle is hour 1, minute 15
+        let ref_time = Utc.with_ymd_and_hms(2026, 10, 11, 18, 0, 0).unwrap();
+        let mut entry = create_test_entry(ref_time, 1);
+        entry.forecast_minute = 15;
+        assert_eq!(
+            entry.valid_time(),
+            Utc.with_ymd_and_hms(2026, 10, 11, 19, 15, 0).unwrap()
+        );
+        // and it crosses an hour and a day boundary correctly
+        let mut entry = create_test_entry(Utc.with_ymd_and_hms(2026, 10, 11, 23, 0, 0).unwrap(), 0);
+        entry.forecast_minute = 45;
+        assert_eq!(
+            entry.valid_time(),
+            Utc.with_ymd_and_hms(2026, 10, 11, 23, 45, 0).unwrap()
+        );
+        entry.forecast_hour = 1;
+        assert_eq!(
+            entry.valid_time(),
+            Utc.with_ymd_and_hms(2026, 10, 12, 0, 45, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_catalog_entry_without_a_minute_deserializes_with_zero() {
+        // entries cached or serialized before forecast_minute existed
+        let json = serde_json::json!({
+            "model": "hrrr", "parameter": "TMP", "level": "2 m above ground",
+            "reference_time": "2026-10-11T18:00:00Z", "forecast_hour": 3,
+            "bbox": {"min_x": 0.0, "min_y": 0.0, "max_x": 1.0, "max_y": 1.0},
+            "storage_path": "p", "file_size": 1
+        });
+        let entry: CatalogEntry = serde_json::from_value(json).expect("old shape parses");
+        assert_eq!(entry.forecast_minute, 0);
     }
 
     #[test]

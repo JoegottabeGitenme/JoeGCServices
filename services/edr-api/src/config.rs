@@ -1466,4 +1466,44 @@ collections:
             }
         }
     }
+
+    #[test]
+    fn hrrr_subh_collections_are_on_the_fifteen_minute_model_and_only_name_its_parameters() {
+        let cfg = real_edr_config();
+        let (model, atmos) = cfg
+            .find_collection("hrrr-subh-atmosphere")
+            .expect("hrrr-subh-atmosphere");
+        assert_eq!(model.model, "hrrr-subh");
+        assert_eq!(param_names(atmos), ["REFC"]);
+        let (model, surface) = cfg
+            .find_collection("hrrr-subh-surface")
+            .expect("hrrr-subh-surface");
+        assert_eq!(model.model, "hrrr-subh");
+        assert_eq!(
+            param_names(surface),
+            ["PRATE", "CRAIN", "CSNOW", "CFRZR", "CICEP"]
+        );
+
+        // every parameter a collection offers must be one the sub-hourly model ingests
+        let models_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/models");
+        let yaml: serde_yaml::Value = serde_yaml::from_str(
+            &std::fs::read_to_string(models_dir.join("hrrr-subh.yaml")).unwrap(),
+        )
+        .unwrap();
+        let defined: Vec<&str> = yaml["parameters"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p["name"].as_str())
+            .collect();
+        for c in [atmos, surface] {
+            for p in param_names(c) {
+                assert!(defined.contains(&p), "{} offers {p}", c.id);
+            }
+        }
+        // the hourly model's collections are untouched and keep their own model
+        let (hourly, _) = cfg.find_collection("hrrr-atmosphere").unwrap();
+        assert_eq!(hourly.model, "hrrr");
+    }
 }

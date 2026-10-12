@@ -64,6 +64,11 @@ pub struct IngestionFilter {
     valid_ranges: HashMap<String, ValidRange>,
     /// Map: parameter_name → units string (e.g., "K", "%", "m/s").
     units: HashMap<String, String>,
+    /// Take each message's own forecast lead time (hour and minute) from the GRIB2 product
+    /// definition instead of one hour from the file name. Needed by sub-hourly files, where one
+    /// file holds several lead times of the same parameter. Off for every other model: their
+    /// accumulation/average templates put something else in the same octets.
+    lead_time_from_messages: bool,
 }
 
 impl IngestionFilter {
@@ -109,6 +114,11 @@ impl IngestionFilter {
             .get(param)
             .map(|s| s.as_str())
             .unwrap_or("unknown")
+    }
+
+    /// Whether each message's own lead time (not the file name's hour) labels its dataset.
+    pub fn lead_time_from_messages(&self) -> bool {
+        self.lead_time_from_messages
     }
 
     /// Returns true if this filter has any parameters defined.
@@ -257,6 +267,13 @@ fn load_filter_from_config(
         .ok_or_else(|| {
             IngestionError::InvalidConfig(format!("Missing 'parameters' section in {:?}", path))
         })?;
+
+    // `ingest: { lead_time_from_messages: true }` opts a model into per-message lead times
+    filter.lead_time_from_messages = yaml
+        .get("ingest")
+        .and_then(|i| i.get("lead_time_from_messages"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     // Track parameters missing valid_range for error reporting
     let mut missing_valid_range: Vec<String> = Vec::new();
@@ -1260,6 +1277,51 @@ mod integration_tests {
         }
         // ... while the level-200 parameters keep working next to them
         assert!(f.should_ingest("PWAT", 200, 0));
+    }
+
+    #[test]
+    fn only_the_subhourly_model_takes_its_lead_time_from_each_message() {
+        // wrfsubhf files hold four lead times of every parameter, so each message must carry its
+        // own; for every other model the octets in question mean something else (accumulation and
+        // average templates), so switching it on there would mislabel their grids
+        let dir = real_models_dir();
+        let mut on = Vec::new();
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+            let mut filter = IngestionFilter::new();
+            // observation/static configs without GRIB parameters are not loadable as filters
+            if load_filter_from_config(&path, &mut filter).is_err() {
+                continue;
+            }
+            checked += 1;
+            if filter.lead_time_from_messages() {
+                on.push(path.file_stem().unwrap().to_string_lossy().to_string());
+            }
+        }
+        assert!(checked > 5, "only {checked} model configs loaded");
+        assert_eq!(on, ["hrrr-subh"]);
+    }
+
+    #[test]
+    fn hrrr_subh_ingests_reflectivity_rate_and_precipitation_type() {
+        let f = real_filter("hrrr-subh");
+        assert!(f.lead_time_from_messages());
+        assert!(f.should_ingest("REFC", 10, 0), "REFC is level type 10");
+        assert!(!f.should_ingest("REFC", 200, 0));
+        for p in ["PRATE", "CRAIN", "CSNOW", "CFRZR", "CICEP"] {
+            assert!(f.should_ingest(p, 1, 0), "{p} at the surface");
+            assert!(f.get_valid_range(p).is_some(), "{p} valid_range");
+        }
+        // the sub-hourly file has dozens more; only the configured ones are kept
+        assert!(!f.should_ingest("VIS", 1, 0));
+        assert!(!f.should_ingest("TMP", 103, 2));
+        let (params, _) = real_tables("hrrr-subh");
+        assert_eq!(params.get(&(0, 16, 196)).map(String::as_str), Some("REFC"));
+        assert_eq!(params.get(&(0, 1, 7)).map(String::as_str), Some("PRATE"));
     }
 
     #[test]

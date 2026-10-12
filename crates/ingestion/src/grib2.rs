@@ -55,6 +55,7 @@ pub async fn ingest_grib2(
 
     // Build ingestion filter from model config (fail-fast if config is missing/invalid)
     let filter = build_filter_for_model(&model)?;
+    let lead_from_messages = filter.lead_time_from_messages();
 
     // Parse GRIB2 data
     let mut reader = grib2_parser::Grib2Reader::new(data, tables);
@@ -81,7 +82,23 @@ pub async fn ingest_grib2(
         let level_type = message.product_definition.level_type;
         let level_value = message.product_definition.level_value;
 
-        let param_level_key = format!("{}:{}", param, level);
+        // Lead time of this message. Normally the one forecast hour from the file name; for
+        // models that opt in (sub-hourly files hold 15, 30, 45 and 60 minutes of the same
+        // parameter) the message's own, split into whole hours and minutes.
+        let (msg_hour, msg_minute) = if lead_from_messages {
+            let lead = message.product_definition.lead_minutes;
+            (lead / 60, lead % 60)
+        } else {
+            (forecast_hour, 0)
+        };
+
+        // One dataset per parameter, level and lead time: without the lead in the key the first
+        // message would win and the rest of a sub-hourly file be dropped.
+        let param_level_key = if lead_from_messages {
+            format!("{}:{}:{}", param, level, msg_hour * 60 + msg_minute)
+        } else {
+            format!("{}:{}", param, level)
+        };
 
         // Check if we should register this parameter (config-driven filtering)
         let should_register = !registered_params.contains(&param_level_key)
@@ -102,7 +119,8 @@ pub async fn ingest_grib2(
             &reference_time,
             param,
             &level_sanitized,
-            forecast_hour,
+            msg_hour,
+            msg_minute,
         );
 
         // Extract grid dimensions
@@ -223,7 +241,7 @@ pub async fn ingest_grib2(
         // Geographic (GFS, MRMS, etc.):
         //   - Row 0 is at the north (max_lat)
         //   - Simple linear coordinate mapping
-        let (gp_bbox, row_origin, projection_type) = if model == "hrrr" {
+        let (gp_bbox, row_origin, projection_type) = if is_hrrr_grid(&model) {
             let proj = LambertConformal::hrrr();
             let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
             (
@@ -327,7 +345,7 @@ pub async fn ingest_grib2(
             level,
             units,
             reference_time,
-            forecast_hour,
+            msg_hour,
             &zarr_storage_path,
             row_origin,
             projection_type,
@@ -338,6 +356,9 @@ pub async fn ingest_grib2(
                 // Record which upstream file this grid came from. For MRMS QPE_01H that is how
                 // you tell a Pass2 hour from one filled in from Pass1.
                 annotate_source_file(&mut zarr_metadata, file_path);
+                if msg_minute != 0 {
+                    annotate_forecast_minute(&mut zarr_metadata, msg_minute);
+                }
 
                 // Register in catalog
                 let bbox = get_model_bbox(&model);
@@ -346,7 +367,8 @@ pub async fn ingest_grib2(
                     parameter: param.to_string(),
                     level: level.clone(),
                     reference_time,
-                    forecast_hour,
+                    forecast_hour: msg_hour,
+                    forecast_minute: msg_minute,
                     bbox,
                     storage_path: zarr_storage_path,
                     file_size: zarr_file_size,
@@ -362,11 +384,13 @@ pub async fn ingest_grib2(
                         bytes_written += zarr_file_size;
                     }
                     Err(e) => {
-                        debug!(
+                        // Registration upserts, so an error here is a real failure (not a
+                        // duplicate), and a grid written but not registered is invisible.
+                        warn!(
                             param = %param,
                             level = %level,
                             error = %e,
-                            "Could not register (may already exist)"
+                            "Could not register dataset in the catalog"
                         );
                     }
                 }
@@ -406,13 +430,34 @@ fn annotate_source_file(zarr_metadata: &mut serde_json::Value, file_path: &str) 
     }
 }
 
+/// Add the minute past `forecast_hour` to a dataset's zarr metadata (the writer records only
+/// the hour). Anything that is not a JSON object is left alone.
+fn annotate_forecast_minute(zarr_metadata: &mut serde_json::Value, minute: u32) {
+    if let serde_json::Value::Object(map) = zarr_metadata {
+        map.insert(
+            "forecast_minute".to_string(),
+            serde_json::Value::from(minute),
+        );
+    }
+}
+
+/// Models on HRRR's Lambert conformal grid (hourly output and the 15-minute sub-hourly output).
+fn is_hrrr_grid(model: &str) -> bool {
+    model == "hrrr" || model == "hrrr-subh"
+}
+
 /// Build storage path for a parameter.
+///
+/// `forecast_minute` is 0 for every hourly product, whose paths are unchanged
+/// (`..._f003.zarr`); a sub-hourly step gets it appended (`..._f001m15.zarr`) so that the four
+/// steps of an hour do not share one path.
 fn build_storage_path(
     model: &str,
     reference_time: &DateTime<Utc>,
     param: &str,
     level_sanitized: &str,
     forecast_hour: u32,
+    forecast_minute: u32,
 ) -> String {
     // For observation data like MRMS, use minute-level paths
     // For forecast models, use hourly paths
@@ -422,13 +467,19 @@ fn build_storage_path(
         reference_time.format("%Y%m%d_%Hz").to_string()
     };
 
+    let step = if forecast_minute == 0 {
+        format!("f{:03}", forecast_hour)
+    } else {
+        format!("f{:03}m{:02}", forecast_hour, forecast_minute)
+    };
+
     format!(
-        "grids/{}/{}/{}_{}_f{:03}.zarr",
+        "grids/{}/{}/{}_{}_{}.zarr",
         model,
         run_date,
         param.to_lowercase(),
         level_sanitized,
-        forecast_hour
+        step
     )
 }
 
@@ -587,7 +638,7 @@ mod tests {
     #[test]
     fn test_build_storage_path_gfs() {
         let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 12, 0, 0).unwrap();
-        let path = build_storage_path("gfs", &reference_time, "TMP", "2m_above_ground", 6);
+        let path = build_storage_path("gfs", &reference_time, "TMP", "2m_above_ground", 6, 0);
 
         assert_eq!(path, "grids/gfs/20241217_12z/tmp_2m_above_ground_f006.zarr");
     }
@@ -595,7 +646,7 @@ mod tests {
     #[test]
     fn test_build_storage_path_hrrr() {
         let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 0, 0, 0).unwrap();
-        let path = build_storage_path("hrrr", &reference_time, "UGRD", "10m_above_ground", 12);
+        let path = build_storage_path("hrrr", &reference_time, "UGRD", "10m_above_ground", 12, 0);
 
         // Note: %Hz format produces "0z" for hour 0 (no leading zero)
         assert_eq!(
@@ -607,13 +658,13 @@ mod tests {
     #[test]
     fn test_build_storage_path_mrms_qpe_also_uses_minute_paths() {
         let reference_time = Utc.with_ymd_and_hms(2026, 10, 9, 15, 0, 0).unwrap();
-        let path = build_storage_path("mrms-qpe", &reference_time, "QPE_01H", "surface", 0);
+        let path = build_storage_path("mrms-qpe", &reference_time, "QPE_01H", "surface", 0, 0);
         assert_eq!(
             path,
             "grids/mrms-qpe/20261009_1500z/qpe_01h_surface_f000.zarr"
         );
         // other models keep hourly paths
-        let hrrr = build_storage_path("hrrr", &reference_time, "TMP", "2m", 3);
+        let hrrr = build_storage_path("hrrr", &reference_time, "TMP", "2m", 3, 0);
         assert!(hrrr.contains("20261009_15z"), "{hrrr}");
     }
 
@@ -642,7 +693,7 @@ mod tests {
     fn test_build_storage_path_mrms() {
         // MRMS uses minute-level timestamps
         let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 14, 32, 0).unwrap();
-        let path = build_storage_path("mrms", &reference_time, "REFL", "surface", 0);
+        let path = build_storage_path("mrms", &reference_time, "REFL", "surface", 0, 0);
 
         assert_eq!(path, "grids/mrms/20241217_1432z/refl_surface_f000.zarr");
     }
@@ -650,10 +701,66 @@ mod tests {
     #[test]
     fn test_build_storage_path_parameter_lowercase() {
         let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 0, 0, 0).unwrap();
-        let path = build_storage_path("gfs", &reference_time, "CAPE", "surface", 0);
+        let path = build_storage_path("gfs", &reference_time, "CAPE", "surface", 0, 0);
 
         // Parameter should be lowercase in path
         assert!(path.contains("/cape_"));
+    }
+
+    #[test]
+    fn sub_hourly_steps_get_their_own_storage_path() {
+        let reference_time = Utc.with_ymd_and_hms(2026, 10, 11, 18, 0, 0).unwrap();
+        let path = |hour, minute| {
+            build_storage_path(
+                "hrrr-subh",
+                &reference_time,
+                "REFC",
+                "entire_atmosphere",
+                hour,
+                minute,
+            )
+        };
+        // the four steps of an hour are four files; the hour step itself is unchanged in form
+        let steps = [
+            path(0, 15),
+            path(0, 30),
+            path(0, 45),
+            path(1, 0),
+            path(1, 15),
+        ];
+        let mut unique = steps.to_vec();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 5, "{steps:?}");
+        assert!(
+            steps[0].ends_with("refc_entire_atmosphere_f000m15.zarr"),
+            "{}",
+            steps[0]
+        );
+        assert!(
+            steps[3].ends_with("refc_entire_atmosphere_f001.zarr"),
+            "{}",
+            steps[3]
+        );
+        assert!(
+            steps[4].ends_with("refc_entire_atmosphere_f001m15.zarr"),
+            "{}",
+            steps[4]
+        );
+        // hourly models never get a minute suffix
+        assert_eq!(
+            build_storage_path("hrrr", &reference_time, "TMP", "2m", 3, 0),
+            "grids/hrrr/20261011_18z/tmp_2m_f003.zarr"
+        );
+    }
+
+    #[test]
+    fn the_hrrr_grid_covers_both_hrrr_models_and_only_them() {
+        assert!(is_hrrr_grid("hrrr"));
+        assert!(is_hrrr_grid("hrrr-subh"));
+        for m in ["gfs", "nbm-conus", "ndfd", "mrms", "hrrr-ak", ""] {
+            assert!(!is_hrrr_grid(m), "{m}");
+        }
     }
 
     #[test]
@@ -661,15 +768,15 @@ mod tests {
         let reference_time = Utc.with_ymd_and_hms(2024, 12, 17, 0, 0, 0).unwrap();
 
         // Single digit should be zero-padded to 3 digits
-        let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 3);
+        let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 3, 0);
         assert!(path.ends_with("_f003.zarr"));
 
         // Double digit
-        let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 48);
+        let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 48, 0);
         assert!(path.ends_with("_f048.zarr"));
 
         // Triple digit
-        let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 120);
+        let path = build_storage_path("gfs", &reference_time, "TMP", "surface", 120, 0);
         assert!(path.ends_with("_f120.zarr"));
     }
 

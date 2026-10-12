@@ -247,6 +247,7 @@ pub async fn ingest_netcdf(
         level: level.to_string(),
         reference_time: observation_time,
         forecast_hour: 0, // Observational data
+        forecast_minute: 0,
         bbox: catalog_bbox,
         storage_path: zarr_storage_path.clone(),
         file_size: zarr_file_size,

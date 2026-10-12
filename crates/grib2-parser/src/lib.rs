@@ -138,7 +138,7 @@ pub struct Grib2Message {
 impl Grib2Message {
     /// Get the valid time (reference time + forecast hour)
     pub fn valid_time(&self) -> chrono::DateTime<chrono::Utc> {
-        let offset = chrono::Duration::hours(self.product_definition.forecast_hour as i64);
+        let offset = chrono::Duration::minutes(self.product_definition.lead_minutes as i64);
         self.identification.reference_time + offset
     }
 
@@ -502,6 +502,7 @@ mod tests {
                 level_value: 2,
                 level_description: "2 m above ground".to_string(),
                 forecast_hour: 6,
+                lead_minutes: 360,
             },
             data_representation: sections::DataRepresentation {
                 num_data_points: 1038240,

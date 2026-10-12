@@ -27,6 +27,7 @@ fn entry(model: &str, parameter: &str, level: &str, run: DateTime<Utc>, hour: u3
         level: level.to_string(),
         reference_time: run,
         forecast_hour: hour,
+        forecast_minute: 0,
         bbox: BoundingBox::new(-135.0, 20.0, -60.0, 55.0),
         storage_path: format!("{model}/{parameter}/{hour}.zarr"),
         file_size: 1,
