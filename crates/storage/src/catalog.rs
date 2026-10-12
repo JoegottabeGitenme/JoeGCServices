@@ -401,7 +401,8 @@ impl Catalog {
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
-             ORDER BY ABS(EXTRACT(EPOCH FROM (valid_time - $3))) ASC LIMIT 1",
+             ORDER BY ABS(EXTRACT(EPOCH FROM (valid_time - $3))) ASC, \
+                      reference_time DESC, ingested_at DESC LIMIT 1",
         )
         .bind(model)
         .bind(parameter)
@@ -415,7 +416,9 @@ impl Catalog {
 
     /// Every available dataset for `model`/`parameter` whose valid time lies in
     /// `[from, to]` (both inclusive), optionally restricted to one `level`, oldest first, with
-    /// its valid time. For equal valid times the most recently ingested comes first.
+    /// its valid time. For equal valid times the newest run comes first (then the most recently
+    /// ingested): a forecast model has one dataset per run for every instant, and the best answer for
+    /// an instant is the newest run's, whatever order the files happened to be ingested in.
     ///
     /// One query for a whole time series. `find_by_time` / `find_by_time_and_level` answer
     /// "which dataset is nearest to this instant" and are run once per step, so a 72-step
@@ -443,7 +446,7 @@ impl Catalog {
              WHERE model = $1 AND parameter = $2 AND status = 'available' \
                AND ($3::text IS NULL OR level = $3) \
                AND valid_time >= $4 AND valid_time <= $5 \
-             ORDER BY valid_time ASC, ingested_at DESC",
+             ORDER BY valid_time ASC, reference_time DESC, ingested_at DESC",
         )
         .bind(model)
         .bind(parameter)
@@ -473,7 +476,8 @@ impl Catalog {
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata FROM datasets \
              WHERE model = $1 AND parameter = $2 AND level = $4 AND status = 'available' \
-             ORDER BY ABS(EXTRACT(EPOCH FROM (valid_time - $3))) ASC LIMIT 1",
+             ORDER BY ABS(EXTRACT(EPOCH FROM (valid_time - $3))) ASC, \
+                      reference_time DESC, ingested_at DESC LIMIT 1",
         )
         .bind(model)
         .bind(parameter)

@@ -241,6 +241,101 @@ async fn migrating_an_existing_datasets_table_keeps_its_rows_and_admits_minutes(
     );
 }
 
+/// Several runs of a forecast model cover every instant. The answer for an instant must be the
+/// NEWEST run's, however the files were ingested: the downloader now backfills the tail of older
+/// runs, so an old run can easily be ingested after a newer one. Before, a single-instant lookup
+/// ordered only by distance to the instant and returned an arbitrary run (production returned a
+/// four-hour-old forecast over the fresh analysis), and the series query preferred whichever run
+/// was ingested last.
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn the_newest_run_answers_for_an_instant_whatever_the_ingest_order() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+    catalog.migrate().await.unwrap();
+
+    let t = |h: i64| now_micros().trunc_subsecs(0) - Duration::hours(10) + Duration::hours(h);
+    let valid = t(5); // the instant every run below covers
+                      // (run reference time, forecast hour that reaches `valid`)
+    let runs = [(t(5), 0u32), (t(4), 1), (t(3), 2), (t(1), 4)];
+
+    // newest run FIRST, then the older ones afterwards (a backfill), so that "last ingested" and
+    // "newest run" are different runs
+    for (reference, hour) in runs {
+        let mut e = test_entry("hrrr", "TMP", hour);
+        e.level = "2 m above ground".to_string();
+        e.reference_time = reference;
+        e.storage_path = format!("grids/hrrr/run_{}_f{hour:03}.zarr", reference.timestamp());
+        catalog.register_dataset(&e).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+    let newest = format!("grids/hrrr/run_{}_f000.zarr", t(5).timestamp());
+
+    let by_level = catalog
+        .find_by_time_and_level("hrrr", "TMP", valid, "2 m above ground")
+        .await
+        .unwrap()
+        .expect("a dataset");
+    assert_eq!(by_level.storage_path, newest, "find_by_time_and_level");
+    let any_level = catalog
+        .find_by_time("hrrr", "TMP", valid)
+        .await
+        .unwrap()
+        .expect("a dataset");
+    assert_eq!(any_level.storage_path, newest, "find_by_time");
+
+    let series = catalog
+        .find_datasets_in_valid_time_range("hrrr", "TMP", Some("2 m above ground"), valid, valid)
+        .await
+        .unwrap();
+    assert_eq!(series.len(), 4, "all four runs are candidates");
+    assert_eq!(
+        series[0].1.storage_path, newest,
+        "the series takes the first candidate"
+    );
+
+    // and the other way round: the same data ingested oldest-first gives the same answer
+    let infra2 = TestInfrastructure::start().await;
+    let catalog2 = Catalog::connect(&infra2.postgres_url()).await.unwrap();
+    catalog2.migrate().await.unwrap();
+    for (reference, hour) in runs.iter().rev() {
+        let mut e = test_entry("hrrr", "TMP", *hour);
+        e.level = "2 m above ground".to_string();
+        e.reference_time = *reference;
+        e.storage_path = format!("grids/hrrr/run_{}_f{hour:03}.zarr", reference.timestamp());
+        catalog2.register_dataset(&e).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+    assert_eq!(
+        catalog2
+            .find_by_time_and_level("hrrr", "TMP", valid, "2 m above ground")
+            .await
+            .unwrap()
+            .unwrap()
+            .storage_path,
+        newest,
+        "find_by_time_and_level, oldest ingested first"
+    );
+    assert_eq!(
+        catalog2
+            .find_by_time("hrrr", "TMP", valid)
+            .await
+            .unwrap()
+            .unwrap()
+            .storage_path,
+        newest,
+        "find_by_time, oldest ingested first"
+    );
+    let series = catalog2
+        .find_datasets_in_valid_time_range("hrrr", "TMP", None, valid, valid)
+        .await
+        .unwrap();
+    assert_eq!(
+        series[0].1.storage_path, newest,
+        "series, oldest ingested first"
+    );
+}
+
 #[tokio::test]
 #[ignore] // Requires Docker
 async fn a_fresh_database_ends_up_with_the_same_single_key() {

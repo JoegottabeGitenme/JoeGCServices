@@ -1,4 +1,4 @@
-# Point reads on projected grids landed in the wrong cell
+# Point reads on projected grids: wrong cell, and wrong run
 
 ## What was wrong
 
@@ -78,3 +78,30 @@ cache, Cloudflare) will serve the old values until it expires.
 
 `GridMetadata::resolution()` (span / count rather than span / (count - 1)) is a separate, smaller
 drift that still applies to the regular lat/lon grids; it is not touched here.
+
+## A second problem found while verifying: which run answers an instant
+
+After the cell fix, production 2 m temperature still differed from the file at some cities (Phoenix
++2.7 K), and querying production at the exact centre of a known cell returned a value that matched the
+file's value for that cell **in the 18Z run's 4-hour forecast** (301.51 K), not in the 22Z analysis that
+covers the same instant. Thirteen runs of `hrrr` cover 22:00Z; the EDR was serving an arbitrary one.
+
+Cause, in `crates/storage/src/catalog.rs`:
+
+* `find_by_time` / `find_by_time_and_level` (single instant) ordered only by
+  `ABS(valid_time - instant)` and took one row, so every run tying at distance 0 was equally eligible and
+  the winner was whichever Postgres produced first.
+* `find_datasets_in_valid_time_range` (series) broke ties by `ingested_at DESC`, i.e. whichever run was
+  ingested last. That used to be roughly "newest run"; it stops being true once the downloader
+  backfills the tail of older runs (`docs/downloader-cycle-lookback.md`), which then outrank newer ones.
+
+Both now order by `reference_time DESC` first (newest run wins), then `ingested_at DESC` (the same run
+re-ingested, e.g. MRMS QPE Pass1 then Pass2 for one hour). Observation models have one dataset per
+instant, so nothing changes for them. For `hrrr-subh` this is what makes "the newer cycle wins" true.
+
+Tested against Postgres with the newest run ingested first and last
+(`the_newest_run_answers_for_an_instant_whatever_the_ingest_order`); reverting any of the three
+orderings fails it.
+
+WMS GetMap with an ISO `TIME` goes through the same lookups; it picks up the fix when wms-api is next
+rebuilt.

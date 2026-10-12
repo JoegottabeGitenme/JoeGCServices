@@ -19,7 +19,8 @@ GET /edr/collections/hrrr-subh-atmosphere/position
 
 returns one value per 15 minutes (`domain.axes.t.values` are the valid times). A single instant
 (`datetime=2026-10-12T00:30:00Z`) returns that step. Where two cycles cover the same instant the
-newer cycle wins, so a loop ending "now" is stitched from the latest run.
+newer cycle wins (this is guaranteed by the catalog ordering, see
+`docs/projected-grid-point-reads.md`), so a loop ending "now" is stitched from the latest run.
 
 * Lead time 0-6 h of each cycle. Past 6 h (out to 48 h) use `hrrr-atmosphere` (model `hrrr`), which
   is hourly.
