@@ -70,8 +70,8 @@ schedule:
     end: 18
     step: 1
   poll_interval_secs: 3600
-  # Sub-hourly files land about 50 minutes after the cycle for the first and ~1 h 15 min for the
-  # last (measured: the 12Z cycle's f07 at 12:59, f12 at 13:07, f18 at 13:13); the lookback below
+  # Sub-hourly files land about 50 minutes after the cycle for the first and 1 h 13 min to 1 h 25 min
+  # for the last (measured: the 12Z cycle's f18 at 13:13, the 13Z cycle's at 14:24); the lookback below
   # picks up whatever was not there yet.
   delay_hours: 1
   cycle_lookback: 3

@@ -22,8 +22,8 @@ returns one value per 15 minutes (`domain.axes.t.values` are the valid times). A
 newer cycle wins (this is guaranteed by the catalog ordering, see
 `docs/projected-grid-point-reads.md`), so a loop ending "now" is stitched from the latest run.
 
-* Lead time 0-18 h of each cycle, so a 15-minute loop runs roughly 16-17 h ahead of now (the newest cycle is available about 1 h 15 min
-  after its cycle time). Past 18 h (out to
+* Lead time 0-18 h of each cycle, so a 15-minute loop runs roughly 16-17 h ahead of now (the last file of a cycle appears 1 h 15 min to
+  1 h 25 min after its cycle time). Past 18 h (out to
   48 h, synoptic cycles only) use `hrrr-atmosphere` (model `hrrr`), which
   is hourly.
 * A cycle's 15-minute data appears about an hour after the cycle time, as HRRR publishes it.
