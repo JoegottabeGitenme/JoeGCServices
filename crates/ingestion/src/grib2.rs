@@ -403,6 +403,17 @@ pub async fn ingest_grib2(
 
     let parameters: Vec<String> = registered_param_names.into_iter().collect();
 
+    // Downloads are selective, so a file normally holds only configured parameters; nothing
+    // registered means the model or its messages were not understood (GFS-Wave went weeks this
+    // way, read as `gfs` and then undecodable), not that the file was legitimately empty.
+    if datasets_registered == 0 {
+        warn!(
+            model = %model,
+            file = %file_path,
+            "GRIB2 file registered no datasets"
+        );
+    }
+
     info!(
         model = %model,
         datasets = datasets_registered,

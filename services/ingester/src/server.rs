@@ -1329,7 +1329,13 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
         .route("/ingest", post(ingest_handler))
         .route("/ingest/observations", post(ingest_observations_handler))
         .route("/ingest/tafs", post(ingest_tafs_handler))
-        .route("/ingest/storm-events", post(ingest_storm_events_handler))
+        .route(
+            "/ingest/storm-events",
+            // The downloader posts 2,000 events per batch, each with its narratives and the raw
+            // CSV row (~2-3 KB), so a batch is several MB; axum's 2 MB default answered 413 and
+            // those years never loaded.
+            post(ingest_storm_events_handler).layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+        )
         .route(
             "/ingest/storm-events/refresh-counties",
             post(refresh_counties_handler),
@@ -1747,5 +1753,93 @@ mod cancel_tests {
         assert!(status.recent[0].success, "{:?}", status.recent[0]);
         assert_eq!(status.recent[0].datasets_registered, DATASETS as usize);
         assert_eq!(datasets(&catalog).await, DATASETS);
+    }
+}
+
+/// A full downloader batch of storm events is several MB; it must be accepted, not refused with
+/// 413 by axum's 2 MB default body limit. `#[ignore]`d (Docker):
+///
+/// ```text
+/// cargo test -p ingester -- --ignored storm_events_http_tests
+/// ```
+#[cfg(test)]
+mod storm_events_http_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use storage::{Catalog, ObjectStorage, ObjectStorageConfig};
+    use tower::ServiceExt;
+
+    /// The downloader's batch size (`storm_events_runner.rs`).
+    const BATCH: usize = 2000;
+
+    #[tokio::test]
+    #[ignore = "requires Docker"]
+    async fn a_full_batch_of_storm_events_is_accepted_and_stored() {
+        let infra = test_utils::containers::TestInfrastructure::start().await;
+        let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+        catalog.migrate().await.unwrap();
+        catalog.migrate_storm_events().await.unwrap();
+        // Never contacted by this route.
+        let storage = Arc::new(
+            ObjectStorage::new(&ObjectStorageConfig {
+                endpoint: "http://127.0.0.1:1".to_string(),
+                bucket: "unused".to_string(),
+                access_key_id: "x".to_string(),
+                secret_access_key: "x".to_string(),
+                region: "us-east-1".to_string(),
+                allow_http: true,
+            })
+            .unwrap(),
+        );
+        let state = Arc::new(ServerState {
+            ingester: Ingester::new(storage, catalog.clone()),
+            observation_catalog: None,
+            storm_event_catalog: Some(StormEventCatalog::new(catalog.pool_clone())),
+            trail_report_catalog: None,
+            lightning_catalog: None,
+            tracker: IngestionTracker::new(),
+        });
+
+        // Narratives of the length real reports carry, plus the raw row, as the downloader sends.
+        let narrative =
+            "Quarter size hail was reported along the highway near the county line. ".repeat(10);
+        let events: Vec<serde_json::Value> = (0..BATCH)
+            .map(|i| {
+                serde_json::json!({
+                    "event_id": 9_000_000 + i as i64,
+                    "episode_id": 100_000 + (i / 10) as i64,
+                    "event_type": "hail",
+                    "begin_time": "2000-06-01T21:30:00Z",
+                    "begin_lat": 39.5 + (i % 100) as f64 * 0.01,
+                    "begin_lon": -104.9,
+                    "magnitude": 1.0,
+                    "magnitude_unit": "in",
+                    "state": "COLORADO",
+                    "event_narrative": narrative,
+                    "episode_narrative": narrative,
+                    "raw": { "EVENT_NARRATIVE": narrative, "EPISODE_NARRATIVE": narrative },
+                })
+            })
+            .collect();
+        let body = serde_json::json!({ "events": events }).to_string();
+        assert!(body.len() > 4 << 20, "batch is only {} bytes", body.len());
+
+        let response = build_router(state)
+            .oneshot(
+                Request::post("/ingest/storm-events")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM storm_events")
+            .fetch_one(catalog.pool())
+            .await
+            .unwrap();
+        assert_eq!(stored, BATCH as i64);
     }
 }
