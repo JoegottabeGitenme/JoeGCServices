@@ -108,6 +108,10 @@ pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
         Some("nldas-forcing".to_string())
     } else if lower.starts_with("gldas_noah") {
         Some("gldas-noah".to_string())
+    } else if lower.starts_with("hrrr-subh") || lower.contains("hrrr-subh") {
+        // 15-minute HRRR output is its own model. Must be checked before the generic HRRR branch,
+        // whose `contains("hrrr")` also matches (the same trap as mrms-qpe below).
+        Some("hrrr-subh".to_string())
     } else if lower.starts_with("hrrr") || lower.contains("hrrr") {
         Some("hrrr".to_string())
     } else if lower.starts_with("aigefs") || lower.contains("aigefs") {
@@ -298,7 +302,7 @@ fn parse_goes_timestamp(time_str: &str) -> Option<DateTime<Utc>> {
 /// Returns appropriate geographic bounds for each weather model.
 pub fn get_model_bbox(model: &str) -> BoundingBox {
     match model {
-        "hrrr" => BoundingBox::new(-122.719528, 21.138123, -60.917193, 47.842195),
+        "hrrr" | "hrrr-subh" => BoundingBox::new(-122.719528, 21.138123, -60.917193, 47.842195),
         "mrms" | "mrms-qpe" => BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
         "gfs" => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
         "goes19" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
@@ -554,6 +558,43 @@ mod tests {
         assert_eq!(
             extract_model_from_filename("/data/hrrr/hrrr.grib2"),
             Some("hrrr".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_model_hrrr_subh_is_its_own_model() {
+        // The downloader names these `hrrr-subh_<date>_<cycle>z_f###.grib2`. A plain
+        // `contains("hrrr")` would file them under the hourly model, whose datasets they would
+        // then overwrite at the hour boundaries.
+        for f in [
+            "hrrr-subh_20261011_18z_f001.grib2",
+            "/data/downloads/hrrr-subh_20261011_18z_f006.grib2",
+            "HRRR-SUBH_20261011_18z_f001.grib2",
+        ] {
+            assert_eq!(
+                extract_model_from_filename(f),
+                Some("hrrr-subh".to_string()),
+                "{f}"
+            );
+        }
+        assert_eq!(
+            extract_model_from_filename("hrrr_20261011_18z_f001.grib2"),
+            Some("hrrr".to_string()),
+            "the hourly model is still hrrr"
+        );
+        assert_eq!(
+            extract_forecast_hour("hrrr-subh_20261011_18z_f001.grib2"),
+            Some(1)
+        );
+        let (hourly, subhourly) = (get_model_bbox("hrrr"), get_model_bbox("hrrr-subh"));
+        assert_eq!(
+            (hourly.min_x, hourly.min_y, hourly.max_x, hourly.max_y),
+            (
+                subhourly.min_x,
+                subhourly.min_y,
+                subhourly.max_x,
+                subhourly.max_y
+            )
         );
     }
 

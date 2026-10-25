@@ -80,7 +80,12 @@ pub struct ProductDefinition {
     pub level_type: u8,
     pub level_value: u32,
     pub level_description: String,
+    /// Whole hours of the forecast lead time (`lead_minutes / 60`).
     pub forecast_hour: u32,
+    /// Forecast lead time in minutes, honouring the message's time unit (octet 18, Code
+    /// Table 4.4). Sub-hourly products such as HRRR's `wrfsubhf` files are labelled in minutes
+    /// (15, 30, 45, 60, 75 ...): reading that value as hours is wrong by a factor of 60.
+    pub lead_minutes: u32,
 }
 
 /// Section 5: Data Representation Section
@@ -524,20 +529,25 @@ pub fn parse_product_definition(
     let parameter_number = section_data[10];
 
     // For template 0 (analysis/forecast at horizontal level):
-    // Byte 18-21: Forecast time (4 bytes)
+    // Byte 17: Indicator of unit of time range (Code Table 4.4: 0 minute, 1 hour, ...)
+    // Byte 18-21: Forecast time, in that unit (4 bytes)
     // Byte 22: Type of first fixed surface
     // Byte 23: Scale factor of first fixed surface
     // Byte 24-27: Scaled value of first fixed surface (4 bytes)
-    let forecast_hour = if section_data.len() >= 22 {
-        u32::from_be_bytes([
-            section_data[18],
-            section_data[19],
-            section_data[20],
-            section_data[21],
-        ])
+    let lead_minutes = if section_data.len() >= 22 {
+        lead_minutes(
+            section_data[17],
+            u32::from_be_bytes([
+                section_data[18],
+                section_data[19],
+                section_data[20],
+                section_data[21],
+            ]),
+        )
     } else {
         0
     };
+    let forecast_hour = lead_minutes / 60;
 
     let level_type = section_data.get(22).copied().unwrap_or(1);
     let scale_factor = section_data.get(23).copied().unwrap_or(0) as i8;
@@ -574,7 +584,35 @@ pub fn parse_product_definition(
         level_value,
         level_description,
         forecast_hour,
+        lead_minutes,
     })
+}
+
+/// Length in minutes of one unit of GRIB2 Code Table 4.4 (indicator of unit of time range), or
+/// `None` for a unit that is not a fixed number of minutes (month, year, ...) or is unknown.
+/// Seconds (13) are handled separately because they are shorter than a minute.
+fn time_unit_minutes(unit: u8) -> Option<u32> {
+    match unit {
+        0 => Some(1),
+        1 => Some(60),
+        2 => Some(24 * 60),
+        10 => Some(3 * 60),
+        11 => Some(6 * 60),
+        12 => Some(12 * 60),
+        _ => None,
+    }
+}
+
+/// A forecast time given as `value` units of `unit` (Code Table 4.4), in minutes.
+///
+/// A unit this parser does not know (months, years, ...) keeps the behaviour it had before the
+/// unit was read at all, which is to take the value as hours; saturating arithmetic stops a
+/// corrupt value overflowing.
+pub fn lead_minutes(unit: u8, value: u32) -> u32 {
+    if unit == 13 {
+        return value / 60;
+    }
+    value.saturating_mul(time_unit_minutes(unit).unwrap_or(60))
 }
 
 /// Parse Section 5 (Data Representation)
@@ -879,6 +917,34 @@ mod tests {
     }
 
     #[test]
+    fn lead_minutes_honours_the_time_unit() {
+        // Code Table 4.4
+        assert_eq!(lead_minutes(0, 15), 15, "minute");
+        assert_eq!(lead_minutes(0, 75), 75);
+        assert_eq!(lead_minutes(1, 2), 120, "hour");
+        assert_eq!(lead_minutes(2, 1), 1440, "day");
+        assert_eq!(lead_minutes(10, 2), 360, "3 hours");
+        assert_eq!(lead_minutes(11, 2), 720, "6 hours");
+        assert_eq!(lead_minutes(12, 1), 720, "12 hours");
+        assert_eq!(lead_minutes(13, 900), 15, "seconds");
+        assert_eq!(lead_minutes(13, 59), 0, "under a minute rounds down");
+    }
+
+    #[test]
+    fn an_unknown_unit_keeps_the_old_reading_as_hours() {
+        // month (3), year (4) and reserved codes have no fixed length in minutes
+        for unit in [3, 4, 5, 6, 7, 9, 14, 100, 255] {
+            assert_eq!(lead_minutes(unit, 3), 180, "unit {unit}");
+        }
+    }
+
+    #[test]
+    fn a_corrupt_lead_time_saturates_instead_of_overflowing() {
+        assert_eq!(lead_minutes(2, u32::MAX), u32::MAX);
+        assert_eq!(lead_minutes(1, u32::MAX), u32::MAX);
+    }
+
+    #[test]
     fn test_product_definition_struct() {
         let pd = ProductDefinition {
             parameter_category: 0,
@@ -888,6 +954,7 @@ mod tests {
             level_value: 2,
             level_description: "2 m above ground".to_string(),
             forecast_hour: 6,
+            lead_minutes: 360,
         };
 
         assert_eq!(pd.parameter_short_name, "TMP");

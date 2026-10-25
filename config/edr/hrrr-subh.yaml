@@ -1,0 +1,72 @@
+# HRRR sub-hourly EDR Configuration
+#
+# 15-minute composite reflectivity, precipitation rate and precipitation type for the first
+# 6 hours of every HRRR cycle (model `hrrr-subh`, see config/models/hrrr-subh.yaml).
+#
+# Query a series with `datetime=<start>/<end>`; the steps are 15 minutes apart and where two
+# cycles cover the same instant the newer cycle wins. `hrrr-atmosphere` (model `hrrr`) keeps the
+# hourly REFC out to 48 h; use this model for the next 6 hours at 15-minute resolution.
+#
+# valid_range: Used for PNG encoding to ensure consistent colormap rendering
+# across different viewport regions. Values are in the parameter's native units.
+
+model: hrrr-subh
+
+collections:
+  - id: hrrr-subh-atmosphere
+    title: "HRRR 15-minute - Composite Reflectivity"
+    description: "Composite reflectivity every 15 minutes, 0-6 h ahead of each HRRR cycle"
+    level_filter:
+      level_type: entire_atmosphere
+      level_code: 10
+    parameters:
+      - name: REFC
+        levels: [entire_atmosphere]
+        valid_range: { min: -10, max: 80 }  # dBZ; -10 = no echo
+    run_mode: instances
+
+  # Precipitation rate and type. The type flags are categorical (0/1), sampled nearest.
+  - id: hrrr-subh-surface
+    title: "HRRR 15-minute - Precipitation"
+    description: "Precipitation rate and type (rain, snow, freezing rain, ice pellets) every 15 minutes, 0-6 h ahead of each HRRR cycle"
+    level_filter:
+      level_type: surface
+      level_code: 1
+    parameters:
+      - name: PRATE
+        levels: [surface]
+        valid_range: { min: 0, max: 0.05 }  # kg/m^2/s (mm/s)
+      - name: CRAIN
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }  # categorical flag
+      - name: CSNOW
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }  # categorical flag
+      - name: CFRZR
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }  # categorical flag
+      - name: CICEP
+        levels: [surface]
+        valid_range: { min: 0, max: 1 }  # categorical flag
+    run_mode: instances
+
+settings:
+  output_formats:
+    - application/vnd.cov+json
+    - application/geo+json
+    - image/png  # 16-bit encoded PNG for GPU shaders (area queries only)
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+    - "EPSG:4326"
+    - "EPSG:3857"
+  cache_policy:
+    png_max_age: 900  # 15 minutes - the steps are 15 minutes apart
+
+limits:
+  max_parameters_per_request: 10
+  max_time_steps: 350
+  max_vertical_levels: 20
+  max_response_size_mb: 50
+  max_area_sq_degrees: 100          # JSON queries (~10x10 degree area)
+  max_area_sq_degrees_png: 2500     # PNG queries - full CONUS coverage (~50x50 degree)

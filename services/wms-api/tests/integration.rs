@@ -18,6 +18,7 @@ fn test_entry(model: &str, parameter: &str, forecast_hour: u32) -> CatalogEntry 
         level: "surface".to_string(),
         reference_time: Utc::now() - Duration::hours(1),
         forecast_hour,
+        forecast_minute: 0,
         bbox: BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
         storage_path: format!("{}/{}/f{:03}.zarr", model, parameter, forecast_hour),
         file_size: 1024,

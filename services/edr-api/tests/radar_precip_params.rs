@@ -247,25 +247,33 @@ async fn hrrr_reflectivity_cloud_cover_and_sea_level_pressure_and_mrms_type_and_
     assert!(has("mrms", "PRECIP_FLAG", "0 m above MSL"), "{rows:?}");
     assert!(has("mrms", "MESH", "500 m above MSL"), "{rows:?}");
 
-    // ---- HRRR through EDR (Denver; wgrib2 on the fixture: REFC -1, MSLMA 99907, PWAT 12.55, TCDC 100)
+    // ---- HRRR through EDR at Denver -------------------------------------------------------------
+    // Expected values: bilinear interpolation of the four fixture cells around Denver, read with
+    // `wgrib2 -ijlat` and positioned by pyproj (an independent projection implementation): Denver is
+    // at fractional cell (685.8767, 583.7515). The point reader used to interpolate linearly across the
+    // grid's bounding box, which for HRRR's Lambert grid read a cell ~470 km away; these tight
+    // tolerances (the old ones were +-1 on a saturated 100 % cloud cover, +-400 Pa and +-3) are what
+    // distinguishes the two.
     let (lon, lat) = (-104.99, 39.74);
-    let refc = point(&app, "hrrr-atmosphere", "REFC", lon, lat).await;
-    assert!(
-        refc.is_some_and(|v| (-10.0..=80.0).contains(&v)),
-        "REFC (dBZ) {refc:?}"
-    );
+    let refc = point(&app, "hrrr-atmosphere", "REFC", lon, lat)
+        .await
+        .expect("REFC");
+    assert!((refc - -1.228).abs() < 0.05, "REFC (dBZ) {refc}");
     let tcdc = point(&app, "hrrr-atmosphere", "TCDC", lon, lat)
         .await
         .expect("TCDC");
-    assert!((tcdc - 100.0).abs() < 1.0, "TCDC {tcdc}");
+    assert!(
+        (tcdc - 96.681).abs() < 0.05,
+        "TCDC {tcdc}: the four cells around Denver are 77, 88, 100, 100 (nearest-cell value 100)"
+    );
     let mslma = point(&app, "hrrr-mean-sea-level", "MSLMA", lon, lat)
         .await
         .expect("MSLMA");
-    assert!((mslma - 99907.0).abs() < 400.0, "MSLMA {mslma} Pa");
+    assert!((mslma - 99907.6).abs() < 1.0, "MSLMA {mslma} Pa");
     let pwat = point(&app, "hrrr-atmosphere", "PWAT", lon, lat)
         .await
         .expect("PWAT");
-    assert!((pwat - 12.55).abs() < 3.0, "PWAT {pwat}");
+    assert!((pwat - 12.541).abs() < 0.02, "PWAT {pwat}");
 
     // ---- MRMS precipitation type: values -----------------------------------------------------------
     // Boulder: covered, dry.            Mexico: outside radar coverage (-3).

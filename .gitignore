@@ -102,6 +102,8 @@ compile_commands.json
 *.png
 /data/
 *.grib2
+# real GRIB2 messages that tests read (a few MB each); everything else .grib2 stays ignored
+!crates/ingestion/tests/fixtures/**/*.grib2
 /benchmark_results/
 /hammer_results/
 /edr_load_results/

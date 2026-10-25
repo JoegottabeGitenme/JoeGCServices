@@ -26,6 +26,7 @@ fn test_entry(model: &str, parameter: &str, forecast_hour: u32) -> CatalogEntry 
         level: "surface".to_string(),
         reference_time: Utc::now() - Duration::hours(1),
         forecast_hour,
+        forecast_minute: 0,
         bbox: BoundingBox::new(-180.0, -90.0, 180.0, 90.0),
         storage_path: format!("{}/{}/f{:03}.zarr", model, parameter, forecast_hour),
         file_size: 1024,
@@ -53,6 +54,299 @@ async fn test_catalog_connect_and_migrate() {
     // Verify we can query (should be empty)
     let models = catalog.list_models().await.expect("Failed to list models");
     assert!(models.is_empty(), "Expected no models in fresh database");
+}
+
+/// The `datasets` table exactly as it was before `forecast_minute` (what production holds).
+const OLD_DATASETS_DDL: &str = r#"
+CREATE TABLE datasets (
+    id UUID PRIMARY KEY,
+    model VARCHAR(50) NOT NULL,
+    parameter VARCHAR(100) NOT NULL,
+    level VARCHAR(50) NOT NULL,
+    reference_time TIMESTAMPTZ NOT NULL,
+    forecast_hour INTEGER NOT NULL,
+    valid_time TIMESTAMPTZ NOT NULL,
+    bbox_min_x DOUBLE PRECISION NOT NULL,
+    bbox_min_y DOUBLE PRECISION NOT NULL,
+    bbox_max_x DOUBLE PRECISION NOT NULL,
+    bbox_max_y DOUBLE PRECISION NOT NULL,
+    storage_path TEXT NOT NULL,
+    file_size BIGINT NOT NULL,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status VARCHAR(20) NOT NULL DEFAULT 'available',
+    zarr_metadata JSONB,
+
+    UNIQUE(model, parameter, level, reference_time, forecast_hour)
+)
+"#;
+
+/// `(constraints, unique indexes)` on `datasets`, by name.
+async fn dataset_keys(pool: &sqlx::PgPool) -> (Vec<String>, Vec<String>) {
+    let constraints: Vec<String> = sqlx::query_scalar(
+        "SELECT conname FROM pg_constraint WHERE conrelid = 'datasets'::regclass AND contype = 'u' \
+         ORDER BY conname",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT indexname FROM pg_indexes WHERE tablename = 'datasets' \
+         AND indexdef LIKE 'CREATE UNIQUE%' AND indexname <> 'datasets_pkey' ORDER BY indexname",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    (constraints, indexes)
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn migrating_an_existing_datasets_table_keeps_its_rows_and_admits_minutes() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+    let pool = catalog.pool_clone();
+
+    // the table as production has it, with rows in it
+    sqlx::query(OLD_DATASETS_DDL).execute(&pool).await.unwrap();
+    let reference = now_micros() - Duration::hours(3);
+    for hour in [0i32, 1, 2] {
+        sqlx::query(
+            "INSERT INTO datasets (id, model, parameter, level, reference_time, forecast_hour, \
+             valid_time, bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, storage_path, file_size) \
+             VALUES (gen_random_uuid(), 'hrrr', 'TMP', '2 m above ground', $1, $2, $3, 0, 0, 1, 1, \
+             $4, 10)",
+        )
+        .bind(reference)
+        .bind(hour)
+        .bind(reference + Duration::hours(hour as i64))
+        .bind(format!("grids/hrrr/tmp_f{hour:03}.zarr"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let (before_c, before_i) = dataset_keys(&pool).await;
+    assert_eq!(
+        before_c,
+        ["datasets_model_parameter_level_reference_time_forecast_hour_key"]
+    );
+    assert!(before_i.is_empty() || before_i == before_c, "{before_i:?}");
+
+    catalog.migrate().await.expect("migrating the old table");
+
+    // every existing row survived with minute 0
+    let rows: Vec<(i32, i16)> = sqlx::query_as(
+        "SELECT forecast_hour, forecast_minute FROM datasets ORDER BY forecast_hour",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, [(0, 0), (1, 0), (2, 0)]);
+
+    // the old key is gone, replaced by exactly one that includes the minute
+    let (constraints, indexes) = dataset_keys(&pool).await;
+    assert!(
+        constraints.is_empty(),
+        "old constraint left behind: {constraints:?}"
+    );
+    assert_eq!(indexes, ["datasets_model_parameter_level_ref_fh_fm_key"]);
+
+    // running it again changes nothing (it runs on every service start)
+    catalog.migrate().await.expect("second migrate");
+    assert_eq!(dataset_keys(&pool).await, (constraints, indexes));
+
+    // the four steps of one hour are four datasets ...
+    let mut entry = test_entry("hrrr-subh", "REFC", 1);
+    entry.reference_time = reference;
+    // the whole-hour step goes in LAST: a lookup that forgot to ask for minute 0 would otherwise
+    // return it by luck of physical row order
+    for minute in [15u32, 30, 45, 0] {
+        entry.forecast_minute = minute;
+        entry.storage_path = format!("grids/hrrr-subh/refc_f001m{minute:02}.zarr");
+        catalog.register_dataset(&entry).await.unwrap();
+    }
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM datasets WHERE model = 'hrrr-subh'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 4);
+    // ... each valid at its own instant
+    let valid: Vec<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT valid_time FROM datasets WHERE model = 'hrrr-subh' ORDER BY forecast_minute",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let want: Vec<DateTime<Utc>> = [0, 15, 30, 45]
+        .iter()
+        .map(|m| reference + Duration::hours(1) + Duration::minutes(*m))
+        .collect();
+    assert_eq!(valid, want);
+
+    // registering the same step again updates it in place
+    entry.forecast_minute = 15;
+    entry.file_size = 999;
+    catalog.register_dataset(&entry).await.unwrap();
+    let (n, size): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), MAX(file_size) FROM datasets WHERE model = 'hrrr-subh' \
+         AND forecast_minute = 15",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((n, size), (1, 999));
+
+    // an hourly dataset is still unique on its own key
+    let mut hourly = test_entry("hrrr", "TMP", 0);
+    hourly.level = "2 m above ground".to_string();
+    hourly.reference_time = reference;
+    hourly.file_size = 4242;
+    catalog.register_dataset(&hourly).await.unwrap();
+    let (n, size): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), MAX(file_size) FROM datasets WHERE model = 'hrrr' AND parameter = 'TMP' \
+         AND forecast_hour = 0",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (n, size),
+        (1, 4242),
+        "upsert on the old hourly rows still works"
+    );
+
+    // an hour that exists only at a minute past it (a half-ingested run) is not a whole-hour
+    // forecast, so it is not advertised: asking for it would find nothing
+    let mut partial = test_entry("hrrr-subh", "REFC", 3);
+    partial.reference_time = reference;
+    partial.forecast_minute = 15;
+    partial.storage_path = "grids/hrrr-subh/refc_f003m15.zarr".to_string();
+    catalog.register_dataset(&partial).await.unwrap();
+    assert_eq!(
+        catalog
+            .get_run_forecast_hours("hrrr-subh", reference)
+            .await
+            .unwrap(),
+        [1],
+        "hour 1 has its +60 minute grid; hour 3 only a +195 minute one"
+    );
+
+    // the entry read back knows its minute and valid time
+    let found = catalog
+        .find_by_run_and_forecast_hour("hrrr-subh", "REFC", reference, 1, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        found.forecast_minute, 0,
+        "hour-keyed lookup means the whole hour"
+    );
+}
+
+/// Several runs of a forecast model cover every instant. The answer for an instant must be the
+/// NEWEST run's, however the files were ingested: the downloader now backfills the tail of older
+/// runs, so an old run can easily be ingested after a newer one. Before, a single-instant lookup
+/// ordered only by distance to the instant and returned an arbitrary run (production returned a
+/// four-hour-old forecast over the fresh analysis), and the series query preferred whichever run
+/// was ingested last.
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn the_newest_run_answers_for_an_instant_whatever_the_ingest_order() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+    catalog.migrate().await.unwrap();
+
+    // one fixed base: re-reading the clock per call would shift the paths below by a second
+    let base = now_micros().trunc_subsecs(0) - Duration::hours(10);
+    let t = |h: i64| base + Duration::hours(h);
+    let valid = t(5); // the instant every run below covers
+                      // (run reference time, forecast hour that reaches `valid`)
+    let runs = [(t(5), 0u32), (t(4), 1), (t(3), 2), (t(1), 4)];
+
+    // newest run FIRST, then the older ones afterwards (a backfill), so that "last ingested" and
+    // "newest run" are different runs
+    for (reference, hour) in runs {
+        let mut e = test_entry("hrrr", "TMP", hour);
+        e.level = "2 m above ground".to_string();
+        e.reference_time = reference;
+        e.storage_path = format!("grids/hrrr/run_{}_f{hour:03}.zarr", reference.timestamp());
+        catalog.register_dataset(&e).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+    let newest = format!("grids/hrrr/run_{}_f000.zarr", t(5).timestamp());
+
+    let by_level = catalog
+        .find_by_time_and_level("hrrr", "TMP", valid, "2 m above ground")
+        .await
+        .unwrap()
+        .expect("a dataset");
+    assert_eq!(by_level.storage_path, newest, "find_by_time_and_level");
+    let any_level = catalog
+        .find_by_time("hrrr", "TMP", valid)
+        .await
+        .unwrap()
+        .expect("a dataset");
+    assert_eq!(any_level.storage_path, newest, "find_by_time");
+
+    let series = catalog
+        .find_datasets_in_valid_time_range("hrrr", "TMP", Some("2 m above ground"), valid, valid)
+        .await
+        .unwrap();
+    assert_eq!(series.len(), 4, "all four runs are candidates");
+    assert_eq!(
+        series[0].1.storage_path, newest,
+        "the series takes the first candidate"
+    );
+
+    // and the other way round: the same data ingested oldest-first gives the same answer
+    let infra2 = TestInfrastructure::start().await;
+    let catalog2 = Catalog::connect(&infra2.postgres_url()).await.unwrap();
+    catalog2.migrate().await.unwrap();
+    for (reference, hour) in runs.iter().rev() {
+        let mut e = test_entry("hrrr", "TMP", *hour);
+        e.level = "2 m above ground".to_string();
+        e.reference_time = *reference;
+        e.storage_path = format!("grids/hrrr/run_{}_f{hour:03}.zarr", reference.timestamp());
+        catalog2.register_dataset(&e).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+    assert_eq!(
+        catalog2
+            .find_by_time_and_level("hrrr", "TMP", valid, "2 m above ground")
+            .await
+            .unwrap()
+            .unwrap()
+            .storage_path,
+        newest,
+        "find_by_time_and_level, oldest ingested first"
+    );
+    assert_eq!(
+        catalog2
+            .find_by_time("hrrr", "TMP", valid)
+            .await
+            .unwrap()
+            .unwrap()
+            .storage_path,
+        newest,
+        "find_by_time, oldest ingested first"
+    );
+    let series = catalog2
+        .find_datasets_in_valid_time_range("hrrr", "TMP", None, valid, valid)
+        .await
+        .unwrap();
+    assert_eq!(
+        series[0].1.storage_path, newest,
+        "series, oldest ingested first"
+    );
+}
+
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn a_fresh_database_ends_up_with_the_same_single_key() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+    catalog.migrate().await.unwrap();
+    let (constraints, indexes) = dataset_keys(&catalog.pool_clone()).await;
+    assert!(constraints.is_empty(), "{constraints:?}");
+    assert_eq!(indexes, ["datasets_model_parameter_level_ref_fh_fm_key"]);
 }
 
 #[tokio::test]

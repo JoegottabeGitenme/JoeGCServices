@@ -1245,7 +1245,7 @@ retention:
     #[test]
     fn every_hourly_cycle_model_revisits_recent_cycles() {
         // A poll that looked at one cycle once lost whole cycles (the period drifted) and the
-        // tail of every long run (published after the poll). All six models that run every hour
+        // tail of every long run (published after the poll). All seven models that run every hour
         // need the lookback; 3 previous cycles outlast HRRR's ~2 h 05 m publication of f48.
         let models = real_models();
         let hourly: Vec<&ModelConfig> = models
@@ -1258,6 +1258,7 @@ retention:
             ids,
             [
                 "hrrr",
+                "hrrr-subh",
                 "nbm-alaska",
                 "nbm-conus",
                 "nbm-guam",
@@ -1443,5 +1444,97 @@ retention:
                 p.name
             );
         }
+    }
+
+    // ------------------------------------------------------------------
+    // hrrr-subh: 15-minute output (wrfsubhf files)
+    // ------------------------------------------------------------------
+
+    fn subhourly_idx() -> String {
+        // hrrr.t18z.wrfsubhf01.grib2.idx, 2026-10-11: 15/30/45/60 minutes past the cycle
+        std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/hrrr.t18z.wrfsubhf01.grib2.idx"),
+        )
+        .expect("fixture")
+    }
+
+    #[test]
+    fn hrrr_subh_reads_the_subhourly_file_for_the_first_six_hours_of_every_cycle() {
+        let m = real_model("hrrr-subh");
+        assert!(
+            m.source.file_pattern.contains("wrfsubhf{forecast:02}"),
+            "{}",
+            m.source.file_pattern
+        );
+        assert_eq!(m.source.bucket, "noaa-hrrr-bdp-pds");
+        assert_eq!(m.schedule.cycles.len(), 24);
+        assert!(m.schedule.extended_cycles.is_empty());
+        for c in 0..24u32 {
+            // wrfsubhf00 is the analysis, wrfsubhf01..06 hold the 6 hours of 15-minute steps
+            assert_eq!(
+                m.forecast_hours_for_cycle(c),
+                vec![0, 1, 2, 3, 4, 5, 6],
+                "cycle {c}"
+            );
+        }
+        assert_eq!(m.retention.hours, 12);
+        assert!(!m.is_observation());
+    }
+
+    #[test]
+    fn hrrr_subh_filters_each_match_a_line_the_subhourly_file_really_has() {
+        let idx = subhourly_idx();
+        let published: std::collections::HashSet<(String, String)> = idx
+            .lines()
+            .filter_map(|l| {
+                let p: Vec<&str> = l.split(':').collect();
+                (p.len() > 4).then(|| (p[3].to_string(), p[4].to_string()))
+            })
+            .collect();
+        assert!(published.len() > 30, "fixture looks truncated");
+        let m = real_model("hrrr-subh");
+        let filters = m.build_param_filters();
+        let dead: Vec<_> = filters.iter().filter(|f| !published.contains(*f)).collect();
+        assert!(
+            dead.is_empty(),
+            "filters matching no wrfsubhf line: {dead:?}"
+        );
+        let names: std::collections::BTreeSet<&str> =
+            filters.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names.into_iter().collect::<Vec<_>>(),
+            ["CFRZR", "CICEP", "CRAIN", "CSNOW", "PRATE", "REFC"]
+        );
+    }
+
+    #[test]
+    fn hrrr_subh_selective_download_takes_all_four_time_steps_and_little_else() {
+        use crate::grib_index::{GribIndex, ParamFilter};
+        let m = real_model("hrrr-subh");
+        let filters: Vec<ParamFilter> = m
+            .build_param_filters()
+            .into_iter()
+            .map(|(p, l)| ParamFilter::new(p, l))
+            .collect();
+        // the real file is 234,766,844 bytes (S3 Content-Length)
+        let index = GribIndex::parse(&subhourly_idx(), Some(234_766_844)).unwrap();
+        let ranges = index.get_byte_ranges(&filters);
+        // 6 parameters x 4 steps, not just the first message of each parameter
+        assert_eq!(ranges.len(), 24);
+        let total: u64 = ranges.iter().map(|r| r.size()).sum();
+        assert!(
+            total < 5_000_000,
+            "selected {total} bytes of a 234 MB file; expected ~2.8 MB"
+        );
+        let steps: std::collections::BTreeSet<String> = index
+            .find_matching_entries(&filters)
+            .iter()
+            .map(|e| e.forecast_type.clone())
+            .collect();
+        assert_eq!(
+            steps.into_iter().collect::<Vec<_>>(),
+            ["15 min fcst", "30 min fcst", "45 min fcst", "60 min fcst"]
+        );
     }
 }
