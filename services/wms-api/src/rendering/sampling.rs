@@ -426,9 +426,11 @@ pub fn sample_grid_value(
         return sample_mrms_grid_value(grid_data, grid_width, grid_height, lon, lat);
     }
 
-    // GFS and other models use global lat/lon grids: lat 90 to -90, lon 0 to 360
+    // GFS and other models use global lat/lon grids: lat 90 to -90, lon 0 to 360.
+    // Longitude wraps (1440 columns cover 360 degrees); latitude has points at both poles
+    // (721 rows span 180 degrees in 720 steps).
     let lon_step = 360.0 / grid_width as f64;
-    let lat_step = 180.0 / grid_height as f64;
+    let lat_step = 180.0 / (grid_height as f64 - 1.0);
 
     // Normalize longitude to 0-360
     let norm_lon = if lon < 0.0 { lon + 360.0 } else { lon };
@@ -856,6 +858,19 @@ mod tests {
         assert!(is_mrms_grid("mrms-qpe"));
         for other in ["hrrr", "gfs", "goes19", "nbm-conus", "mrmsx", "qpe"] {
             assert!(!is_mrms_grid(other), "{other}");
+        }
+    }
+
+    /// The 0.25-degree global grid (GFS, AIGFS) has 721 rows, one at each pole: 720 steps of
+    /// 0.25 degrees. Dividing 180 by 721 rows put a point read south of its row, by up to a
+    /// full row near the south pole.
+    #[test]
+    fn a_global_grid_point_reads_its_own_cell() {
+        let (w, h) = (1440, 721);
+        let grid = numbered_grid(w, h);
+        for (lon, lat, row, col) in [(10.0, -60.0, 600, 40), (260.0, 40.0, 200, 1040)] {
+            let got = sample_grid_value(&grid, w, h, lon, lat, "gfs").expect("sample");
+            assert_eq!(got, (row * w + col) as f32, "({lon}, {lat})");
         }
     }
 

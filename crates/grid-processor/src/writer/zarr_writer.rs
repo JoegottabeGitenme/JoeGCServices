@@ -493,8 +493,11 @@ impl ZarrWriter {
         let store = Arc::new(storage);
         let chunk_size = self.config.zarr_chunk_size;
 
-        // Calculate native resolution
-        let native_resolution = (bbox.width() / width as f64, bbox.height() / height as f64);
+        // Calculate native resolution (the bbox spans first to last grid point)
+        let native_resolution = (
+            crate::types::point_spacing(bbox.width(), width),
+            crate::types::point_spacing(bbox.height(), height),
+        );
 
         // Generate pyramid levels
         let pyramid_levels = if pyramid_config.enabled {

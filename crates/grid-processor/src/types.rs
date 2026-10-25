@@ -469,12 +469,27 @@ pub struct GridMetadata {
     pub projection: ProjectionType,
 }
 
+/// Spacing between adjacent grid points along one axis, given the distance from the first point
+/// to the last and the number of points. `n` points span `n - 1` gaps.
+pub fn point_spacing(extent: f64, n: usize) -> f64 {
+    if n > 1 {
+        extent / (n - 1) as f64
+    } else {
+        extent
+    }
+}
+
 impl GridMetadata {
     /// Calculate the grid resolution in degrees per point.
+    ///
+    /// The bbox runs from the first grid point to the last (GFS 0..359.75 x 90..-90 over
+    /// 1440 x 721, MRMS -129.995..-60.005 over 7000 columns), and index 0 is the first point, so
+    /// the spacing is the extent over `n - 1`. Dividing by `n` put every read up to a full cell
+    /// off toward the far edge (15-20 km east and south for GFS over CONUS).
     pub fn resolution(&self) -> (f64, f64) {
         (
-            self.bbox.width() / self.shape.0 as f64,
-            self.bbox.height() / self.shape.1 as f64,
+            point_spacing(self.bbox.width(), self.shape.0),
+            point_spacing(self.bbox.height(), self.shape.1),
         )
     }
 
@@ -575,6 +590,18 @@ impl CacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grid_spacing_counts_gaps_between_points_not_points() {
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-12;
+        // GFS 0.25: 0..359.75 over 1440 columns, 90..-90 over 721 rows
+        assert!(close(point_spacing(359.75, 1440), 0.25));
+        assert!(close(point_spacing(180.0, 721), 0.25));
+        // MRMS 0.01: -129.995..-60.005 over 7000 columns
+        assert!(close(point_spacing(69.99, 7000), 0.01));
+        // a single point has no spacing to speak of; do not divide by zero
+        assert_eq!(point_spacing(0.0, 1), 0.0);
+    }
 
     #[test]
     fn test_bbox_intersects() {
