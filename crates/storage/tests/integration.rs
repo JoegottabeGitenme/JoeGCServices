@@ -519,6 +519,46 @@ async fn test_catalog_mark_expired_and_delete() {
     assert_eq!(count, 1);
 }
 
+/// The sync task's DB snapshot: one entry per available storage path, carrying the NEWEST
+/// ingest time of the rows that share it (a re-ingest refreshes the path), expired rows left out.
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn storage_paths_come_with_their_newest_ingest_time() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+    catalog.migrate().await.unwrap();
+
+    let first = test_entry("mrms-qpe", "QPE_01H", 0);
+    let mut second = test_entry("mrms-qpe", "QPE_01H_PASS1", 0);
+    second.storage_path = first.storage_path.clone();
+    catalog.register_dataset(&first).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    catalog.register_dataset(&second).await.unwrap();
+
+    let mut expired = test_entry("gfs", "TMP", 0);
+    expired.reference_time = Utc::now() - Duration::days(30);
+    catalog.register_dataset(&expired).await.unwrap();
+    catalog
+        .mark_model_expired("gfs", Utc::now() - Duration::days(7))
+        .await
+        .unwrap();
+
+    let newest: DateTime<Utc> =
+        sqlx::query_scalar("SELECT ingested_at FROM datasets WHERE parameter = 'QPE_01H_PASS1'")
+            .fetch_one(catalog.pool())
+            .await
+            .unwrap();
+    let oldest: DateTime<Utc> =
+        sqlx::query_scalar("SELECT ingested_at FROM datasets WHERE parameter = 'QPE_01H'")
+            .fetch_one(catalog.pool())
+            .await
+            .unwrap();
+    assert!(newest > oldest, "{newest} vs {oldest}");
+
+    let rows = catalog.get_storage_paths_with_ingested_at().await.unwrap();
+    assert_eq!(rows, vec![(first.storage_path.clone(), newest)]);
+}
+
 #[tokio::test]
 #[ignore] // Requires Docker
 async fn test_catalog_get_available_times() {
