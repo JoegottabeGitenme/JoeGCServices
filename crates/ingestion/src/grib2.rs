@@ -334,7 +334,11 @@ pub async fn ingest_grib2(
         )
         .await
         {
-            Ok((zarr_file_size, zarr_metadata)) => {
+            Ok((zarr_file_size, mut zarr_metadata)) => {
+                // Record which upstream file this grid came from. For MRMS QPE_01H that is how
+                // you tell a Pass2 hour from one filled in from Pass1.
+                annotate_source_file(&mut zarr_metadata, file_path);
+
                 // Register in catalog
                 let bbox = get_model_bbox(&model);
                 let entry = CatalogEntry {
@@ -391,6 +395,17 @@ pub async fn ingest_grib2(
     })
 }
 
+/// Add `source_file` (the ingested file's name, without directories) to a dataset's zarr
+/// metadata. Anything that is not a JSON object is left alone.
+fn annotate_source_file(zarr_metadata: &mut serde_json::Value, file_path: &str) {
+    let name = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str());
+    if let (serde_json::Value::Object(map), Some(name)) = (zarr_metadata, name) {
+        map.insert("source_file".to_string(), serde_json::Value::from(name));
+    }
+}
+
 /// Build storage path for a parameter.
 fn build_storage_path(
     model: &str,
@@ -401,7 +416,7 @@ fn build_storage_path(
 ) -> String {
     // For observation data like MRMS, use minute-level paths
     // For forecast models, use hourly paths
-    let run_date = if model == "mrms" {
+    let run_date = if model == "mrms" || model.starts_with("mrms-") {
         reference_time.format("%Y%m%d_%H%Mz").to_string()
     } else {
         reference_time.format("%Y%m%d_%Hz").to_string()
@@ -587,6 +602,40 @@ mod tests {
             path,
             "grids/hrrr/20241217_00z/ugrd_10m_above_ground_f012.zarr"
         );
+    }
+
+    #[test]
+    fn test_build_storage_path_mrms_qpe_also_uses_minute_paths() {
+        let reference_time = Utc.with_ymd_and_hms(2026, 10, 9, 15, 0, 0).unwrap();
+        let path = build_storage_path("mrms-qpe", &reference_time, "QPE_01H", "surface", 0);
+        assert_eq!(
+            path,
+            "grids/mrms-qpe/20261009_1500z/qpe_01h_surface_f000.zarr"
+        );
+        // other models keep hourly paths
+        let hrrr = build_storage_path("hrrr", &reference_time, "TMP", "2m", 3);
+        assert!(hrrr.contains("20261009_15z"), "{hrrr}");
+    }
+
+    #[test]
+    fn source_file_is_recorded_without_directories_and_only_on_objects() {
+        let mut m = serde_json::json!({"shape": [1, 2]});
+        annotate_source_file(
+            &mut m,
+            "/data/downloads/mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass1_00.00_20261009-150000.grib2.gz",
+        );
+        assert_eq!(
+            m["source_file"],
+            "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass1_00.00_20261009-150000.grib2.gz"
+        );
+        assert_eq!(
+            m["shape"],
+            serde_json::json!([1, 2]),
+            "existing keys are kept"
+        );
+        let mut not_object = serde_json::json!([1, 2, 3]);
+        annotate_source_file(&mut not_object, "x.grib2");
+        assert_eq!(not_object, serde_json::json!([1, 2, 3]));
     }
 
     #[test]

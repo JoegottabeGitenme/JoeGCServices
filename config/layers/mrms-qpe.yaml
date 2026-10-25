@@ -1,0 +1,43 @@
+# MRMS QPE Layer Configuration
+# WMS/WMTS layers for the hourly multi-sensor precipitation accumulations.
+# Layer names are {model}_{parameter}: mrms-qpe_QPE_01H, mrms-qpe_QPE_24H. (They were
+# mrms_QPE_01H / mrms_QPE_24H before QPE got its own model for its 72 hours of history.)
+
+model: mrms-qpe
+display_name: "MRMS QPE - Multi-Sensor Precipitation Estimates"
+
+default_bbox:
+  west: -130.0
+  south: 20.0
+  east: -60.0
+  north: 55.0
+
+# Observation data: a TIME dimension (hourly timestamps, 72 hours)
+dimension_type: observation
+
+layers:
+  - id: mrms-qpe_QPE_01H
+    parameter: QPE_01H
+    title: "1-Hour QPE"
+    abstract: "1-hour quantitative precipitation estimate"
+    style_file: precipitation.json
+    units:
+      native: mm
+      display: mm
+    accumulation: true
+    levels:
+      - value: "0 m above MSL"
+        default: true
+
+  - id: mrms-qpe_QPE_24H
+    parameter: QPE_24H
+    title: "24-Hour QPE"
+    abstract: "24-hour quantitative precipitation estimate"
+    style_file: precipitation.json
+    units:
+      native: mm
+      display: mm
+    accumulation: true
+    levels:
+      - value: "0 m above MSL"
+        default: true

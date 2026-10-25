@@ -327,6 +327,12 @@ pub struct ParameterConfig {
     pub units: Option<String>,
     #[serde(default)]
     pub product: Option<String>,
+    /// MRMS only: a second product to use for any hour whose `product` file is still
+    /// missing after `MRMS_FALLBACK_GRACE_MINUTES` (e.g. QPE_01H Pass2 falls back to
+    /// Pass1, which is more complete but has fewer gauges). Same parameter, same
+    /// dataset key: a later `product` file replaces the fallback grid.
+    #[serde(default)]
+    pub fallback_product: Option<String>,
     /// File identifier for HTTP sources (e.g., "temp" for ds.temp.bin in NDFD)
     #[serde(default)]
     pub file: Option<String>,
@@ -1034,5 +1040,89 @@ retention:
             config.retention.hours, 2,
             "Regular models should be capped by DEV_MAX_RETENTION_HOURS"
         );
+    }
+    // ------------------------------------------------------------------
+    // The real MRMS configs (config/models/mrms.yaml, mrms-qpe.yaml)
+    // ------------------------------------------------------------------
+
+    fn real_models() -> Vec<ModelConfig> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config");
+        load_model_configs(&dir).expect("load real configs")
+    }
+
+    fn real_model(id: &str) -> ModelConfig {
+        real_models()
+            .into_iter()
+            .find(|m| m.model.id == id)
+            .unwrap_or_else(|| panic!("model {id} not found or not enabled"))
+    }
+
+    #[test]
+    fn mrms_keeps_two_hours_of_radar_and_no_precipitation_accumulations() {
+        let m = real_model("mrms");
+        assert_eq!(m.retention.hours, 2);
+        assert_eq!(m.lookback_minutes(), 120, "2 h lookback = 2 h retention");
+        let names: Vec<&str> = m.parameters.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["REFL", "PRECIP_RATE"]);
+        assert!(
+            m.parameters.iter().all(|p| p.fallback_product.is_none()),
+            "radar products have no fallback"
+        );
+    }
+
+    #[test]
+    fn mrms_qpe_keeps_72_hours_and_the_downloader_looks_back_exactly_that_far() {
+        let m = real_model("mrms-qpe");
+        assert!(m.is_observation());
+        assert_eq!(m.retention.hours, 72);
+        // For observation models the startup lookback IS retention.hours: if cleanup kept
+        // less than the downloader fetches, every poll would re-download what cleanup deleted.
+        assert_eq!(m.lookback_minutes(), 72 * 60);
+        assert_eq!(m.source.bucket, "noaa-mrms-pds");
+    }
+
+    #[test]
+    fn mrms_qpe_products_and_the_one_pass1_fallback() {
+        let m = real_model("mrms-qpe");
+        let find = |n: &str| m.parameters.iter().find(|p| p.name == n).unwrap();
+        assert_eq!(
+            find("QPE_01H").product.as_deref(),
+            Some("MultiSensor_QPE_01H_Pass2_00.00")
+        );
+        assert_eq!(
+            find("QPE_01H").fallback_product.as_deref(),
+            Some("MultiSensor_QPE_01H_Pass1_00.00")
+        );
+        assert_eq!(
+            find("QPE_24H").product.as_deref(),
+            Some("MultiSensor_QPE_24H_Pass2_00.00")
+        );
+        assert_eq!(
+            find("QPE_72H").product.as_deref(),
+            Some("MultiSensor_QPE_72H_Pass2_00.00")
+        );
+        assert!(find("QPE_24H").fallback_product.is_none());
+        assert!(find("QPE_72H").fallback_product.is_none());
+        assert_eq!(m.parameters.len(), 3);
+    }
+
+    #[test]
+    fn no_product_is_fetched_by_two_models() {
+        // Two models listing the same S3 prefix would race for each URL (downloads are
+        // de-duplicated by URL), so the file's model would depend on which polled first.
+        let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for m in real_models()
+            .into_iter()
+            .filter(|m| m.model.id.starts_with("mrms"))
+        {
+            for p in &m.parameters {
+                for product in p.product.iter().chain(p.fallback_product.iter()) {
+                    if let Some(other) = seen.insert(product.clone(), m.model.id.clone()) {
+                        panic!("{product} is configured in both {other} and {}", m.model.id);
+                    }
+                }
+            }
+        }
+        assert!(seen.len() >= 6, "{seen:?}");
     }
 }

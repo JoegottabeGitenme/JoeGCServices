@@ -421,8 +421,8 @@ pub fn sample_grid_value(
         return sample_lambert_grid_value(grid_data, grid_width, grid_height, lon, lat, model);
     }
 
-    // Handle MRMS regional lat/lon grid
-    if model == "mrms" {
+    // Handle MRMS regional lat/lon grid (radar `mrms` and the `mrms-qpe` accumulations share it)
+    if is_mrms_grid(model) {
         return sample_mrms_grid_value(grid_data, grid_width, grid_height, lon, lat);
     }
 
@@ -481,6 +481,12 @@ pub fn sample_lambert_grid_value(
 
 /// Sample an MRMS regional lat/lon grid at a geographic point
 /// MRMS grid: 7000x3500, lat 54.995° to 20.005°, lon -129.995° to -60.005° (0.01° resolution)
+/// Models on the MRMS CONUS 0.01-degree grid: `mrms` and `mrms-*` (e.g. `mrms-qpe`).
+/// Anything else that reaches the global lat/lon fallback would sample the wrong cells.
+pub fn is_mrms_grid(model: &str) -> bool {
+    model == "mrms" || model.starts_with("mrms-")
+}
+
 pub fn sample_mrms_grid_value(
     grid_data: &[f32],
     grid_width: usize,
@@ -672,8 +678,8 @@ pub fn sample_grid_value_with_projection(
         return bilinear_interpolate(grid_data, grid_width, grid_height, grid_x, grid_y, false);
     }
 
-    // Handle MRMS regional lat/lon grid
-    if model == "mrms" {
+    // Handle MRMS regional lat/lon grid (radar `mrms` and the `mrms-qpe` accumulations share it)
+    if is_mrms_grid(model) {
         return sample_mrms_grid_value(grid_data, grid_width, grid_height, lon, lat);
     }
 
@@ -836,6 +842,55 @@ fn get_parameter_display_name(parameter: &str) -> String {
 mod tests {
     use super::*;
     use crate::layer_config::{UnitConfig, UnitConversion};
+
+    // ==================== MRMS-family grid sampling ====================
+
+    /// A small grid with a different value in every cell, so sampling the wrong cell is visible.
+    fn numbered_grid(w: usize, h: usize) -> Vec<f32> {
+        (0..w * h).map(|i| i as f32).collect()
+    }
+
+    #[test]
+    fn is_mrms_grid_covers_radar_and_qpe_but_nothing_else() {
+        assert!(is_mrms_grid("mrms"));
+        assert!(is_mrms_grid("mrms-qpe"));
+        for other in ["hrrr", "gfs", "goes19", "nbm-conus", "mrmsx", "qpe"] {
+            assert!(!is_mrms_grid(other), "{other}");
+        }
+    }
+
+    #[test]
+    fn mrms_qpe_samples_the_same_cells_as_mrms_not_the_global_grid() {
+        // 7000x3500 would be 24.5M floats; the same geometry on a coarser grid is enough.
+        let (w, h) = (700, 350);
+        let grid = numbered_grid(w, h);
+        // Boulder, CO
+        let (lon, lat) = (-105.27, 40.01);
+
+        let radar = sample_grid_value(&grid, w, h, lon, lat, "mrms").expect("mrms sample");
+        let qpe = sample_grid_value(&grid, w, h, lon, lat, "mrms-qpe").expect("mrms-qpe sample");
+        assert_eq!(radar, qpe, "mrms-qpe must use the MRMS grid geometry");
+
+        // The global lat/lon fallback (what an unrecognised model gets) lands on a
+        // different cell, so equality above is not vacuous.
+        let global =
+            sample_grid_value(&grid, w, h, lon, lat, "some-other-model").expect("global sample");
+        assert_ne!(
+            qpe, global,
+            "the fallback geometry must differ for this test to mean anything"
+        );
+
+        // the projection-aware entry point (GetFeatureInfo) has its own copy of the check
+        let with_proj = |m: &str| {
+            sample_grid_value_with_projection(&grid, w, h, lon, lat, m, None, None).expect(m)
+        };
+        assert_eq!(with_proj("mrms"), with_proj("mrms-qpe"));
+        assert_ne!(with_proj("mrms-qpe"), with_proj("some-other-model"));
+
+        // a point outside the MRMS domain is an error for both, not a silently wrong value
+        assert!(sample_grid_value(&grid, w, h, 10.0, 50.0, "mrms").is_err());
+        assert!(sample_grid_value(&grid, w, h, 10.0, 50.0, "mrms-qpe").is_err());
+    }
 
     // ==================== get_parameter_display_name tests ====================
 

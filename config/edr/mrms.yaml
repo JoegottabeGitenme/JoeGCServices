@@ -11,7 +11,8 @@
 # - All parameters are at height above MSL
 #
 # NOTE: Only parameters that are currently being ingested are listed here.
-# See config/models/mrms.yaml for the full parameter definitions.
+# See config/models/mrms.yaml for the full parameter definitions. The hourly QPE
+# accumulations (`mrms-qpe`, `mrms-qpe-latest`) are in config/edr/mrms-qpe.yaml.
 #
 # valid_range: Used for PNG encoding to ensure consistent colormap rendering
 # across different viewport regions. Values are in the parameter's native units.
@@ -26,7 +27,7 @@ collections:
   
   - id: mrms-single-level
     title: "MRMS - Single Level"
-    description: "Radar reflectivity and precipitation products from multi-sensor analysis"
+    description: "Radar reflectivity and precipitation rate from multi-sensor analysis"
     level_filter:
       level_type: height_above_msl
       level_code: 102
@@ -37,12 +38,6 @@ collections:
       - name: PRECIP_RATE
         levels: [0]
         valid_range: { min: 0, max: 100 }  # mm/hr
-      - name: QPE_01H
-        levels: [0]
-        valid_range: { min: -10, max: 200 }  # mm
-      - name: QPE_24H
-        levels: [0]
-        valid_range: { min: -10, max: 500 }  # mm
     run_mode: instances
 
   # ===========================================================================
@@ -64,54 +59,6 @@ collections:
       - name: PRECIP_RATE
         levels: [0]
         valid_range: { min: 0, max: 100 }  # mm/hr
-      - name: QPE_01H
-        levels: [0]
-        valid_range: { min: -10, max: 200 }  # mm
-      - name: QPE_24H
-        levels: [0]
-        valid_range: { min: -10, max: 500 }  # mm
-    run_mode: latest
-
-  # ===========================================================================
-  # QPE accumulations (rolling multi-sensor Pass 2 estimates, hourly updates)
-  # Dedicated collection for point-query use cases (e.g. subgrade saturation):
-  #   GET /edr/collections/mrms-qpe/position?coords=POINT(-100 40)
-  # ===========================================================================
-
-  - id: mrms-qpe
-    title: "MRMS - Quantitative Precipitation Estimates"
-    description: "Rolling 1/24/72-hour multi-sensor precipitation accumulations (Pass 2), updated hourly"
-    level_filter:
-      level_type: height_above_msl
-      level_code: 102
-    parameters:
-      - name: QPE_01H
-        levels: [0]
-        valid_range: { min: -10, max: 200 }  # mm
-      - name: QPE_24H
-        levels: [0]
-        valid_range: { min: -10, max: 500 }  # mm
-      - name: QPE_72H
-        levels: [0]
-        valid_range: { min: -10, max: 1000 }  # mm
-    run_mode: instances
-
-  - id: mrms-qpe-latest
-    title: "MRMS - Quantitative Precipitation Estimates (Latest)"
-    description: "Most recent 1/24/72-hour precipitation accumulations"
-    level_filter:
-      level_type: height_above_msl
-      level_code: 102
-    parameters:
-      - name: QPE_01H
-        levels: [0]
-        valid_range: { min: -10, max: 200 }  # mm
-      - name: QPE_24H
-        levels: [0]
-        valid_range: { min: -10, max: 500 }  # mm
-      - name: QPE_72H
-        levels: [0]
-        valid_range: { min: -10, max: 1000 }  # mm
     run_mode: latest
 
 settings:
@@ -130,7 +77,7 @@ settings:
 # A 10 sq degree query returns ~100,000 points (10° / 0.01° = 1000 points per degree)
 # These limits are stricter than HRRR to account for the higher resolution
 limits:
-  max_parameters_per_request: 4       # Only 4 parameters available
+  max_parameters_per_request: 2       # Only 2 parameters available
   max_time_steps: 350                  # ~1 hour of observations at 2-min intervals
   max_vertical_levels: 1              # No vertical dimension for radar data
   max_response_size_mb: 50            # Same as HRRR

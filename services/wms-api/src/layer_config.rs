@@ -960,4 +960,52 @@ mod tests {
         assert!(layer.default_level().is_none());
         assert!(layer.level_values().is_empty());
     }
+    // ------------------------------------------------------------------
+    // MRMS radar / QPE split (config/layers/mrms.yaml, mrms-qpe.yaml)
+    // ------------------------------------------------------------------
+
+    fn real_layers() -> LayerConfigRegistry {
+        LayerConfigRegistry::load_from_directory(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config"),
+        )
+    }
+
+    #[test]
+    fn qpe_layers_are_named_for_the_mrms_qpe_model() {
+        let r = real_layers();
+        for (id, param) in [
+            ("mrms-qpe_QPE_01H", "QPE_01H"),
+            ("mrms-qpe_QPE_24H", "QPE_24H"),
+        ] {
+            let layer = r.get_layer(id).unwrap_or_else(|| panic!("{id} missing"));
+            assert_eq!(layer.parameter, param);
+            assert!(layer.accumulation, "{id} is an accumulation");
+            assert_eq!(
+                r.get_layer_by_param("mrms-qpe", param)
+                    .map(|l| l.id.as_str()),
+                Some(id)
+            );
+        }
+    }
+
+    #[test]
+    fn the_old_mrms_qpe_layer_names_are_gone_and_radar_layers_remain() {
+        let r = real_layers();
+        // GetMap resolves `{model}_{param}` through the model's own config, so the old names
+        // fail cleanly instead of resolving to a model that no longer ingests them.
+        assert!(r.get_layer("mrms_QPE_01H").is_none());
+        assert!(r.get_layer("mrms_QPE_24H").is_none());
+        assert!(r.get_layer("mrms_REFL").is_some());
+        assert!(r.get_layer("mrms_PRECIP_RATE").is_some());
+        assert!(r.get_layer_by_param("mrms", "QPE_01H").is_none());
+    }
+
+    #[test]
+    fn mrms_qpe_is_an_observation_model_so_it_gets_a_time_dimension() {
+        let models = crate::model_config::ModelDimensionRegistry::load_from_directory(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config"),
+        );
+        assert!(models.is_observation("mrms-qpe"));
+        assert!(models.is_observation("mrms"));
+    }
 }

@@ -118,6 +118,10 @@ pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
         Some("aigfs".to_string())
     } else if lower.starts_with("gfs") || lower.contains("gfs") {
         Some("gfs".to_string())
+    } else if lower.starts_with("mrms-qpe_") {
+        // MRMS QPE has its own model (72 h of hourly grids vs 2 h of 2-minute radar). Must
+        // be checked before the generic MRMS branch, whose `contains("mrms")` also matches.
+        Some("mrms-qpe".to_string())
     } else if lower.starts_with("mrms_") || lower.contains("mrms") {
         Some("mrms".to_string())
     } else if lower.contains("ndfd") || lower.starts_with("ds.") {
@@ -295,7 +299,7 @@ fn parse_goes_timestamp(time_str: &str) -> Option<DateTime<Utc>> {
 pub fn get_model_bbox(model: &str) -> BoundingBox {
     match model {
         "hrrr" => BoundingBox::new(-122.719528, 21.138123, -60.917193, 47.842195),
-        "mrms" => BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
+        "mrms" | "mrms-qpe" => BoundingBox::new(-130.0, 20.0, -60.0, 55.0),
         "gfs" => BoundingBox::new(0.0, -90.0, 360.0, 90.0),
         "goes19" => BoundingBox::new(-143.0, 14.5, -53.0, 55.5),
         "goes18" => BoundingBox::new(-175.0, 14.5, -100.0, 55.5),
@@ -550,6 +554,41 @@ mod tests {
         assert_eq!(
             extract_model_from_filename("/data/hrrr/hrrr.grib2"),
             Some("hrrr".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_model_mrms_qpe_is_its_own_model() {
+        for f in [
+            "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-150000.grib2.gz",
+            "mrms-qpe_MRMS_MultiSensor_QPE_01H_Pass1_00.00_20261009-150000.grib2.gz",
+            "/data/downloads/mrms-qpe_MRMS_MultiSensor_QPE_24H_Pass2_00.00_20261009-150000.grib2.gz",
+            "MRMS-QPE_MRMS_MultiSensor_QPE_72H_Pass2_00.00_20261009-150000.grib2.gz",
+        ] {
+            assert_eq!(extract_model_from_filename(f), Some("mrms-qpe".to_string()), "{f}");
+        }
+        // the radar products keep their model, including files with QPE in the name
+        // that were fetched before the split (`mrms_` prefix)
+        for f in [
+            "mrms_MRMS_SeamlessHSR_00.00_20261009-150000.grib2.gz",
+            "mrms_MRMS_PrecipRate_00.00_20261009-150000.grib2.gz",
+            "mrms_MRMS_MultiSensor_QPE_01H_Pass2_00.00_20261009-150000.grib2.gz",
+        ] {
+            assert_eq!(
+                extract_model_from_filename(f),
+                Some("mrms".to_string()),
+                "{f}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_mrms_qpe_has_the_mrms_bbox() {
+        let q = get_model_bbox("mrms-qpe");
+        let m = get_model_bbox("mrms");
+        assert_eq!(
+            (q.min_x, q.min_y, q.max_x, q.max_y),
+            (m.min_x, m.min_y, m.max_x, m.max_y)
         );
     }
 

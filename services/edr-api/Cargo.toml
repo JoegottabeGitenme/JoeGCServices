@@ -53,6 +53,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 sqlx = { workspace = true }
 tower = { workspace = true, features = ["util"] }
+ingestion = { path = "../../crates/ingestion" }
 
 [[bench]]
 name = "edr_api_benchmarks"

@@ -52,3 +52,6 @@ flate2.workspace = true
 
 [dev-dependencies]
 tokio-test.workspace = true
+# Real Postgres + MinIO for the end-to-end ingest tests (Docker; `#[ignore]`d).
+test-utils = { path = "../test-utils", features = ["containers"] }
+sqlx.workspace = true

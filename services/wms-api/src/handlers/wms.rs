@@ -1382,7 +1382,7 @@ async fn render_weather_data(
         // for gridded forecast products like NDFD (even though NDFD uses observation-style TIME dimension)
         let is_imagery_model = matches!(
             model,
-            "mrms" | "goes18" | "goes19" | "goes18-fulldisk" | "goes19-fulldisk"
+            "mrms" | "mrms-qpe" | "goes18" | "goes19" | "goes18-fulldisk" | "goes19-fulldisk"
         );
         if is_imagery_model {
             return Err(WmsError::StyleNotDefined(format!(
