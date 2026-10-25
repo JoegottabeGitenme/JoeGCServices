@@ -69,6 +69,19 @@ collections:
         valid_range: { min: 0, max: 700 }  # W/m^2 (downward longwave)
     run_mode: instances
 
+  # Sea-level pressure. HRRR publishes this as MSLMA (MAPS system reduction), not PRMSL.
+  - id: hrrr-mean-sea-level
+    title: "HRRR - Mean Sea Level"
+    description: "Pressure reduced to mean sea level (MAPS system reduction, MSLMA)"
+    level_filter:
+      level_type: mean_sea_level
+      level_code: 101
+    parameters:
+      - name: MSLMA
+        levels: [mean_sea_level]
+        valid_range: { min: 85000, max: 110000 }  # Pa (850-1100 hPa)
+    run_mode: instances
+
   - id: hrrr-height-agl
     title: "HRRR - Heights Above Ground"
     description: "Parameters at specific heights above ground level (2m temp/dew point/humidity/wind)"
@@ -101,7 +114,7 @@ collections:
 
   - id: hrrr-atmosphere
     title: "HRRR - Entire Atmosphere"
-    description: "Column-integrated atmospheric parameters (PWAT)"
+    description: "Column-integrated atmospheric parameters (PWAT, smoke) plus composite reflectivity and total cloud cover"
     level_filter:
       level_type: entire_atmosphere
       level_code: 200
@@ -115,13 +128,12 @@ collections:
       - name: AOTK
         levels: [entire_atmosphere]
         valid_range: { min: 0, max: 5 }  # dimensionless aerosol optical depth
-      # TODO: REFC and TCDC need GRIB2 parameter code mapping fix
-      # - name: REFC
-      #   levels: [entire_atmosphere]
-      #   valid_range: { min: -10, max: 80 }  # dBZ
-      # - name: TCDC
-      #   levels: [entire_atmosphere]
-      #   valid_range: { min: 0, max: 100 }  # percent
+      - name: REFC
+        levels: [entire_atmosphere]
+        valid_range: { min: -10, max: 80 }  # dBZ, composite reflectivity
+      - name: TCDC
+        levels: [entire_atmosphere]
+        valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
   - id: hrrr-cloud-layers

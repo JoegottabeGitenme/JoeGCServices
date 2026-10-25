@@ -159,7 +159,10 @@ def main() -> int:
     status, meta, _ = fetch(f"{edr}/mrms-single-level")
     if status == 200 and meta:
         names = sorted((meta.get("parameter_names") or {}).keys())
-        r.check(names == ["PRECIP_RATE", "REFL"], f"radar collection no longer lists QPE: {names}")
+        r.check(
+            not any(n.startswith("QPE") for n in names) and {"PRECIP_RATE", "REFL"} <= set(names),
+            f"radar collection no longer lists QPE (and keeps REFL/PRECIP_RATE): {names}",
+        )
 
     print("== 72 hours of hourly history")
     status, inst, _ = fetch(f"{edr}/mrms-qpe/instances")

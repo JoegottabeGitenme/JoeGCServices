@@ -60,6 +60,10 @@ precaching:
 
 # GRIB2 level type codes reference:
 #   102 = height above MSL (in m)
+#
+# The level description for a code is shared by every parameter in this file (first entry wins), so
+# it is a template: REFL / PRECIP_RATE / PRECIP_FLAG are at 0 m ("0 m above MSL", unchanged) and MESH
+# is labelled 500 m in the GRIB message ("500 m above MSL").
 
 parameters:
   # Seamless Hybrid Scan Reflectivity - the fully composited radar mosaic
@@ -77,7 +81,7 @@ parameters:
       - type: height_above_msl
         level_code: 102
         value: 0
-        display: "0 m above MSL"
+        display_template: "{value} m above MSL"
     units: "dBZ"
     display_units: "dBZ"
     valid_range: [-30, 80]
@@ -96,7 +100,74 @@ parameters:
       - type: height_above_msl
         level_code: 102
         value: 0
-        display: "0 m above MSL"
+        display_template: "{value} m above MSL"
     units: "mm/hr"
     display_units: "mm/hr"
     valid_range: [0, 100]
+
+  # Surface precipitation type (categorical codes). 2-minute cadence like REFL.
+  # GRIB2 codes confirmed on a live message: discipline 209, category 6, number 0, level type 102
+  # (0 m), PNG packing (template 41).
+  #
+  #   -3  no radar coverage (becomes null)      0  no precipitation
+  #    1  warm stratiform rain                  3  snow
+  #    6  convective rain                       7  hail
+  #   10  cold stratiform rain (the rain/snow transition class)
+  #   91  tropical / stratiform rain mix       96  tropical / convective rain mix
+  #
+  # The labels are MRMS's, and were checked against data rather than taken on trust, on 2026-10-09
+  # 23:00Z and 2026-01-15 18:00Z (HRRR 1 h forecasts valid at the same instant; 400-600 sampled pixels
+  # per code):
+  #   -3  98.9% of these pixels are reflectivity's own no-coverage value (-999)
+  #    0  not one pixel has reflectivity >= 30 dBZ
+  #    3  January: mean 2 m temperature -8.0 C, 89% <= 0 C, HRRR says snow at 96% of its wet points
+  #    1  January: +13.9 C, HRRR rain at 100%        6, 7  HRRR rain at 100%, +22..27 C
+  #    7  median 46 dBZ, 83% >= 40 dBZ, 70% have MESH > 0 (<= 7% for any other code)
+  #    6, 96  median 39-41 dBZ (convective)          1, 10  median 14-18 dBZ (stratiform)
+  #   10  +1.6..+2.3 C, a mix of HRRR snow and rain points: the transition zone
+  #   91, 96  Gulf coast, +22..24 C, HRRR rain at 100%
+  # valid_range [0, 96] turns -3 into "no data" (null) and keeps 0 as a real "no precipitation".
+  # Categorical: pyramid levels must NOT average these codes (DownsampleMethod::for_parameter) and point
+  # reads must not interpolate between them (read_point_nearest).
+  - name: PRECIP_FLAG
+    description: "Precipitation Type (categorical)"
+    downsample: nearest
+    grib2:
+      discipline: 209
+      category: 6
+      number: 0
+    product: "PrecipFlag_00.00"
+    levels:
+      - type: height_above_msl
+        level_code: 102
+        value: 0
+        display_template: "{value} m above MSL"
+    units: "code"
+    display_units: "code"
+    valid_range: [0, 96]
+
+  # Maximum Estimated Size of Hail (MESH), instantaneous, 2-minute cadence.
+  # GRIB2 codes confirmed on a live message: discipline 209, category 3, number 28, level type 102 at
+  # 500 m (MRMS labels this 2-D field 500 m above MSL), PNG packing (template 41).
+  # Values are millimetres. Measured on the 2026-10-09 23:00 granule against reflectivity at the same
+  # instant: -3 is outside radar coverage (99.9% of those pixels are reflectivity's no-coverage value,
+  # ~33% of the grid); -1 is inside coverage with no hail (0.0% of those pixels are no-coverage, ~67%
+  # of the grid); positive sizes sit under real storms (96% of them >= 30 dBZ, median 46 dBZ).
+  # valid_range [-1, 200] therefore maps -3 to null and keeps -1: "covered, no hail" stays
+  # distinguishable from "no data". Treat any value <= 0 as no hail.
+  - name: MESH
+    description: "Maximum Estimated Size of Hail"
+    downsample: max
+    grib2:
+      discipline: 209
+      category: 3
+      number: 28
+    product: "MESH_00.50"
+    levels:
+      - type: height_above_msl
+        level_code: 102
+        value: 500
+        display_template: "{value} m above MSL"
+    units: "mm"
+    display_units: "mm"
+    valid_range: [-1, 200]

@@ -1008,4 +1008,14 @@ mod tests {
         assert!(models.is_observation("mrms-qpe"));
         assert!(models.is_observation("mrms"));
     }
+
+    #[test]
+    fn the_hrrr_sea_level_pressure_layer_is_named_for_the_parameter_hrrr_publishes() {
+        let r = real_layers();
+        let layer = r.get_layer("hrrr_MSLMA").expect("hrrr_MSLMA");
+        assert_eq!(layer.parameter, "MSLMA");
+        // hrrr_PRMSL never had data (HRRR has no PRMSL) and was renamed, not kept as a dead twin
+        assert!(r.get_layer("hrrr_PRMSL").is_none());
+        assert!(r.get_layer_by_param("hrrr", "PRMSL").is_none());
+    }
 }

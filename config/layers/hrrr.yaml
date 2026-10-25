@@ -98,10 +98,11 @@ layers:
   # Pressure Layers
   # ==========================================================================
 
-  - id: hrrr_PRMSL
-    parameter: PRMSL
+  # (Was hrrr_PRMSL, which never had data: HRRR publishes MSLMA, not PRMSL.)
+  - id: hrrr_MSLMA
+    parameter: MSLMA
     title: "Mean Sea Level Pressure"
-    abstract: "Atmospheric pressure reduced to mean sea level"
+    abstract: "Atmospheric pressure reduced to mean sea level (MAPS system reduction)"
     style_file: mslp.json
     units:
       native: Pa

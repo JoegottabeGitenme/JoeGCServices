@@ -539,8 +539,13 @@ async fn point_from_entry(
     let processor =
         ZarrGridProcessor::with_metadata(store, &level_path, grid_metadata, chunk_cache, config)?;
 
-    // Query the point
-    let value = processor.read_point(lon, lat).await?;
+    // Query the point. Category codes are read from the nearest cell: interpolating between two
+    // codes produces a code that does not exist.
+    let value = if crate::downsample::is_categorical_parameter(&zarr_meta.parameter) {
+        processor.read_point_nearest(lon, lat).await?
+    } else {
+        processor.read_point(lon, lat).await?
+    };
 
     Ok(PointValue {
         value,

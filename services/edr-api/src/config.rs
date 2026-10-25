@@ -1346,7 +1346,12 @@ collections:
                 .find_collection(id)
                 .unwrap_or_else(|| panic!("{id} missing"));
             assert_eq!(model.model, "mrms", "{id}");
-            assert_eq!(param_names(coll), ["REFL", "PRECIP_RATE"], "{id}");
+            // the 2-minute radar products; no QPE (that is model `mrms-qpe`)
+            assert_eq!(
+                param_names(coll),
+                ["REFL", "PRECIP_RATE", "PRECIP_FLAG", "MESH"],
+                "{id}"
+            );
         }
     }
 
@@ -1380,6 +1385,81 @@ collections:
                         coll.id,
                         p.name,
                         model_cfg.model,
+                        defined
+                    );
+                }
+            }
+        }
+    }
+    // ------------------------------------------------------------------
+    // HRRR reflectivity / cloud cover / sea-level pressure; MRMS precipitation type and hail size
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn hrrr_exposes_composite_reflectivity_total_cloud_cover_and_sea_level_pressure() {
+        let cfg = real_edr_config();
+        let (_, atmosphere) = cfg
+            .find_collection("hrrr-atmosphere")
+            .expect("hrrr-atmosphere");
+        let names = param_names(atmosphere);
+        for p in ["PWAT", "REFC", "TCDC"] {
+            assert!(names.contains(&p), "hrrr-atmosphere lacks {p}: {names:?}");
+        }
+        let (model, msl) = cfg
+            .find_collection("hrrr-mean-sea-level")
+            .expect("hrrr-mean-sea-level");
+        assert_eq!(model.model, "hrrr");
+        assert_eq!(param_names(msl), ["MSLMA"]);
+        // HRRR's sea-level pressure is MSLMA; nothing may advertise the PRMSL that HRRR does not publish
+        for (id, c) in cfg
+            .models
+            .values()
+            .filter(|m| m.model == "hrrr")
+            .flat_map(|m| m.collections.iter().map(|c| (c.id.clone(), c)))
+        {
+            assert!(!param_names(c).contains(&"PRMSL"), "{id} advertises PRMSL");
+        }
+    }
+
+    #[test]
+    fn mrms_radar_collections_expose_precipitation_type_and_hail_size() {
+        let cfg = real_edr_config();
+        for id in ["mrms-single-level", "mrms-single-level-latest"] {
+            let (model, coll) = cfg.find_collection(id).unwrap_or_else(|| panic!("{id}"));
+            assert_eq!(model.model, "mrms", "{id}");
+            assert_eq!(
+                param_names(coll),
+                ["REFL", "PRECIP_RATE", "PRECIP_FLAG", "MESH"],
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn hrrr_collection_parameters_exist_in_the_hrrr_model_config() {
+        let models_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/models");
+        let yaml: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(models_dir.join("hrrr.yaml")).unwrap())
+                .unwrap();
+        let defined: Vec<String> = yaml["parameters"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p["name"].as_str().map(String::from))
+            .collect();
+        for m in real_edr_config()
+            .models
+            .values()
+            .filter(|m| m.model == "hrrr")
+        {
+            for coll in &m.collections {
+                for p in &coll.parameters {
+                    assert!(
+                        defined.contains(&p.name),
+                        "hrrr collection {} lists {} but hrrr.yaml defines {:?}",
+                        coll.id,
+                        p.name,
                         defined
                     );
                 }

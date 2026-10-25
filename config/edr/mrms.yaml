@@ -27,7 +27,7 @@ collections:
   
   - id: mrms-single-level
     title: "MRMS - Single Level"
-    description: "Radar reflectivity and precipitation rate from multi-sensor analysis"
+    description: "Radar reflectivity, precipitation rate, precipitation type and maximum estimated hail size from multi-sensor analysis"
     level_filter:
       level_type: height_above_msl
       level_code: 102
@@ -38,6 +38,12 @@ collections:
       - name: PRECIP_RATE
         levels: [0]
         valid_range: { min: 0, max: 100 }  # mm/hr
+      - name: PRECIP_FLAG
+        levels: [0]
+        valid_range: { min: 0, max: 96 }  # categorical MRMS code (0 none, 1 warm stratiform rain, 3 snow, 6 convective rain, 7 hail, 10 cold stratiform rain, 91/96 tropical mixes); -3 = no coverage -> null; see config/models/mrms.yaml
+      - name: MESH
+        levels: [500]
+        valid_range: { min: -1, max: 200 }  # mm; -1 = covered, no hail; -3 = no coverage -> null
     run_mode: instances
 
   # ===========================================================================
@@ -59,6 +65,12 @@ collections:
       - name: PRECIP_RATE
         levels: [0]
         valid_range: { min: 0, max: 100 }  # mm/hr
+      - name: PRECIP_FLAG
+        levels: [0]
+        valid_range: { min: 0, max: 96 }  # categorical MRMS code (0 none, 1 warm stratiform rain, 3 snow, 6 convective rain, 7 hail, 10 cold stratiform rain, 91/96 tropical mixes); -3 = no coverage -> null; see config/models/mrms.yaml
+      - name: MESH
+        levels: [500]
+        valid_range: { min: -1, max: 200 }  # mm; -1 = covered, no hail; -3 = no coverage -> null
     run_mode: latest
 
 settings:
@@ -77,7 +89,7 @@ settings:
 # A 10 sq degree query returns ~100,000 points (10° / 0.01° = 1000 points per degree)
 # These limits are stricter than HRRR to account for the higher resolution
 limits:
-  max_parameters_per_request: 2       # Only 2 parameters available
+  max_parameters_per_request: 4       # REFL, PRECIP_RATE, PRECIP_FLAG, MESH
   max_time_steps: 350                  # ~1 hour of observations at 2-min intervals
   max_vertical_levels: 1              # No vertical dimension for radar data
   max_response_size_mb: 50            # Same as HRRR

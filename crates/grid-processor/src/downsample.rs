@@ -27,6 +27,14 @@ pub enum DownsampleMethod {
     Nearest,
 }
 
+/// Parameters whose values are category CODES, not quantities: they must be read from the nearest
+/// cell and downsampled by picking a real cell, never blended. Currently MRMS `PRECIP_FLAG`
+/// (HRRR's 0/1 `CRAIN`/`CSNOW`/... masks are deliberately not listed: they have always been
+/// blended, and clients read the fraction as "how much of this cell is rain").
+pub fn is_categorical_parameter(parameter: &str) -> bool {
+    parameter.eq_ignore_ascii_case("PRECIP_FLAG")
+}
+
 impl DownsampleMethod {
     /// Get the appropriate downsample method for a parameter.
     ///
@@ -35,10 +43,20 @@ impl DownsampleMethod {
     pub fn for_parameter(parameter: &str) -> Self {
         let param_upper = parameter.to_uppercase();
 
-        // Reflectivity and precipitation - use max to preserve storm signatures
+        // Categorical codes (MRMS precipitation type: 0 none, 7 hail, ...).
+        // Averaging or taking the max of codes invents categories; keep a real one.
+        if is_categorical_parameter(parameter) {
+            return DownsampleMethod::Nearest;
+        }
+
+        // Reflectivity, precipitation rate and hail size - use max to preserve storm signatures.
+        // REFC (HRRR composite reflectivity) and MESH (hail size) are matched exactly: neither
+        // name contains "REFL", and a loose substring test would catch unrelated names.
         if param_upper.contains("REFL")
             || param_upper.contains("PRECIP_RATE")
             || param_upper.contains("DBZ")
+            || param_upper == "REFC"
+            || param_upper == "MESH"
         {
             return DownsampleMethod::Max;
         }
@@ -350,5 +368,45 @@ mod tests {
             DownsampleMethod::for_parameter("PRECIP_RATE"),
             DownsampleMethod::Max
         );
+    }
+    #[test]
+    fn composite_reflectivity_and_hail_size_keep_their_peaks() {
+        // Neither name contains "REFL"; with the default they would have been averaged.
+        assert_eq!(
+            DownsampleMethod::for_parameter("REFC"),
+            DownsampleMethod::Max
+        );
+        assert_eq!(
+            DownsampleMethod::for_parameter("refc"),
+            DownsampleMethod::Max
+        );
+        assert_eq!(
+            DownsampleMethod::for_parameter("MESH"),
+            DownsampleMethod::Max
+        );
+    }
+
+    #[test]
+    fn precipitation_type_codes_are_never_averaged_or_maxed() {
+        assert_eq!(
+            DownsampleMethod::for_parameter("PRECIP_FLAG"),
+            DownsampleMethod::Nearest
+        );
+        // a 2x2 block of snow(3), hail(7), none(0), rain(1): max would say hail, mean 2.75
+        // (a code that means nothing); nearest keeps one of the real values.
+        let (out, w, h) = downsample_2x(&[3.0, 7.0, 0.0, 1.0], 2, 2, DownsampleMethod::Nearest);
+        assert_eq!((w, h), (1, 1));
+        assert!([3.0, 7.0, 0.0, 1.0].contains(&out[0]), "{out:?}");
+    }
+
+    #[test]
+    fn exact_names_do_not_catch_lookalikes() {
+        for other in ["REFC2", "MESHX", "PRECIP_FLAGS", "QPE_01H", "TCDC", "MSLMA"] {
+            assert_eq!(
+                DownsampleMethod::for_parameter(other),
+                DownsampleMethod::Mean,
+                "{other}"
+            );
+        }
     }
 }

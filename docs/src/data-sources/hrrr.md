@@ -27,12 +27,13 @@ High-resolution numerical weather model for CONUS providing detailed short-range
 | `UGRD` | 2m | U-component wind | m/s |
 | `VGRD` | 2m | V-component wind | m/s |
 | `GUST` | surface | Wind gust | m/s |
-| `PRMSL` | mean sea level | Mean sea level pressure | Pa |
+| `MSLMA` | mean sea level | Mean sea level pressure (MAPS reduction; HRRR does not publish `PRMSL`) | Pa |
 | `APCP` | surface | Accumulated precipitation | kg/m² |
 | `VIS` | surface | Visibility | m |
 | `TCDC` | entire atmosphere | Total cloud cover | % |
+| `REFC` | entire atmosphere | Composite reflectivity (EDR only; -10 dBZ means no echo) | dBZ |
 
-Note: The HRRR configuration focuses on core weather parameters. Convective parameters (CAPE, CIN) and composite reflectivity (REFL) are available in the raw GRIB2 data but not currently exposed as layers.
+Note: The HRRR configuration focuses on core weather parameters. Convective parameters (CAPE, CIN) are available in the raw GRIB2 data but not currently exposed as layers. Composite reflectivity (`REFC`) and `TCDC` are exposed through EDR (`hrrr-atmosphere`) only; they are GRIB2 level type 10 ("entire atmosphere"), not 200.
 
 ## Layer Names
 
@@ -40,7 +41,7 @@ Examples:
 - `hrrr_TMP` - Surface temperature (2m)
 - `hrrr_DPT` - Dewpoint temperature (2m)
 - `hrrr_WIND_BARBS` - Wind barbs (composite of UGRD/VGRD)
-- `hrrr_PRMSL` - Mean sea level pressure
+- `hrrr_MSLMA` - Mean sea level pressure (renamed from `hrrr_PRMSL`, which never had data)
 - `hrrr_TCDC` - Total cloud cover
 
 ## Data Source
