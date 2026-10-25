@@ -778,6 +778,7 @@ impl CleanupTask {
                             "file_path": ingest_path,
                             "source_url": url
                         }))
+                        .timeout(INGEST_REQUEST_TIMEOUT)
                         .send()
                         .await;
 
@@ -978,6 +979,12 @@ impl CleanupTask {
         Ok(stats)
     }
 }
+
+/// How long a `POST /ingest` may take. The ingester answers only once the whole file is
+/// registered, which takes ~5-30 s per file and longer when many models land at once (the old 30 s
+/// client timeout cut off ~1,400 ingests a day). A call that does time out loses nothing, since the
+/// ingester finishes the file anyway, but the file stays pending and is ingested again by the retry.
+pub const INGEST_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Delete a single file after successful ingestion.
 /// This is called inline during the download/ingest flow.
@@ -1389,6 +1396,68 @@ mod tests {
         // If we get here without panicking, the test passes
     }
 
+    /// The ingester answers only when the whole file is registered, often after more than 30 s
+    /// under load; the retry must wait for it rather than give up (and leave the file pending).
+    #[tokio::test]
+    #[ignore = "slow: waits 31 s for the mock ingester"]
+    async fn a_retry_waits_for_an_ingest_slower_than_thirty_seconds() {
+        use crate::state::DownloadState;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_dir = TempDir::new().unwrap();
+        let state = Arc::new(DownloadState::open_memory().await.unwrap());
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(31)))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let filename = "slow_ingest.grib2";
+        let file_path = output_dir.path().join(filename);
+        tokio::fs::write(&file_path, "data to ingest")
+            .await
+            .unwrap();
+        state
+            .insert_completed_for_test(
+                "http://example.com/slow.grib2",
+                filename,
+                Some(Utc::now() - chrono::Duration::minutes(10)),
+            )
+            .await
+            .unwrap();
+
+        let config = CleanupConfig {
+            enabled: true,
+            dry_run: false,
+            interval_secs: 3600,
+            partial_file_max_age_secs: 3600,
+            pending_ingestion_max_age_secs: 7200,
+            completed_record_retention_days: 7,
+            failed_record_retention_days: 7,
+            stale_unfinished_retention_days: 7,
+            unreferenced_file_min_age_secs: DEFAULT_UNREFERENCED_FILE_MIN_AGE_SECS,
+            output_dir: output_dir.path().to_path_buf(),
+            temp_dir: temp_dir.path().to_path_buf(),
+        };
+        let ingester_url = format!("{}/ingest", mock_server.uri());
+        let cleanup_task = CleanupTask::new(
+            config,
+            state.clone(),
+            Arc::new(CleanupMetrics::new()),
+            Some(ingester_url),
+        );
+
+        let stats = cleanup_task.run_startup_cleanup().await.unwrap();
+
+        assert_eq!(stats.ingestion_retries, 1);
+        assert_eq!(stats.ingestion_retries_succeeded, 1, "{:?}", stats.errors);
+        assert!(state.get_pending_ingestion().await.unwrap().is_empty());
+    }
     #[tokio::test]
     async fn test_process_pending_files_successful_retry() {
         use crate::state::DownloadState;

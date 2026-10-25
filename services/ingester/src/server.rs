@@ -366,12 +366,47 @@ async fn ingest_handler(
         forecast_hour: request.forecast_hour,
     };
 
-    // Perform ingestion
-    match state
-        .ingester
-        .ingest_file(&request.file_path, options)
-        .await
+    // The work runs in its own task, not in this handler's future: axum drops the handler when
+    // the client goes away (the downloader gives up after its timeout), and a file abandoned
+    // there keeps the datasets written so far and silently loses the rest, while its tracker
+    // entry stays "processing" forever. A spawned task finishes the file regardless.
+    let task_state = state.clone();
+    let task_id = id.clone();
+    match tokio::spawn(async move {
+        run_ingest(&task_state, &task_id, &request.file_path, options).await
+    })
+    .await
     {
+        Ok(response) => response,
+        Err(e) => {
+            error!(id = %id, error = %e, "Ingestion task panicked");
+            state
+                .tracker
+                .complete(&id, false, 0, vec![], Some(e.to_string()))
+                .await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(IngestResponse {
+                    success: false,
+                    message: format!("Ingestion failed: {}", e),
+                    datasets_registered: 0,
+                    model: None,
+                    reference_time: None,
+                    parameters: vec![],
+                }),
+            )
+        }
+    }
+}
+
+/// Ingest one file and record the outcome in the tracker.
+async fn run_ingest(
+    state: &ServerState,
+    id: &str,
+    file_path: &str,
+    options: IngestOptions,
+) -> (StatusCode, Json<IngestResponse>) {
+    match state.ingester.ingest_file(file_path, options).await {
         Ok(result) => {
             info!(
                 id = %id,
@@ -383,7 +418,7 @@ async fn ingest_handler(
             state
                 .tracker
                 .complete(
-                    &id,
+                    id,
                     true,
                     result.datasets_registered,
                     result.parameters.clone(),
@@ -398,7 +433,7 @@ async fn ingest_handler(
 
             state
                 .tracker
-                .complete(&id, false, 0, vec![], Some(e.to_string()))
+                .complete(id, false, 0, vec![], Some(e.to_string()))
                 .await;
 
             let response = IngestResponse {
@@ -1605,5 +1640,112 @@ mod tests {
         assert!(json.contains("\"duration_ms\":1500"));
         assert!(json.contains("\"success\":true"));
         assert!(json.contains("\"datasets_registered\":5"));
+    }
+}
+
+/// `POST /ingest` must finish the file even when the client gives up halfway: the downloader
+/// times out on slow ingests, and before the work was detached from the handler that left runs
+/// with some parameters of a file registered and the rest missing (and the tracker entry open).
+/// `#[ignore]`d (Docker):
+///
+/// ```text
+/// cargo test -p ingester -- --ignored cancel_tests
+/// ```
+#[cfg(test)]
+mod cancel_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use std::path::Path;
+    use std::time::Duration;
+    use storage::{Catalog, ObjectStorage, ObjectStorageConfig};
+    use tower::ServiceExt;
+
+    /// Real `hrrr.t18z.wrfsubhf01` messages: 6 parameters x 4 lead times, 24 datasets.
+    const FILE: &str = "hrrr-subh_20261011_18z_f001.grib2";
+    const DATASETS: i64 = 24;
+
+    async fn datasets(catalog: &Catalog) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM datasets WHERE model = 'hrrr-subh'")
+            .fetch_one(catalog.pool())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker"]
+    async fn an_ingest_whose_client_hangs_up_still_registers_the_whole_file() {
+        std::env::set_var(
+            "CONFIG_DIR",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config"),
+        );
+        let infra = test_utils::containers::TestInfrastructure::start().await;
+        infra.create_minio_bucket("test-bucket").await.unwrap();
+        let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+        catalog.migrate().await.unwrap();
+        let storage = Arc::new(
+            ObjectStorage::new(&ObjectStorageConfig {
+                endpoint: infra.minio_url(),
+                bucket: "test-bucket".to_string(),
+                access_key_id: "minioadmin".to_string(),
+                secret_access_key: "minioadmin".to_string(),
+                region: "us-east-1".to_string(),
+                allow_http: true,
+            })
+            .unwrap(),
+        );
+        let state = Arc::new(ServerState {
+            ingester: Ingester::new(storage, catalog.clone()),
+            observation_catalog: None,
+            storm_event_catalog: None,
+            trail_report_catalog: None,
+            lightning_catalog: None,
+            tracker: IngestionTracker::new(),
+        });
+        let router = build_router(state.clone());
+
+        let file_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/ingestion/tests/fixtures/hrrr-subh")
+            .join(FILE);
+        let request = Request::post("/ingest")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({ "file_path": file_path }).to_string(),
+            ))
+            .unwrap();
+
+        // Hang up the moment the first dataset is registered, i.e. mid-file: dropping the
+        // request future is exactly what the server does when the client's connection closes.
+        let first_row = async {
+            while datasets(&catalog).await == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        };
+        tokio::select! {
+            _ = router.oneshot(request) => {
+                panic!("the ingest finished before it could be cancelled; nothing was tested")
+            }
+            _ = first_row => {}
+        }
+        assert!(
+            datasets(&catalog).await < DATASETS,
+            "cancelled after the file was done"
+        );
+
+        // The rest of the file still lands, and the tracker closes the entry.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+        while state.tracker.get_status().await.total_completed == 0 {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "ingest never completed after the hang-up ({} of {DATASETS} datasets)",
+                datasets(&catalog).await
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let status = state.tracker.get_status().await;
+        assert!(status.active.is_empty(), "left open: {:?}", status.active);
+        assert!(status.recent[0].success, "{:?}", status.recent[0]);
+        assert_eq!(status.recent[0].datasets_registered, DATASETS as usize);
+        assert_eq!(datasets(&catalog).await, DATASETS);
     }
 }

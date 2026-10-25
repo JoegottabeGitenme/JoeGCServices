@@ -17,7 +17,7 @@ use reqwest::Client;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
-use crate::cleanup::delete_ingested_file;
+use crate::cleanup::{delete_ingested_file, INGEST_REQUEST_TIMEOUT};
 use crate::concurrency::ModelDownloadPermit;
 use crate::config::ModelConfig;
 use crate::download::{DownloadManager, SelectiveDownloadResult};
@@ -343,6 +343,7 @@ impl ModelRunner {
                                         "file_path": file_path,
                                         "source_url": file.url
                                     }))
+                                    .timeout(INGEST_REQUEST_TIMEOUT)
                                     .send()
                                     .await
                                 {
@@ -666,6 +667,7 @@ impl ModelRunner {
                                         "file_path": file_path,
                                         "source_url": file.url
                                     }))
+                                    .timeout(INGEST_REQUEST_TIMEOUT)
                                     .send()
                                     .await
                                 {
