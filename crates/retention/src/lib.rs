@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::time::{interval, Duration as TokioDuration};
+use tokio::time::{interval_at, Duration as TokioDuration, Instant, MissedTickBehavior};
 use tracing::{debug, error, info, warn};
 
 use storage::{Catalog, ObjectStorage};
@@ -712,19 +712,15 @@ impl CleanupTask {
             "Starting cleanup background task"
         );
 
-        let mut ticker = interval(TokioDuration::from_secs(self.config.interval_secs));
-
-        // Run immediately on startup
-        if let Err(e) = self.run_once().await {
-            error!(error = %e, "Cleanup cycle failed");
-        }
-
-        loop {
-            ticker.tick().await;
-            if let Err(e) = self.run_once().await {
-                error!(error = %e, "Cleanup cycle failed");
-            }
-        }
+        run_now_then_every(
+            TokioDuration::from_secs(self.config.interval_secs),
+            || async {
+                if let Err(e) = self.run_once().await {
+                    error!(error = %e, "Cleanup cycle failed");
+                }
+            },
+        )
+        .await;
     }
 }
 
@@ -785,6 +781,27 @@ struct SyncAnalysis {
     db_records_checked: u64,
     /// Total MinIO objects checked
     minio_objects_checked: u64,
+}
+
+/// Run `task` now, then once every `period`, forever.
+///
+/// A tokio interval's first tick completes immediately, so "run once, then loop on
+/// `interval(period)`" ran the task twice at startup: after every ingester restart the sync
+/// listed the whole bucket (~20 minutes) twice back to back. The ticker starts one period out
+/// instead, and a run that overruns its period skips the missed ticks rather than firing them
+/// in a burst.
+async fn run_now_then_every<F, Fut>(period: TokioDuration, mut task: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let mut ticker = interval_at(Instant::now() + period, period);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    task().await;
+    loop {
+        ticker.tick().await;
+        task().await;
+    }
 }
 
 /// Decide which DB rows and MinIO objects are orphans.
@@ -862,19 +879,15 @@ impl SyncTask {
             "Starting sync background task"
         );
 
-        let mut ticker = interval(TokioDuration::from_secs(self.config.interval_secs));
-
-        // Run immediately on startup
-        if let Err(e) = self.run().await {
-            error!(error = %e, "Sync cycle failed");
-        }
-
-        loop {
-            ticker.tick().await;
-            if let Err(e) = self.run().await {
-                error!(error = %e, "Sync cycle failed");
-            }
-        }
+        run_now_then_every(
+            TokioDuration::from_secs(self.config.interval_secs),
+            || async {
+                if let Err(e) = self.run().await {
+                    error!(error = %e, "Sync cycle failed");
+                }
+            },
+        )
+        .await;
     }
 
     /// Perform a dry-run sync to identify orphans without deleting.
@@ -1093,6 +1106,46 @@ impl SyncTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Once at startup, then once per period: not twice at startup (the immediate first tick of
+    /// a plain `interval`), and after a run that overran its period one catch-up run rather than
+    /// one per missed tick.
+    #[tokio::test(start_paused = true)]
+    async fn a_periodic_task_runs_once_at_startup_then_once_per_period() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let period = TokioDuration::from_secs(3600);
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&runs);
+        let task = tokio::spawn(run_now_then_every(period, move || {
+            let counter = Arc::clone(&counter);
+            async move {
+                // The third run overruns by 2.5 periods, like a sync stuck behind a slow listing.
+                if counter.fetch_add(1, SeqCst) == 2 {
+                    tokio::time::sleep(period * 5 / 2).await;
+                }
+            }
+        }));
+        let at =
+            |secs: u64| tokio::time::sleep_until(Instant::now() + TokioDuration::from_secs(secs));
+
+        at(1).await;
+        assert_eq!(runs.load(SeqCst), 1, "exactly one run at startup");
+        at(3598).await; // t = 3599 s
+        assert_eq!(runs.load(SeqCst), 1, "nothing more before a full period");
+        at(2).await; // t = 3601 s
+        assert_eq!(runs.load(SeqCst), 2);
+        at(3600).await; // t = 7201 s: third run starts and overruns until t = 16200 s
+        assert_eq!(runs.load(SeqCst), 3);
+        at(9000).await; // t = 16201 s: the overrun just ended
+                        // One catch-up run for the overdue tick; Burst would fire both missed ticks (10800 and
+                        // 14400 s) back to back.
+        assert_eq!(runs.load(SeqCst), 4, "one catch-up run, not a burst");
+        at(1798).await; // t = 17999 s
+        assert_eq!(runs.load(SeqCst), 4, "then the original schedule");
+        at(2).await; // t = 18001 s: the next scheduled tick (18000 s)
+        assert_eq!(runs.load(SeqCst), 5);
+        task.abort();
+    }
 
     /// The 2026-10-25 production sync: the listing ran 21:36:34 -> 21:54:53, the snapshot was at
     /// 21:54:56, and 10 gfswave rows ingested at 21:37:33 (after the lister had passed

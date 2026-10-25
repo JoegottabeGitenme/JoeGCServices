@@ -97,6 +97,20 @@ The 1,545 "orphan" rows deleted at 20:52 were probably largely the same race.
   - `storage_paths_come_with_their_newest_ingest_time` (Docker) checks the query. With `MIN` in
     place of `MAX` it fails.
 
+### The sync and the dataset cleanup ran twice at every ingester start
+
+`SyncTask` and `CleanupTask` (`crates/retention`) each ran once at startup and then looped on
+`tokio::time::interval(period)`. That interval's first tick completes immediately, so both ran a
+second time straight away. For the sync that meant two ~20-minute bucket listings back to back
+after every ingester restart. Observed: the 22:14:52 sync finished at 22:35:26, and the next one
+started the same millisecond.
+
+Both now use `run_now_then_every`. It runs once at startup, then waits a full period between runs,
+with `MissedTickBehavior::Skip`: a run that overruns its period gets one catch-up run, not one per
+missed tick. `a_periodic_task_runs_once_at_startup_then_once_per_period` checks this with tokio's
+paused clock. With an immediate first tick it fails "exactly one run at startup"; with the default
+`Burst` behaviour it fails "one catch-up run, not a burst".
+
 ## Found, not fixed
 
 - **Host load.** Load average was 18-20 on 20 cores, with 8.8 GB of swap in use. Slow queries are
