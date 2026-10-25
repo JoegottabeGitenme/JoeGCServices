@@ -473,6 +473,12 @@ services:
       CONFIG_DIR: /app/config
       # Max age for pending ingestion before file cleanup (default: 2 hours)
       PENDING_INGESTION_MAX_AGE_SECS: ${PENDING_INGESTION_MAX_AGE_SECS:-7200}
+      # Forget downloads that never finished (pending / in_progress / retrying) and went untouched
+      # this many days (default 7, minimum 1). See services/downloader/src/cleanup.rs.
+      STALE_UNFINISHED_RETENTION_DAYS: ${STALE_UNFINISHED_RETENTION_DAYS:-7}
+      # Delete files in the download directory that no state row refers to once they are this old
+      # (default 48 h, never below 6 h).
+      UNREFERENCED_FILE_MIN_AGE_SECS: ${UNREFERENCED_FILE_MIN_AGE_SECS:-172800}
       # Local development data limits (set to empty for production values)
       DEV_MAX_FORECAST_HOURS: ${DEV_MAX_FORECAST_HOURS:-}
       DEV_MAX_RETENTION_HOURS: ${DEV_MAX_RETENTION_HOURS:-}

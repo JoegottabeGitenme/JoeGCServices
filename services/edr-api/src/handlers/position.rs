@@ -89,6 +89,10 @@ pub struct PositionQueryParams {
     pub forecast_hour: Option<String>,
 }
 
+/// How many distinct grids a point series reads at once. Each read blocks a runtime worker for
+/// the S3 fetch and chunk decode, so this is a bound on the workers one request can occupy.
+const SERIES_READ_CONCURRENCY: usize = 8;
+
 /// The value a point read found for the instant `requested`, or `None` if the grid that
 /// answered belongs to a different instant.
 ///
@@ -919,6 +923,66 @@ async fn position_query(
 
             // Cache for queried values to avoid duplicate queries when interpolating
             let mut value_cache: HashMap<DateTime<Utc>, Option<f32>> = HashMap::new();
+
+            // Observation series (QPE, radar, satellite): resolve every needed instant with ONE
+            // catalog query and read the grids concurrently, filling the cache so the loop below
+            // never touches the catalog. The loop used to ask for each step in turn: for a 72 h
+            // QPE curve that was 72 sequential Postgres round trips and 72 sequential blocking
+            // grid reads (0.4-0.6 s warm, 1-10 s cold, 19.8 s straight after a restart).
+            // Instance queries (`reference_time`) and forecast models keep the per-step path:
+            // their "which dataset" rule is not simply "the one valid at this instant".
+            if is_observation_model && reference_time.is_none() {
+                let mut wanted: Vec<DateTime<Utc>> = Vec::new();
+                for (_target_time, strategy) in &query_plan {
+                    match strategy {
+                        QueryStrategy::Exact(t) | QueryStrategy::Nearest(t) => wanted.push(*t),
+                        QueryStrategy::Interpolate(before, after, _) => {
+                            wanted.push(*before);
+                            wanted.push(*after);
+                        }
+                    }
+                }
+                wanted.sort();
+                wanted.dedup();
+                if wanted.len() > 1 {
+                    let results = state
+                        .grid_data_service
+                        .read_point_series(
+                            &model_config.model,
+                            param_name,
+                            level_str.as_deref(),
+                            &wanted,
+                            lon,
+                            lat,
+                            SERIES_READ_CONCURRENCY,
+                        )
+                        .await;
+                    for (instant, result) in wanted.iter().zip(results) {
+                        let value = match result {
+                            Ok(point_value) => {
+                                if units_str.is_empty() {
+                                    units_str = point_value.units.clone();
+                                }
+                                value_at_instant(&point_value, *instant, is_observation_model)
+                            }
+                            Err(e) => {
+                                // Normal for an hour this parameter has no grid for.
+                                tracing::debug!(
+                                    "No {}/{} value at ({}, {}) for time {}: {}",
+                                    model_config.model,
+                                    param_name,
+                                    lon,
+                                    lat,
+                                    instant,
+                                    e
+                                );
+                                None
+                            }
+                        };
+                        value_cache.insert(*instant, value);
+                    }
+                }
+            }
 
             for (_target_time, strategy) in &query_plan {
                 let interpolated_value: Option<f32> = match strategy {

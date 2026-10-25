@@ -410,6 +410,53 @@ impl Catalog {
         Ok(row.map(|r| r.into()))
     }
 
+    /// Every available dataset for `model`/`parameter` whose valid time lies in
+    /// `[from, to]` (both inclusive), optionally restricted to one `level`, oldest first, with
+    /// its valid time. For equal valid times the most recently ingested comes first.
+    ///
+    /// One query for a whole time series. `find_by_time` / `find_by_time_and_level` answer
+    /// "which dataset is nearest to this instant" and are run once per step, so a 72-step
+    /// series meant 72 sequential round trips. The caller matches steps against this list in
+    /// memory.
+    pub async fn find_datasets_in_valid_time_range(
+        &self,
+        model: &str,
+        parameter: &str,
+        level: Option<&str>,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> WmsResult<Vec<(DateTime<Utc>, CatalogEntry)>> {
+        #[derive(FromRow)]
+        struct RangeRow {
+            #[sqlx(flatten)]
+            row: DatasetRow,
+            valid_time: DateTime<Utc>,
+        }
+
+        let rows = sqlx::query_as::<_, RangeRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size, zarr_metadata, valid_time FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available' \
+               AND ($3::text IS NULL OR level = $3) \
+               AND valid_time >= $4 AND valid_time <= $5 \
+             ORDER BY valid_time ASC, ingested_at DESC",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(level)
+        .bind(from)
+        .bind(to)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.valid_time, r.row.into()))
+            .collect())
+    }
+
     /// Find dataset closest to requested valid time at a specific level.
     pub async fn find_by_time_and_level(
         &self,

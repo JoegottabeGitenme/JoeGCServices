@@ -40,6 +40,12 @@ use scheduler::Scheduler;
 use server::ServerState;
 use state::DownloadState;
 
+/// Whether to run the startup cleanup inline, before the status server and the scheduler start.
+/// Only for `--once`, where there is no background task to do it. See the call site.
+fn inline_startup_cleanup(cleanup_enabled: bool, once: bool) -> bool {
+    cleanup_enabled && once
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "downloader")]
 #[command(about = "Weather data downloader with resumable downloads")]
@@ -114,6 +120,16 @@ struct Args {
     #[arg(long, env = "FAILED_RECORD_RETENTION_DAYS", default_value = "7")]
     failed_record_retention_days: u32,
 
+    /// Days after which a download that never finished (pending / in_progress / retrying) and
+    /// was not touched is forgotten (default: 7, minimum 1)
+    #[arg(long, env = "STALE_UNFINISHED_RETENTION_DAYS", default_value = "7")]
+    stale_unfinished_retention_days: u32,
+
+    /// Age in seconds before a file in the download directory that no database row refers to is
+    /// deleted (default: 172800 = 48 h; never less than 6 h)
+    #[arg(long, env = "UNREFERENCED_FILE_MIN_AGE_SECS", default_value = "172800")]
+    unreferenced_file_min_age_secs: u64,
+
     /// Max age for partial files before cleanup in seconds (default: 3600 = 1 hour)
     #[arg(long, env = "PARTIAL_FILE_MAX_AGE_SECS", default_value = "3600")]
     partial_file_max_age_secs: u64,
@@ -173,12 +189,9 @@ async fn main() -> Result<()> {
     let download_manager = Arc::new(DownloadManager::new(download_config)?);
 
     // Resume any in-progress downloads
-    let in_progress = state.get_in_progress().await?;
-    if !in_progress.is_empty() {
-        info!(
-            count = in_progress.len(),
-            "Found in-progress downloads to resume"
-        );
+    let unfinished = state.count_unfinished().await?;
+    if unfinished > 0 {
+        info!(count = unfinished, "Found in-progress downloads to resume");
     }
 
     // Create cleanup metrics (shared with server for Prometheus export)
@@ -193,6 +206,8 @@ async fn main() -> Result<()> {
         pending_ingestion_max_age_secs: args.pending_ingestion_max_age_secs,
         completed_record_retention_days: args.completed_record_retention_days,
         failed_record_retention_days: args.failed_record_retention_days,
+        stale_unfinished_retention_days: args.stale_unfinished_retention_days,
+        unreferenced_file_min_age_secs: args.unreferenced_file_min_age_secs,
         output_dir: args.output_dir.clone(),
         temp_dir: args.temp_dir.clone(),
     };
@@ -205,8 +220,16 @@ async fn main() -> Result<()> {
         args.ingester_url.clone(),
     );
 
-    // Run startup cleanup to handle any orphan files from previous runs
-    if cleanup_config.enabled {
+    // Run startup cleanup to handle any orphan files from previous runs.
+    //
+    // Only in `--once` mode. In continuous mode the background task started below runs the full
+    // cleanup immediately (its first interval tick is immediate) AFTER the status server is up.
+    // Running it inline here used to hold off `/health` and the first poll until it finished: it
+    // re-POSTs every downloaded-but-unconfirmed file to the ingester one at a time, which after an
+    // ingester restart is dozens of 420 MB GOES frames. Autoheal gave up on the unhealthy
+    // container after ~100 s and restarted it, which started the same list again, indefinitely,
+    // with every feed paused.
+    if inline_startup_cleanup(cleanup_config.enabled, args.once) {
         info!("Running startup cleanup");
         if let Err(e) = cleanup_task.run_startup_cleanup().await {
             warn!(error = %e, "Startup cleanup failed (continuing anyway)");
@@ -292,4 +315,22 @@ async fn main() -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn continuous_mode_never_blocks_startup_on_cleanup() {
+        // The background task does the first cleanup; blocking here is what kept /health down.
+        assert!(!inline_startup_cleanup(true, false));
+        assert!(!inline_startup_cleanup(false, false));
+    }
+
+    #[test]
+    fn once_mode_still_cleans_up_inline_unless_disabled() {
+        assert!(inline_startup_cleanup(true, true));
+        assert!(!inline_startup_cleanup(false, true));
+    }
 }
