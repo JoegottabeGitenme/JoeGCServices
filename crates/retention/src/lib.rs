@@ -787,6 +787,49 @@ struct SyncAnalysis {
     minio_objects_checked: u64,
 }
 
+/// Decide which DB rows and MinIO objects are orphans.
+///
+/// - `minio`: logical path -> newest last-modified, from a listing that began at `listing_started`.
+/// - `db_rows`: (storage path, newest ingested_at), snapshotted after the listing finished.
+///
+/// A DB row is an orphan only if its path is missing from the listing AND it was ingested more
+/// than `grace` before the listing *started*. Anything written after that may have landed under
+/// a prefix the lister had already passed, so its absence from the listing proves nothing. (The
+/// grace used to be measured back from the snapshot, but the listing takes longer than the
+/// grace: rows ingested in the listing's first minutes were deleted with their objects intact.)
+///
+/// A MinIO object is an orphan if no row references it at snapshot time and it was last
+/// modified more than `grace` before `now`. Only `shredded/` and `grids/` count; `raw/` files
+/// may be awaiting processing.
+fn find_orphans(
+    minio: &HashMap<String, DateTime<Utc>>,
+    db_rows: &[(String, DateTime<Utc>)],
+    listing_started: DateTime<Utc>,
+    now: DateTime<Utc>,
+    grace: Duration,
+) -> (Vec<String>, Vec<String>) {
+    let row_cutoff = listing_started - grace;
+    let orphan_db: Vec<String> = db_rows
+        .iter()
+        .filter(|(path, ingested_at)| *ingested_at < row_cutoff && !minio.contains_key(path))
+        .map(|(path, _)| path.clone())
+        .collect();
+
+    let db_paths: std::collections::HashSet<&str> =
+        db_rows.iter().map(|(path, _)| path.as_str()).collect();
+    let orphan_minio: Vec<String> = minio
+        .iter()
+        .filter(|(path, newest_modified)| {
+            (path.starts_with("shredded/") || path.starts_with("grids/"))
+                && !db_paths.contains(path.as_str())
+                && now.signed_duration_since(**newest_modified) > grace
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
+
+    (orphan_db, orphan_minio)
+}
+
 /// Sync task for reconciling database and MinIO storage.
 pub struct SyncTask {
     ctx: RetentionContext,
@@ -863,22 +906,16 @@ impl SyncTask {
     /// # Race-safety
     ///
     /// The ingester uploads zarr objects to MinIO *before* registering the
-    /// catalog row, and bucket listings on a large bucket can take tens of
-    /// seconds. A naive snapshot comparison therefore deletes freshly
-    /// ingested data (observed in production: MRMS, ingesting every 2 min,
-    /// was wiped continuously once the bucket grew large enough).
+    /// catalog row, and listing a large bucket takes a long time (18 minutes
+    /// for 950k objects in production). A naive snapshot comparison therefore
+    /// deletes freshly ingested data (observed in production: MRMS, ingesting
+    /// every 2 min, was wiped continuously once the bucket grew large enough).
     ///
-    /// Two defenses are applied:
-    /// 1. Ordering: the MinIO listing is taken *first* and the DB snapshot
-    ///    *after* it completes. Objects uploaded during the listing have
-    ///    their catalog rows registered by the time the DB snapshot is
-    ///    taken, so they are not flagged as MinIO orphans.
-    /// 2. Grace period: objects whose last_modified is within
-    ///    `grace_secs`, and DB rows whose ingested_at is within
-    ///    `grace_secs`, are never considered orphans.
+    /// The MinIO listing is taken first and the DB snapshot after it, and
+    /// [`find_orphans`] applies the grace period; see there for the rules.
     async fn analyze(&self) -> Result<SyncAnalysis> {
         let grace = Duration::seconds(self.config.grace_secs as i64);
-        let now = Utc::now();
+        let listing_started = Utc::now();
 
         // Step 1: Get all objects from MinIO (with last-modified timestamps).
         // Need to check shredded/ (legacy GRIB2 data), raw/ (GOES NetCDF data),
@@ -915,47 +952,27 @@ impl SyncTask {
         info!(
             count = minio_paths.len(),
             unique_paths = minio_path_ages.len(),
+            listing_secs = (Utc::now() - listing_started).num_seconds(),
             "Retrieved MinIO objects (shredded + raw + grids)"
         );
 
-        // Step 2: DB snapshots, taken AFTER the MinIO listing completed.
-        //   - full set: used to decide which MinIO objects are orphans
-        //   - aged set (ingested more than grace_secs ago): candidates for
-        //     orphan DB record detection
-        let db_paths = self.ctx.catalog.get_all_storage_paths().await?;
-        let db_path_set: std::collections::HashSet<String> = db_paths.iter().cloned().collect();
-        let db_records_checked = db_paths.len() as u64;
-
-        let aged_db_paths = self
+        // Step 2: DB snapshot, taken AFTER the MinIO listing completed.
+        let db_rows = self
             .ctx
             .catalog
-            .get_storage_paths_older_than(self.config.grace_secs)
+            .get_storage_paths_with_ingested_at()
             .await?;
+        let db_records_checked = db_rows.len() as u64;
 
-        info!(count = db_paths.len(), "Retrieved database storage paths");
+        info!(count = db_rows.len(), "Retrieved database storage paths");
 
-        // Step 3: Find orphan DB records (in DB but not in MinIO).
-        // Only rows older than the grace period are considered - a row
-        // ingested mid-listing may reference objects the lister passed
-        // before they were uploaded.
-        let orphan_db_paths: Vec<String> = aged_db_paths
-            .into_iter()
-            .filter(|path| !minio_path_ages.contains_key(path))
-            .collect();
-
-        // Step 4: Find orphan MinIO objects (in MinIO but not in DB).
-        // Only consider shredded/ and grids/ files as orphans - raw/ files
-        // may be awaiting processing. Objects written within the grace
-        // period are never orphans: their catalog row may not exist yet.
-        let orphan_minio_paths: Vec<String> = minio_path_ages
-            .iter()
-            .filter(|(path, newest_modified)| {
-                (path.starts_with("shredded/") || path.starts_with("grids/"))
-                    && !db_path_set.contains(*path)
-                    && now.signed_duration_since(**newest_modified) > grace
-            })
-            .map(|(path, _)| path.clone())
-            .collect();
+        let (orphan_db_paths, orphan_minio_paths) = find_orphans(
+            &minio_path_ages,
+            &db_rows,
+            listing_started,
+            Utc::now(),
+            grace,
+        );
 
         Ok(SyncAnalysis {
             orphan_db_paths,
@@ -1076,6 +1093,52 @@ impl SyncTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The 2026-10-25 production sync: the listing ran 21:36:34 -> 21:54:53, the snapshot was at
+    /// 21:54:56, and 10 gfswave rows ingested at 21:37:33 (after the lister had passed
+    /// `grids/gfswave/`) were deleted as orphans although their objects were in MinIO.
+    #[test]
+    fn find_orphans_never_deletes_a_row_written_after_the_listing_started() {
+        let t = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+        let listing_started = t("2026-10-25T21:36:34Z");
+        let now = t("2026-10-25T21:54:56Z");
+        let grace = Duration::minutes(15);
+
+        let minio: HashMap<String, DateTime<Utc>> = [
+            ("grids/gfs/kept.zarr", "2026-10-25T19:00:00Z"),
+            ("grids/old/orphan.zarr", "2026-10-25T20:00:00Z"),
+            ("grids/new/uploading.zarr", "2026-10-25T21:50:00Z"),
+            ("raw/goes/pending.nc", "2026-10-25T18:00:00Z"),
+        ]
+        .into_iter()
+        .map(|(p, m)| (p.to_string(), t(m)))
+        .collect();
+        let db_rows: Vec<(String, DateTime<Utc>)> = [
+            // written mid-listing, missed by it: the production case
+            (
+                "grids/gfswave/20261025_12z/htsgw_surface_f006.zarr",
+                "2026-10-25T21:37:33Z",
+            ),
+            // written shortly before the listing began (inside the grace): still protected
+            ("grids/hrrr/recent.zarr", "2026-10-25T21:30:00Z"),
+            // long-standing row whose objects really are gone
+            ("grids/hrrr/gone.zarr", "2026-10-25T19:00:00Z"),
+            // long-standing row whose objects are listed
+            ("grids/gfs/kept.zarr", "2026-10-25T19:00:00Z"),
+        ]
+        .into_iter()
+        .map(|(p, i)| (p.to_string(), t(i)))
+        .collect();
+
+        let (mut orphan_db, mut orphan_minio) =
+            find_orphans(&minio, &db_rows, listing_started, now, grace);
+        orphan_db.sort();
+        orphan_minio.sort();
+
+        assert_eq!(orphan_db, ["grids/hrrr/gone.zarr"]);
+        // Old and unreferenced: orphan. Recently modified, raw/, or referenced: not.
+        assert_eq!(orphan_minio, ["grids/old/orphan.zarr"]);
+    }
 
     #[test]
     fn test_cleanup_config_default() {
