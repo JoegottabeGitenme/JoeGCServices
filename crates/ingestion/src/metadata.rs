@@ -120,6 +120,10 @@ pub fn extract_model_from_filename(file_path: &str) -> Option<String> {
     } else if lower.starts_with("aigfs") || lower.contains("aigfs") {
         // AIGFS - AI Global Forecast System (must check before GFS since name contains "gfs")
         Some("aigfs".to_string())
+    } else if lower.starts_with("gfswave") || lower.contains("gfswave") {
+        // GFS-Wave (WAVEWATCH III) is its own model with oceanographic parameters; must be
+        // checked before GFS, whose `contains("gfs")` also matches.
+        Some("gfswave".to_string())
     } else if lower.starts_with("gfs") || lower.contains("gfs") {
         Some("gfs".to_string())
     } else if lower.starts_with("mrms-qpe_") {
@@ -527,6 +531,60 @@ mod tests {
             extract_model_from_filename("/data/gfs/gfs.t00z.pgrb2.grib2"),
             Some("gfs".to_string())
         );
+    }
+
+    /// Every forecast model is downloaded as `{id}_{date}_{cycle}z_f{hour}.grib2` (or
+    /// `{id}_{file_type}_...` when it has file types; `output_filename` in the downloader's
+    /// `model_runner.rs`), and the ingester takes the model from that name. A name that resolves
+    /// to another model is ingested with the wrong parameter table: `gfswave_*` was read as
+    /// `gfs`, matched nothing, and "succeeded" with zero datasets for every file it was given.
+    #[test]
+    fn every_forecast_model_is_recognised_from_its_downloaded_file_name() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/models");
+        let mut checked = Vec::new();
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+            let yaml: serde_yaml::Value =
+                serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            if yaml["dimensions"]["type"].as_str() != Some("forecast") {
+                continue;
+            }
+            let id = yaml["model"]["id"].as_str().unwrap();
+            let names: Vec<String> = match yaml["source"]["file_types"].as_sequence() {
+                Some(types) => types
+                    .iter()
+                    .map(|t| format!("{id}_{}_20261025_12z_f006.grib2", t.as_str().unwrap()))
+                    .collect(),
+                None => vec![format!("{id}_20261025_12z_f006.grib2")],
+            };
+            for name in names {
+                assert_eq!(
+                    extract_model_from_filename(&format!("/data/downloads/{name}")).as_deref(),
+                    Some(id),
+                    "{name} (from {})",
+                    path.display()
+                );
+            }
+            checked.push(id.to_string());
+        }
+        // Guard against the loop silently checking nothing (wrong path, renamed keys).
+        for id in [
+            "gfs",
+            "gfswave",
+            "hrrr",
+            "hrrr-subh",
+            "aigfs",
+            "aigefs",
+            "nbm-conus",
+        ] {
+            assert!(
+                checked.iter().any(|c| c == id),
+                "{id} not checked: {checked:?}"
+            );
+        }
     }
 
     #[test]
