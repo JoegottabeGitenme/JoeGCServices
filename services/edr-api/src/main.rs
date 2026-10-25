@@ -216,6 +216,12 @@ async fn run_server(args: Args) {
             "/edr/collections/:collection_id/items/:feature_id/conditions",
             get(handlers::linear_features::trail_conditions_timeseries_handler),
         )
+        // Batch form of the above: the series for many trails in one request
+        // (`?ids=a,b,c`, at most 500), instead of one call per segment.
+        .route(
+            "/edr/collections/:collection_id/conditions",
+            get(handlers::linear_features::trail_conditions_batch_handler),
+        )
         // County aggregate (custom EDR-adjacent endpoint; storm-event feature collections)
         .route(
             "/edr/collections/:collection_id/counties",

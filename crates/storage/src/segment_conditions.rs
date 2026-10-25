@@ -1,11 +1,12 @@
 //! Read access to `segment_conditions` -- per-segment, per-hour trail
 //! condition output written by the `trail-physics` Python service.
 //!
-//! This crate never writes this table (the Python service writes directly
-//! via psycopg); this module exists for the future EDR exposure
-//! (`?conditions=latest` on the `trails` collection) and admin/ops queries.
-//! No migration/write methods here -- see `Catalog::migrate_segment_conditions`
-//! in catalog.rs for schema ownership.
+//! This crate never inserts into this table (the Python service writes directly
+//! via psycopg); this module serves the EDR reads (`?conditions=latest`, the
+//! per-trail and batch time series) and admin/ops queries. The one write is the
+//! retention delete (`delete_valid_before_batch`), run by the ingester. No
+//! migration methods here -- see `Catalog::migrate_segment_conditions` in
+//! catalog.rs for schema ownership.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -48,6 +49,12 @@ impl SegmentConditionsCatalog {
         Self { pool }
     }
 
+    // Tie-break note (all four read queries below): `UNIQUE(feature_id, valid_time,
+    // model_version)` allows two model versions on one valid hour, and they can share
+    // a `run_time`. `ORDER BY ... run_time DESC` alone leaves that tie to the
+    // planner, so the single-trail and batch endpoints could disagree. Every query
+    // therefore ends with `model_version DESC`; they all pick the same row.
+
     /// Latest available condition row for a single feature: the row with
     /// the greatest `valid_time` that is not in the future (i.e. the most
     /// recent hour we actually have a computed value for -- a genuine
@@ -76,7 +83,7 @@ impl SegmentConditionsCatalog {
                    softness_index, confidence, model_version
             FROM segment_conditions
             WHERE feature_id = $1 AND valid_time <= NOW()
-            ORDER BY valid_time DESC, run_time DESC
+            ORDER BY valid_time DESC, run_time DESC, model_version DESC
             LIMIT 1
             "#,
         )
@@ -91,19 +98,37 @@ impl SegmentConditionsCatalog {
     /// viewport's worth of segments rather than N round trips). Same
     /// valid-time-nearest-now semantics as `get_latest_for_feature` --
     /// see that method's own docstring for the bug this fixes.
+    ///
+    /// **Query shape matters here.** The obvious form,
+    /// `SELECT DISTINCT ON (feature_id) ... ORDER BY feature_id, valid_time DESC,
+    /// run_time DESC`, has to read and sort *every* historical row of every
+    /// requested feature to keep one each: measured on production for a 711-trail
+    /// viewport, 233,550 rows sorted (spilling to disk) and ~63,000 buffers read to
+    /// return 711 rows, so the request cost followed the table's history depth, not
+    /// the viewport (1.7-3 s typical, 8-34 s under load). This form probes the
+    /// `(feature_id, valid_time)` index once per feature and takes the top row
+    /// (~4,200 buffers, the same 711 rows). Duplicate ids in the input are collapsed, as
+    /// `DISTINCT ON` did. Rows come back ordered by `feature_id`.
     pub async fn get_latest_for_features(
         &self,
         feature_ids: &[i64],
     ) -> WmsResult<Vec<SegmentCondition>> {
         sqlx::query_as::<_, SegmentCondition>(
             r#"
-            SELECT DISTINCT ON (feature_id)
-                   feature_id, run_time, valid_time, forecast_hour,
-                   soil_moisture, saturation, frozen_fraction, frost_depth_m, swe_mm,
-                   softness_index, confidence, model_version
-            FROM segment_conditions
-            WHERE feature_id = ANY($1) AND valid_time <= NOW()
-            ORDER BY feature_id, valid_time DESC, run_time DESC
+            SELECT c.feature_id, c.run_time, c.valid_time, c.forecast_hour,
+                   c.soil_moisture, c.saturation, c.frozen_fraction, c.frost_depth_m,
+                   c.swe_mm, c.softness_index, c.confidence, c.model_version
+            FROM (SELECT DISTINCT u AS feature_id FROM unnest($1::bigint[]) AS u) AS f
+            CROSS JOIN LATERAL (
+                SELECT s.feature_id, s.run_time, s.valid_time, s.forecast_hour,
+                       s.soil_moisture, s.saturation, s.frozen_fraction, s.frost_depth_m,
+                       s.swe_mm, s.softness_index, s.confidence, s.model_version
+                FROM segment_conditions s
+                WHERE s.feature_id = f.feature_id AND s.valid_time <= NOW()
+                ORDER BY s.valid_time DESC, s.run_time DESC, s.model_version DESC
+                LIMIT 1
+            ) c
+            ORDER BY c.feature_id
             "#,
         )
         .bind(feature_ids)
@@ -144,7 +169,7 @@ impl SegmentConditionsCatalog {
             FROM segment_conditions
             WHERE feature_id = $1
               AND valid_time >= NOW() - make_interval(hours => $2)
-            ORDER BY valid_time ASC, run_time DESC
+            ORDER BY valid_time ASC, run_time DESC, model_version DESC
             "#,
         )
         .bind(feature_id)
@@ -154,6 +179,68 @@ impl SegmentConditionsCatalog {
         .map_err(|e| {
             WmsError::DatabaseError(format!("Get segment condition timeseries failed: {}", e))
         })
+    }
+
+    /// `get_timeseries_for_feature` for many features in one query (the batch
+    /// `/collections/trails/conditions?ids=` endpoint). Same stitching rule and
+    /// history window per feature; rows are ordered by `feature_id`, then
+    /// `valid_time` ascending, so grouping them is a single pass. A feature with
+    /// no rows simply contributes none.
+    pub async fn get_timeseries_for_features(
+        &self,
+        feature_ids: &[i64],
+    ) -> WmsResult<Vec<SegmentCondition>> {
+        sqlx::query_as::<_, SegmentCondition>(
+            r#"
+            SELECT DISTINCT ON (feature_id, valid_time)
+                   feature_id, run_time, valid_time, forecast_hour,
+                   soil_moisture, saturation, frozen_fraction, frost_depth_m, swe_mm,
+                   softness_index, confidence, model_version
+            FROM segment_conditions
+            WHERE feature_id = ANY($1)
+              AND valid_time >= NOW() - make_interval(hours => $2)
+            ORDER BY feature_id, valid_time ASC, run_time DESC, model_version DESC
+            "#,
+        )
+        .bind(feature_ids)
+        .bind(TIMESERIES_HISTORY_HOURS)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            WmsError::DatabaseError(format!(
+                "Get segment condition timeseries batch failed: {}",
+                e
+            ))
+        })
+    }
+
+    /// Delete up to `batch_size` rows whose `valid_time` is older than `before`
+    /// and return how many went. The retention sweep (ingester) calls this in a
+    /// loop. Deleting by `ctid` found through `idx_segment_conditions_valid_time`
+    /// keeps each statement short instead of one multi-million-row transaction.
+    pub async fn delete_valid_before_batch(
+        &self,
+        before: DateTime<Utc>,
+        batch_size: i64,
+    ) -> WmsResult<u64> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM segment_conditions
+            WHERE ctid = ANY(ARRAY(
+                SELECT ctid FROM segment_conditions
+                WHERE valid_time < $1
+                LIMIT $2
+            ))
+            "#,
+        )
+        .bind(before)
+        .bind(batch_size.max(1))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            WmsError::DatabaseError(format!("Delete segment conditions batch failed: {}", e))
+        })?;
+        Ok(result.rows_affected())
     }
 
     /// Count of rows (used for collection-availability / staleness checks --

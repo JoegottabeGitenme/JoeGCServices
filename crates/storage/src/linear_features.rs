@@ -328,6 +328,23 @@ impl LinearFeatureCatalog {
         Ok(row.map(Into::into))
     }
 
+    /// `(feature_id, name)` for each of `feature_ids` that exists, in one query.
+    /// Same rule as `get_feature_by_id` -- a row in `linear_features`, `active` or
+    /// not -- but without fetching and serializing geometry, which the batch
+    /// conditions endpoint does not need. Ids that do not exist are simply absent.
+    pub async fn get_names_by_ids(
+        &self,
+        feature_ids: &[i64],
+    ) -> WmsResult<Vec<(i64, Option<String>)>> {
+        sqlx::query_as::<_, (i64, Option<String>)>(
+            "SELECT feature_id, name FROM linear_features WHERE feature_id = ANY($1)",
+        )
+        .bind(feature_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Get linear feature names failed: {}", e)))
+    }
+
     /// Count active features, optionally filtered by class (used for
     /// collection availability checks).
     pub async fn count_features(&self, feature_class: Option<&str>) -> WmsResult<i64> {

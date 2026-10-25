@@ -49,6 +49,9 @@ curl 'https://folkweather.com/edr/collections/trails/items?q=forsythe&conditions
 # 3. Forecast series for one trail (feature_id from the responses above)
 curl 'https://folkweather.com/edr/collections/trails/items/956937928/conditions'
 
+# 3b. The same series for many trails in ONE request (e.g. every segment of a trail)
+curl 'https://folkweather.com/edr/collections/trails/conditions?ids=956937928,27852725'
+
 # 4. Where do conditions exist at all?  (see "Coverage")
 curl 'https://folkweather.com/edr/collections/trails' | jq .conditions_coverage
 ```
@@ -74,6 +77,7 @@ for (const f of features) {
 | `GET /collections/trails/area?coords=minLon,minLat,maxLon,maxLat` | Same as bbox, EDR style |
 | `GET /collections/trails/radius?coords=POINT(lon lat)&within=5&within-units=km` | Trails near a point |
 | `GET /collections/trails/items/{feature_id}/conditions` | Hourly series for one trail (plain JSON) |
+| `GET /collections/trails/conditions?ids=a,b,c` | The same series for up to 500 trails in one request (see §7) |
 | `GET /collections/trails` | Collection metadata incl. `conditions_coverage` |
 
 All three list endpoints (`items`, `area`, `radius`) accept `&conditions=latest`,
@@ -159,6 +163,12 @@ Coverage will grow. Build against the field, not a hard-coded box.
 - Responses with `conditions` are cacheable for **5 minutes**
   (`Cache-Control: max-age=300`); geometry-only responses for 1 hour (trail
   geometry changes weekly). Don't cache conditions longer than that.
+- **`conditions=latest` costs about the same as geometry-only.** Measured on
+  production (Oct 2026): a 1,494-trail viewport takes ~0.24 s with
+  `conditions=latest` against ~0.23 s without, and a first request for a region
+  nobody has asked for yet takes 0.17-0.30 s. (It used to be 2.5-34 s: the
+  lookup sorted the whole history table on every request.) Requests that land
+  while the hourly model pass is writing can still be slower than that.
 
 ## 7. The per-trail series
 
@@ -195,6 +205,47 @@ Coverage will grow. Build against the field, not a hard-coded box.
 - Unknown `feature_id` → **404**. A known trail with no data (outside
   coverage) → **200 with `"conditions": []`**. Handle both.
 
+### Many trails at once: `GET /collections/trails/conditions?ids=…`
+
+For a trail made of many segments (OSM ways), one call replaces one request per
+segment:
+
+```bash
+curl 'https://folkweather.com/edr/collections/trails/conditions?ids=956937928,27852725,123'
+```
+
+```json
+{
+  "series": [
+    { "feature_id": 956937928, "name": "Forsythe Canyon Trail",
+      "run_time": "…", "model_version": "trail-physics-v1",
+      "conditions": [ { "valid_time": "…", "forecast_hour": 3, "run_time": "…",
+                        "soil_moisture": 0.176, "saturation": 0.40, "frozen_fraction": 0.0,
+                        "confidence": 1.0, "model_version": "trail-physics-v1" }, "…" ] }
+  ],
+  "unknown_ids": [123]
+}
+```
+
+- **Each `series[i]` is exactly the body of `/items/{feature_id}/conditions`**
+  for that id (same fields, ascending `valid_time`, per-point `run_time`, same
+  horizon). The two endpoints build it with the same code.
+- **Unknown ids don't fail the batch.** They are listed in `unknown_ids` (always
+  present, `[]` when there are none), so "this trail was deleted from OSM" is
+  explicit rather than a silent gap.
+- **A known trail with no data** (outside coverage) is in `series` with
+  `"conditions": []`, `run_time: null`, `model_version: null`, as on the
+  single endpoint.
+- `series` follows the order of `ids`; duplicates are dropped (first wins).
+  Grouping segments into a trail stays on your side.
+- **At most 500 ids** (counted as sent); more → **400**. Also **400**, with a
+  JSON error body, for a missing/empty `ids` or any id that is not a plain
+  non-negative integer. Commas may be URL-encoded (`%2C`).
+- Same `Cache-Control: max-age=300` and open CORS as the rest of `/edr`.
+- **Cost, measured on production:** 1 id 0.10 s, 40 ids 0.16 s, 100 ids 0.19 s,
+  500 ids 0.37 s (21,500 points, ~5 MB uncompressed), against 0.09 s for one
+  single-trail call. A 40-segment trail is one ~0.16 s request instead of 40.
+
 ## 8. Suggested UI patterns
 
 - **Color trails by `saturation`** with a sequential ramp (dry → wet). Pick
@@ -214,6 +265,10 @@ Coverage will grow. Build against the field, not a hard-coded box.
 
 - **Errors** are JSON exception bodies with standard HTTP codes: `400` bad
   params, `404` unknown collection/trail, `500` server error.
+- **History is kept for 12 hours** of past `valid_time` (the series endpoint
+  serves the last 6); older rows are deleted. Forecast hours are never deleted.
+  If the model pipeline stalls for more than ~12 hours, trails fall back to "no
+  conditions" rather than showing stale values as current.
 - **Paging:** `limit` + `offset` on `items`. Bbox results are not guaranteed to
   be spatially sorted.
 - **Stability:** new fields may be added to `conditions` at any time — ignore

@@ -21,7 +21,9 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import statistics
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -118,6 +120,59 @@ def conditions_problems(c: dict, now: dt.datetime) -> list[str]:
     return bad
 
 
+def timed_fetch(url: str, runs: int = 3):
+    """-> (last (status, headers, json), median seconds over `runs` requests).
+    The median, not the best or the first: the first request after a deploy is
+    cold, and one slow outlier should not fail a check."""
+    secs, last = [], None
+    for _ in range(runs):
+        t0 = time.monotonic()
+        last = fetch(url)
+        secs.append(time.monotonic() - t0)
+    return last, statistics.median(secs)
+
+
+def latest_latency_ok(none_s: float, latest_s: float) -> bool:
+    """`conditions=latest` must stay cheap next to the geometry-only query it
+    decorates. It was 10-100x slower (a per-request sort over the whole history
+    table). Allowed: at most 2x, or 0.75 s over, whichever is larger -- generous
+    enough for network jitter, far below the regression it guards against."""
+    return latest_s <= max(2.0 * none_s, none_s + 0.75)
+
+
+def batch_latency_ok(single_s: float, batch_s: float) -> bool:
+    """A batch of ~40 ids must cost about one single-trail call, not forty
+    (that is the entire point of the endpoint): at most 4x, or 1 s over."""
+    return batch_s <= max(4.0 * single_s, single_s + 1.0)
+
+
+def batch_problems(batch, ids: list[int], singles: dict) -> list[str]:
+    """Everything wrong with a batch response for `ids`, as strings (empty =
+    healthy). `singles` maps feature_id -> the parsed body of the single-trail
+    endpoint for ids the caller compared (the batch entry must EQUAL it)."""
+    bad = []
+    if not isinstance(batch, dict) or "series" not in batch or "unknown_ids" not in batch:
+        return ["response must be an object with `series` and `unknown_ids`"]
+    series, unknown = batch["series"], batch["unknown_ids"]
+    got = [s.get("feature_id") for s in series]
+    if len(set(got)) != len(got):
+        bad.append("duplicate feature_ids in `series`")
+    if set(got) & set(unknown):
+        bad.append("an id is both in `series` and `unknown_ids`")
+    if set(got) | set(unknown) != set(ids):
+        bad.append(f"series + unknown_ids ({sorted(set(got) | set(unknown))}) != requested ids ({sorted(set(ids))})")
+    wanted_order = [i for i in dict.fromkeys(ids) if i in got]
+    if got != wanted_order:
+        bad.append(f"`series` is not in request order: {got} vs {wanted_order}")
+    if unknown != [i for i in dict.fromkeys(ids) if i in unknown]:
+        bad.append(f"`unknown_ids` is not in request order: {unknown}")
+    for entry in series:
+        fid = entry.get("feature_id")
+        if fid in singles and entry != singles[fid]:
+            bad.append(f"series entry for {fid} differs from /items/{fid}/conditions")
+    return bad
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base", default="https://folkweather.com/edr")
@@ -154,6 +209,17 @@ def main() -> int:
                 print(f"          trail {fid}: {pr}")
         covered = next((f for f in with_c if f["properties"]["conditions"].get("confidence") == 1), with_c[0] if with_c else None)
         r.check(all(f["geometry"]["type"] == "LineString" for f in feats), "every feature is a LineString")
+
+    print("== conditions=latest is cheap next to geometry-only (it was 10-100x slower)")
+    q = f"{trails}/items?bbox={args.bbox}&limit=3000"
+    (st_none, _, fc_none), none_s = timed_fetch(q)
+    (st_lat, _, fc_lat), lat_s = timed_fetch(q + "&conditions=latest")
+    if r.check(st_none == 200 and st_lat == 200, f"both queries answer 200 ({st_none}, {st_lat})"):
+        n = len(fc_lat["features"]) if fc_lat else 0
+        r.check(
+            latest_latency_ok(none_s, lat_s),
+            f"conditions=latest {lat_s:.2f}s vs geometry-only {none_s:.2f}s for {n} trails (median of 3; limit max(2x, +0.75s))",
+        )
 
     print("== geometry-only response keeps the long cache")
     status, headers, _ = fetch(f"{trails}/items?bbox={args.bbox}&limit=5")
@@ -215,15 +281,54 @@ def main() -> int:
                     else:
                         r.fail("series has negative soil_moisture")
 
+    print("== batch conditions: /conditions?ids=")
+    feats_all = (fc or {}).get("features", []) if fc else []
+    ids = [f["id"] for f in feats_all][:40]
+    if len(ids) < 2:
+        r.skip("fewer than 2 trails in the viewport; cannot test the batch endpoint")
+    else:
+        csv = ",".join(str(i) for i in ids)
+        (status, headers, batch), batch_s = timed_fetch(f"{trails}/conditions?ids={csv}")
+        if r.check(status == 200 and batch is not None, f"GET /conditions?ids=<{len(ids)} ids> -> {status}"):
+            r.check("max-age=300" in headers.get("Cache-Control", ""), f"cached 5 min (Cache-Control: {headers.get('Cache-Control')})")
+            compare = ids[:4]
+            singles = {i: fetch(f"{trails}/items/{i}/conditions")[2] for i in compare}
+            problems = batch_problems(batch, ids, singles)
+            if r.check(not problems, f"series cover the request in order and the first {len(compare)} equal the single-trail bodies"):
+                pass
+            else:
+                for pr in problems[:10]:
+                    print(f"          {pr}")
+            (_, _, _), single_s = timed_fetch(f"{trails}/items/{ids[0]}/conditions")
+            r.check(
+                batch_latency_ok(single_s, batch_s),
+                f"{len(ids)}-id batch {batch_s:.2f}s vs one single call {single_s:.2f}s (median of 3; limit max(4x, +1s))",
+            )
+        # mixed: known + unknown ids -> 200, unknowns listed
+        mixed = [ids[0], 1, ids[1], 2]
+        status, _, mb = fetch(f"{trails}/conditions?ids={','.join(map(str, mixed))}")
+        if r.check(status == 200 and mb is not None, f"mixed known+unknown batch -> {status}"):
+            r.check(mb["unknown_ids"] == [1, 2], f"unknown ids are listed, not fatal ({mb['unknown_ids']})")
+            r.check([s["feature_id"] for s in mb["series"]] == [ids[0], ids[1]], "known ids keep request order")
+        # limits and malformed input
+        status, _, err = fetch(f"{trails}/conditions?ids={','.join(str(i) for i in range(1, 502))}")
+        r.check(status == 400 and isinstance(err, dict) and err.get("status") == 400, f"501 ids -> 400 with a JSON error body ({status})")
+        status, _, _ = fetch(f"{trails}/conditions?ids={','.join(str(i) for i in range(1, 501))}")
+        r.check(status == 200, f"exactly 500 ids -> 200 ({status})")
+        for bad in ("abc", "1,x", "-5", ""):
+            r.check(fetch(f"{trails}/conditions?ids={bad}")[0] == 400, f"ids={bad!r} -> 400")
+
     print("== error handling")
     r.check(fetch(f"{trails}/items/1/conditions")[0] == 404, "unknown trail id -> 404")
     r.check(fetch(f"{base}/collections/nope/items/1/conditions")[0] == 404, "unknown collection -> 404")
     r.check(fetch(f"{base}/collections/hrrr-soil/items/1/conditions")[0] == 400, "non-trail collection -> 400")
+    r.check(fetch(f"{base}/collections/nope/conditions?ids=1")[0] == 404, "batch: unknown collection -> 404")
+    r.check(fetch(f"{base}/collections/hrrr-soil/conditions?ids=1")[0] == 400, "batch: non-trail collection -> 400")
 
     print("== the served OpenAPI document describes this contract")
     status, spec = fetch_text(f"{base}/api")
     if r.check(status == 200, f"GET /api -> {status}"):
-        for needle in ("/collections/{collectionId}/items/{featureId}/conditions", "TrailConditions:", "saturation:", "trailConditions:"):
+        for needle in ("/collections/{collectionId}/items/{featureId}/conditions", "/collections/{collectionId}/conditions:", "TrailConditionsBatch:", "TrailConditions:", "saturation:", "trailConditions:"):
             r.check(needle in spec, f"OpenAPI mentions `{needle}`")
 
     print()

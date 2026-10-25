@@ -542,6 +542,52 @@ paths:
         '404':
           description: Collection or trail not found
 
+  /collections/{collectionId}/conditions:
+    get:
+      operationId: getTrailConditionsBatch
+      summary: Forecast conditions time series for many trails (batch)
+      description: |
+        The hourly series for several trails in one request -- the batch form of
+        `/collections/{collectionId}/items/{featureId}/conditions`, for a detail view that
+        needs every segment of one trail without one request per segment.
+        
+        **Each entry of `series` is exactly the body the single-trail endpoint returns for
+        that id** (same fields, ascending `valid_time`, per-point `run_time`, same horizon).
+        
+        - Ids that are not known trails do **not** fail the request: they are listed in
+          `unknown_ids`, in request order.
+        - A known trail with no condition data (e.g. outside the coverage region) is present
+          in `series` with `"conditions": []`, as it is on the single-trail endpoint.
+        - `series` follows the order of `ids`, with duplicates removed (first occurrence wins).
+        - **400** (JSON error body) if `ids` is missing or empty, has more than **500** ids
+          (counted as sent, before removing duplicates), or contains anything that is not a
+          non-negative integer.
+        
+        Grouping segments into a trail is up to the client.
+        
+        Only the `trails` collection supports this operation. Cached for 5 minutes
+        (`Cache-Control: max-age=300`).
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - name: ids
+          in: query
+          required: true
+          description: Comma-separated OSM way ids (`feature_id`), at most 500.
+          schema:
+            type: string
+            example: '956937928,27852725'
+      responses:
+        '200':
+          description: Condition series for the known ids, plus the ids that were not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrailConditionsBatch'
+        '400':
+          description: '`ids` missing, malformed, or more than 500; or the collection is not a linear-features collection'
+        '404':
+          description: Collection not found
+
   /collections/{collectionId}/instances:
     get:
       operationId: getInstances
@@ -1298,6 +1344,24 @@ components:
           description: Ascending by `valid_time`; empty when the trail has no condition data.
           items:
             $ref: '#/components/schemas/TrailConditionsTimeseriesPoint'
+
+    TrailConditionsBatch:
+      type: object
+      required: [series, unknown_ids]
+      properties:
+        series:
+          type: array
+          description: |
+            One entry per known id, in request order. Each is exactly a
+            `TrailConditionsTimeseries` (what `/items/{featureId}/conditions` returns).
+          items:
+            $ref: '#/components/schemas/TrailConditionsTimeseries'
+        unknown_ids:
+          type: array
+          description: Requested ids that are not trails, in request order. Always present.
+          items:
+            type: integer
+            format: int64
 
     LightningFeature:
       type: object
