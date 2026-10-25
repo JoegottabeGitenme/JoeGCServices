@@ -37,7 +37,7 @@ async fn test_simple_grid_metadata() {
 #[tokio::test]
 async fn test_simple_grid_full_read() {
     let processor = open_test_zarr("simple_10x10.zarr");
-    let bbox = BoundingBox::new(0.0, 0.0, 10.0, 10.0);
+    let bbox = BoundingBox::new(0.0, 0.0, 9.0, 9.0);
 
     let region = processor
         .read_region(&bbox)
@@ -75,11 +75,11 @@ async fn test_simple_grid_point_read() {
         .expect("Failed to read point")
         .expect("Point should have value");
 
-    // Grid is 10x10 over bbox (0,0)-(10,10), so resolution is 1 deg
-    // Point (5,5) maps to col=5, row from top: (10-5)/1 = 5
-    let expected = (5 * 1000 + 5) as f32;
+    // 10x10 grid points at integers, bbox (0,0)-(9,9) from first point to last: 1 deg spacing.
+    // Point (5,5) is col 5, row from the top (9-5)/1 = 4.
+    let expected = (5 * 1000 + 4) as f32;
     assert!(
-        (value - expected).abs() < 2.0, // Allow tolerance for interpolation
+        (value - expected).abs() < 0.001, // an exact grid point: no interpolation error
         "Point (5,5) expected ~{}, got {}",
         expected,
         value

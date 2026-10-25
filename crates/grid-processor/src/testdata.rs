@@ -203,7 +203,8 @@ pub fn generate_all_testdata() -> Result<(), Box<dyn std::error::Error>> {
         10,
         10,
         8,
-        &BoundingBox::new(0.0, 0.0, 10.0, 10.0),
+        // bbox runs from the first grid point to the last: points at integers 0..9
+        &BoundingBox::new(0.0, 0.0, 9.0, 9.0),
     )?;
     println!("Created: simple_10x10.zarr");
 

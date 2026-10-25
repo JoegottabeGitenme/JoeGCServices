@@ -9,6 +9,18 @@ use crate::Grib2Error;
 use bytes::Bytes;
 use chrono::{DateTime, NaiveDate, Utc};
 
+/// GRIB2 coordinates are microdegrees; `GridDefinition` keeps millidegrees. Round to the
+/// nearest, never truncate: MRMS's last longitude 299.994997 truncated to 299.994, putting a
+/// 0.01-degree grid's east edge a tenth of a cell short and point reads that far off.
+fn micro_to_milli(micro: i32) -> i32 {
+    (micro as f64 / 1000.0).round() as i32
+}
+
+/// [`micro_to_milli`] for the unsigned increments.
+fn micro_to_milli_u(micro: u32) -> u32 {
+    (micro as f64 / 1000.0).round() as u32
+}
+
 /// Decode a GRIB2 signed integer using sign-magnitude encoding.
 ///
 /// GRIB2 uses sign-magnitude representation for signed values (like coordinates),
@@ -295,12 +307,12 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
             grid_shape,
             num_points_longitude: ni,
             num_points_latitude: nj,
-            first_latitude_millidegrees: la1 / 1000,
-            first_longitude_millidegrees: lo1 / 1000,
-            last_latitude_millidegrees: la2 / 1000,
-            last_longitude_millidegrees: lo2 / 1000,
-            latitude_increment_millidegrees: di / 1000,
-            longitude_increment_millidegrees: dj / 1000,
+            first_latitude_millidegrees: micro_to_milli(la1),
+            first_longitude_millidegrees: micro_to_milli(lo1),
+            last_latitude_millidegrees: micro_to_milli(la2),
+            last_longitude_millidegrees: micro_to_milli(lo2),
+            latitude_increment_millidegrees: micro_to_milli_u(di),
+            longitude_increment_millidegrees: micro_to_milli_u(dj),
             scanning_mode,
         })
     } else if grid_template == 10 {
@@ -350,10 +362,10 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
             grid_shape,
             num_points_longitude: ni,
             num_points_latitude: nj,
-            first_latitude_millidegrees: la1 / 1000,
-            first_longitude_millidegrees: lo1 / 1000,
-            last_latitude_millidegrees: la2 / 1000,
-            last_longitude_millidegrees: lo2 / 1000,
+            first_latitude_millidegrees: micro_to_milli(la1),
+            first_longitude_millidegrees: micro_to_milli(lo1),
+            last_latitude_millidegrees: micro_to_milli(la2),
+            last_longitude_millidegrees: micro_to_milli(lo2),
             latitude_increment_millidegrees: 0, // Dx/Dy are in meters for Mercator
             longitude_increment_millidegrees: 0,
             scanning_mode,
@@ -402,8 +414,8 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
             grid_shape,
             num_points_longitude: ni,
             num_points_latitude: nj,
-            first_latitude_millidegrees: la1 / 1000,
-            first_longitude_millidegrees: lo1 / 1000,
+            first_latitude_millidegrees: micro_to_milli(la1),
+            first_longitude_millidegrees: micro_to_milli(lo1),
             last_latitude_millidegrees: 0, // Not defined for Polar Stereographic
             last_longitude_millidegrees: 0,
             latitude_increment_millidegrees: 0, // Dx/Dy are in meters
@@ -454,8 +466,8 @@ pub fn parse_grid_definition(data: &[u8]) -> Result<GridDefinition, Grib2Error> 
             grid_shape,
             num_points_longitude: ni,
             num_points_latitude: nj,
-            first_latitude_millidegrees: la1 / 1000,
-            first_longitude_millidegrees: lo1 / 1000,
+            first_latitude_millidegrees: micro_to_milli(la1),
+            first_longitude_millidegrees: micro_to_milli(lo1),
             last_latitude_millidegrees: 0, // Not defined for Lambert
             last_longitude_millidegrees: 0,
             latitude_increment_millidegrees: 0, // Dx/Dy are in meters, not degrees
@@ -811,6 +823,19 @@ fn find_section(data: &[u8], section_num: u8) -> Result<usize, Grib2Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grid_coordinates_round_to_the_nearest_millidegree() {
+        // MRMS (wgrib2: lon 230.004999 to 299.994997) and the same values west of Greenwich.
+        assert_eq!(micro_to_milli(299_994_997), 299_995);
+        assert_eq!(micro_to_milli(230_004_999), 230_005);
+        assert_eq!(micro_to_milli(-129_995_001), -129_995);
+        assert_eq!(micro_to_milli(-60_005_003), -60_005);
+        // Exact values are unchanged.
+        assert_eq!(micro_to_milli(359_750_000), 359_750);
+        assert_eq!(micro_to_milli_u(9_999), 10);
+        assert_eq!(micro_to_milli_u(250_000), 250);
+    }
 
     #[test]
     fn test_decode_grib2_signed_positive() {

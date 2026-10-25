@@ -783,7 +783,7 @@ fn extract_geotiff_metadata<R: Read + std::io::Seek>(
 
 /// Extract pixel scale from ModelPixelScaleTag (33550).
 fn extract_pixel_scale<R: Read + std::io::Seek>(decoder: &mut Decoder<R>) -> Result<(f64, f64)> {
-    match decoder.get_tag_f64_vec(Tag::Unknown(GEOTIFF_MODEL_PIXEL_SCALE_TAG)) {
+    match decoder.get_tag_f64_vec(Tag::from_u16_exhaustive(GEOTIFF_MODEL_PIXEL_SCALE_TAG)) {
         Ok(scale) if scale.len() >= 2 => Ok((scale[0], scale[1])),
         _ => {
             warn!("ModelPixelScaleTag not found, using default VIIRS resolution (15 arc-sec)");
@@ -799,17 +799,22 @@ fn extract_bounding_box<R: Read + std::io::Seek>(
     height: u32,
     pixel_scale: &(f64, f64),
 ) -> Result<BoundingBox> {
-    match decoder.get_tag_f64_vec(Tag::Unknown(GEOTIFF_MODEL_TIEPOINT_TAG)) {
+    match decoder.get_tag_f64_vec(Tag::from_u16_exhaustive(GEOTIFF_MODEL_TIEPOINT_TAG)) {
         Ok(tiepoint) if tiepoint.len() >= 6 => {
             let pixel_i = tiepoint[0];
             let pixel_j = tiepoint[1];
             let geo_x = tiepoint[3];
             let geo_y = tiepoint[4];
 
-            let min_lon = geo_x - (pixel_i * pixel_scale.0);
-            let max_lat = geo_y + (pixel_j * pixel_scale.1);
-            let max_lon = min_lon + (width as f64 * pixel_scale.0);
-            let min_lat = max_lat - (height as f64 * pixel_scale.1);
+            // The tiepoint locates the corner of pixel (0, 0) (PixelIsArea). The stored bbox runs
+            // from the first pixel centre to the last, half a pixel inside the edges, like every
+            // other grid (readers index from the first point with spacing extent / (n - 1)).
+            let west_edge = geo_x - (pixel_i * pixel_scale.0);
+            let north_edge = geo_y + (pixel_j * pixel_scale.1);
+            let min_lon = west_edge + 0.5 * pixel_scale.0;
+            let max_lat = north_edge - 0.5 * pixel_scale.1;
+            let max_lon = west_edge + (width as f64 - 0.5) * pixel_scale.0;
+            let min_lat = north_edge - (height as f64 - 0.5) * pixel_scale.1;
 
             Ok(BoundingBox::new(min_lon, min_lat, max_lon, max_lat))
         }
@@ -822,7 +827,7 @@ fn extract_bounding_box<R: Read + std::io::Seek>(
 
 /// Extract NoData value from GDAL_NODATA tag (42113).
 fn extract_no_data_value<R: Read + std::io::Seek>(decoder: &mut Decoder<R>) -> Option<f64> {
-    match decoder.get_tag_ascii_string(Tag::Unknown(GDAL_NODATA_TAG)) {
+    match decoder.get_tag_ascii_string(Tag::from_u16_exhaustive(GDAL_NODATA_TAG)) {
         Ok(s) => s.trim().parse::<f64>().ok(),
         Err(_) => None,
     }
@@ -857,6 +862,40 @@ fn decompress_gzip(data: &Bytes) -> Result<Bytes> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 4x2 GeoTIFF of 0.5-degree pixels whose corner is at (-10 E, 50 N): pixel centres run
+    /// from (-9.75, 49.75) to (-8.25, 49.25), and that is the bbox readers must be given.
+    #[test]
+    fn the_bbox_spans_the_pixel_centres_not_the_pixel_edges() {
+        use tiff::encoder::{colortype::Gray32Float, TiffEncoder};
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut enc = TiffEncoder::new(&mut buf).unwrap();
+            let mut img = enc.new_image::<Gray32Float>(4, 2).unwrap();
+            img.encoder()
+                .write_tag(
+                    Tag::Unknown(GEOTIFF_MODEL_PIXEL_SCALE_TAG),
+                    &[0.5f64, 0.5, 0.0][..],
+                )
+                .unwrap();
+            img.encoder()
+                .write_tag(
+                    Tag::Unknown(GEOTIFF_MODEL_TIEPOINT_TAG),
+                    &[0.0f64, 0.0, 0.0, -10.0, 50.0, 0.0][..],
+                )
+                .unwrap();
+            img.write_data(&[0.0f32; 8]).unwrap();
+        }
+        buf.set_position(0);
+        let mut decoder = Decoder::new(buf).unwrap();
+        let scale = extract_pixel_scale(&mut decoder).unwrap();
+        let bbox = extract_bounding_box(&mut decoder, 4, 2, &scale).unwrap();
+        assert_eq!(scale, (0.5, 0.5));
+        assert_eq!(
+            (bbox.min_x, bbox.min_y, bbox.max_x, bbox.max_y),
+            (-9.75, 49.25, -8.25, 49.75)
+        );
+    }
 
     #[test]
     fn test_extract_model_from_geotiff_path() {

@@ -173,8 +173,9 @@ async fn test_zarr_partial_read() {
         .expect("Failed to read region");
 
     // Calculate expected dimensions (note: read_region adds a 2-cell buffer for interpolation)
-    let res_x = bbox.width() / width as f64;
-    let res_y = bbox.height() / height as f64;
+    // n points span n - 1 gaps
+    let res_x = bbox.width() / (width - 1) as f64;
+    let res_y = bbox.height() / (height - 1) as f64;
     let buffer_cells = 2.0;
 
     // Calculate with buffer, clamped to grid bounds
@@ -184,9 +185,10 @@ async fn test_zarr_partial_read() {
     let buffered_max_lat = (small_bbox.max_lat + res_y * buffer_cells).min(bbox.max_lat);
 
     let expected_min_col = ((buffered_min_lon - bbox.min_lon) / res_x).floor() as usize;
-    let expected_max_col = ((buffered_max_lon - bbox.min_lon) / res_x).ceil() as usize;
+    // exclusive end: every point at or before the edge
+    let expected_max_col = ((buffered_max_lon - bbox.min_lon) / res_x).floor() as usize + 1;
     let expected_min_row = ((bbox.max_lat - buffered_max_lat) / res_y).floor() as usize;
-    let expected_max_row = ((bbox.max_lat - buffered_min_lat) / res_y).ceil() as usize;
+    let expected_max_row = ((bbox.max_lat - buffered_min_lat) / res_y).floor() as usize + 1;
 
     let expected_width = expected_max_col - expected_min_col;
     let expected_height = expected_max_row - expected_min_row;
@@ -238,7 +240,8 @@ async fn test_zarr_read_point() {
     let width = 50;
     let height = 40;
     let chunk_size = 16;
-    let bbox = BoundingBox::new(0.0, 0.0, 50.0, 40.0); // 1 deg resolution
+    // Grid points at lon 0..49, lat 40..1: the bbox runs from the first point to the last
+    let bbox = BoundingBox::new(0.0, 1.0, 49.0, 40.0); // 1 deg spacing
 
     // Create temp directory
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -258,11 +261,8 @@ async fn test_zarr_read_point() {
         ZarrGridProcessor::open(store, "/", config).expect("Failed to open ZarrGridProcessor");
 
     // Test points at actual grid cell corners (not pixel centers)
-    // Grid has bbox (0,0) to (50,40) with 50x40 pixels
-    // So pixel (0,0) is at lon=0, lat=40 (top-left)
-    // and pixel (49,39) is at lon=49, lat=1 (bottom-right)
-    // Note: For a 50x40 grid over 50x40 degrees, resolution is 1 deg/pixel
-    // Grid points are at integer lon/lat coordinates
+    // Point (0,0) is at lon=0, lat=40 (top-left) and point (49,39) at lon=49, lat=1
+    // (bottom-right); grid points are at integer lon/lat coordinates
     let test_points = [
         (0.0, 40.0, 0, 0),    // Top-left corner - exact grid point
         (25.0, 21.0, 25, 19), // Near center - exact grid point

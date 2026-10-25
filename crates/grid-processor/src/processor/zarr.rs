@@ -20,6 +20,14 @@ use crate::types::{
 
 use super::GridProcessor;
 
+/// Exclusive end index of the grid points at or before `offset_cells` (an offset from the first
+/// point, in grid spacings), capped at `n`. Point `k` sits at offset `k`, so a request ending
+/// exactly on a point includes it; `ceil` excluded it (a full-grid read lost its last column and
+/// row). The epsilon absorbs floating-point error in the division.
+fn end_index(offset_cells: f64, n: usize) -> usize {
+    ((offset_cells + 1e-9).floor() + 1.0).clamp(0.0, n as f64) as usize
+}
+
 /// Grid processor implementation using Zarr V3 with sharding.
 ///
 /// This processor efficiently reads grid data by:
@@ -330,9 +338,8 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let (grid_width, grid_height) = self.metadata.shape;
         let (chunk_w, chunk_h) = self.metadata.chunk_shape;
 
-        // Calculate grid resolution
-        let lon_per_cell = grid_bbox.width() / grid_width as f64;
-        let lat_per_cell = grid_bbox.height() / grid_height as f64;
+        // Same spacing as the reads, so the chunks chosen hold the cells they will index
+        let (lon_per_cell, lat_per_cell) = self.metadata.resolution();
 
         // Normalize bbox to grid's coordinate system (handles 0-360 vs -180/180)
         let norm_bbox = bbox.normalize_to_grid(grid_bbox);
@@ -341,9 +348,10 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let min_col = ((norm_bbox.min_lon - grid_bbox.min_lon) / lon_per_cell)
             .floor()
             .max(0.0) as usize;
-        let max_col = ((norm_bbox.max_lon - grid_bbox.min_lon) / lon_per_cell)
-            .ceil()
-            .min(grid_width as f64) as usize;
+        let max_col = end_index(
+            (norm_bbox.max_lon - grid_bbox.min_lon) / lon_per_cell,
+            grid_width,
+        );
 
         // Row calculation depends on row_origin
         let (min_row, max_row) = match self.metadata.row_origin {
@@ -352,9 +360,10 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
                 let min_r = ((grid_bbox.max_lat - norm_bbox.max_lat) / lat_per_cell)
                     .floor()
                     .max(0.0) as usize;
-                let max_r = ((grid_bbox.max_lat - norm_bbox.min_lat) / lat_per_cell)
-                    .ceil()
-                    .min(grid_height as f64) as usize;
+                let max_r = end_index(
+                    (grid_bbox.max_lat - norm_bbox.min_lat) / lat_per_cell,
+                    grid_height,
+                );
                 (min_r, max_r)
             }
             RowOrigin::South => {
@@ -362,9 +371,10 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
                 let min_r = ((norm_bbox.min_lat - grid_bbox.min_lat) / lat_per_cell)
                     .floor()
                     .max(0.0) as usize;
-                let max_r = ((norm_bbox.max_lat - grid_bbox.min_lat) / lat_per_cell)
-                    .ceil()
-                    .min(grid_height as f64) as usize;
+                let max_r = end_index(
+                    (norm_bbox.max_lat - grid_bbox.min_lat) / lat_per_cell,
+                    grid_height,
+                );
                 (min_r, max_r)
             }
         };
@@ -512,9 +522,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let min_col = ((norm_bbox.min_lon - grid_bbox.min_lon) / res_x)
             .floor()
             .max(0.0) as usize;
-        let max_col = ((norm_bbox.max_lon - grid_bbox.min_lon) / res_x)
-            .ceil()
-            .min(grid_w as f64) as usize;
+        let max_col = end_index((norm_bbox.max_lon - grid_bbox.min_lon) / res_x, grid_w);
 
         // Row calculation depends on row_origin
         let (min_row, max_row) = match row_origin {
@@ -523,9 +531,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
                 let min_r = ((grid_bbox.max_lat - norm_bbox.max_lat) / res_y)
                     .floor()
                     .max(0.0) as usize;
-                let max_r = ((grid_bbox.max_lat - norm_bbox.min_lat) / res_y)
-                    .ceil()
-                    .min(grid_h as f64) as usize;
+                let max_r = end_index((grid_bbox.max_lat - norm_bbox.min_lat) / res_y, grid_h);
                 (min_r, max_r)
             }
             RowOrigin::South => {
@@ -533,9 +539,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
                 let min_r = ((norm_bbox.min_lat - grid_bbox.min_lat) / res_y)
                     .floor()
                     .max(0.0) as usize;
-                let max_r = ((norm_bbox.max_lat - grid_bbox.min_lat) / res_y)
-                    .ceil()
-                    .min(grid_h as f64) as usize;
+                let max_r = end_index((norm_bbox.max_lat - grid_bbox.min_lat) / res_y, grid_h);
                 (min_r, max_r)
             }
         };

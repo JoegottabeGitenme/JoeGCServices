@@ -97,13 +97,52 @@ pub fn reproject_geostationary_to_geographic(
         }
     }
 
-    let bbox = BoundingBox::new(min_lon, min_lat, max_lon, max_lat);
+    // Like every stored grid, the bbox runs from the first sample point to the last: the centres
+    // of the corner pixels, half a step inside the edges. (It was the edges, so readers that index
+    // from the first point were half a pixel off.)
+    let bbox = BoundingBox::new(
+        min_lon + 0.5 * lon_step,
+        min_lat + 0.5 * lat_step,
+        max_lon - 0.5 * lon_step,
+        max_lat - 0.5 * lat_step,
+    );
     (output, output_width, output_height, bbox)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Readers index from the bbox's first point with spacing extent / (n - 1), so the bbox must
+    /// span the centres of the corner pixels the reprojection actually sampled.
+    #[test]
+    fn the_output_bbox_spans_the_sampled_pixel_centres() {
+        let proj = Geostationary::goes19_conus();
+        let (w, h) = (proj.nx, proj.ny);
+        let data = vec![0.0f32; w * h];
+        let (_, out_w, out_h, bbox) = reproject_geostationary_to_geographic(&data, w, h, &proj);
+
+        let (min_lon, min_lat, max_lon, max_lat) = proj.geographic_bounds();
+        let (step_x, step_y) = (
+            (max_lon - min_lon) / w as f64,
+            (max_lat - min_lat) / h as f64,
+        );
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        // pixel (0, 0) was sampled at the NW centre, the last pixel at the SE centre
+        assert!(close(bbox.min_lon, min_lon + 0.5 * step_x), "{bbox:?}");
+        assert!(close(bbox.max_lat, max_lat - 0.5 * step_y), "{bbox:?}");
+        assert!(
+            close(bbox.max_lon, min_lon + (w as f64 - 0.5) * step_x),
+            "{bbox:?}"
+        );
+        assert!(
+            close(bbox.min_lat, max_lat - (h as f64 - 0.5) * step_y),
+            "{bbox:?}"
+        );
+        // ... so the readers' spacing is the sampling step
+        assert!(close(bbox.width() / (out_w - 1) as f64, step_x));
+        assert!(close(bbox.height() / (out_h - 1) as f64, step_y));
+    }
 
     #[test]
     fn test_reproject_preserves_dimensions() {
