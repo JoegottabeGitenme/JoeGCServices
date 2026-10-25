@@ -1460,7 +1460,7 @@ retention:
     }
 
     #[test]
-    fn hrrr_subh_reads_the_subhourly_file_for_the_first_six_hours_of_every_cycle() {
+    fn hrrr_subh_reads_the_subhourly_file_for_all_eighteen_hours_of_every_cycle() {
         let m = real_model("hrrr-subh");
         assert!(
             m.source.file_pattern.contains("wrfsubhf{forecast:02}"),
@@ -1471,10 +1471,11 @@ retention:
         assert_eq!(m.schedule.cycles.len(), 24);
         assert!(m.schedule.extended_cycles.is_empty());
         for c in 0..24u32 {
-            // wrfsubhf00 is the analysis, wrfsubhf01..06 hold the 6 hours of 15-minute steps
+            // wrfsubhf00 is the analysis, wrfsubhf01..18 hold the 18 hours of 15-minute steps;
+            // wrfsubhf19 is 404, so 18 is the most NCEP publishes
             assert_eq!(
                 m.forecast_hours_for_cycle(c),
-                vec![0, 1, 2, 3, 4, 5, 6],
+                (0..=18).collect::<Vec<u32>>(),
                 "cycle {c}"
             );
         }

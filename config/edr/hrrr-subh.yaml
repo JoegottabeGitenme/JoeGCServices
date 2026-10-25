@@ -1,11 +1,12 @@
 # HRRR sub-hourly EDR Configuration
 #
 # 15-minute composite reflectivity, precipitation rate and precipitation type for the first
-# 6 hours of every HRRR cycle (model `hrrr-subh`, see config/models/hrrr-subh.yaml).
+# 18 hours of every HRRR cycle (model `hrrr-subh`, see config/models/hrrr-subh.yaml).
 #
 # Query a series with `datetime=<start>/<end>`; the steps are 15 minutes apart and where two
 # cycles cover the same instant the newer cycle wins. `hrrr-atmosphere` (model `hrrr`) keeps the
-# hourly REFC out to 48 h; use this model for the next 6 hours at 15-minute resolution.
+# hourly REFC out to 48 h; use this model for the next 18 hours at 15-minute resolution (NCEP
+# publishes nothing sub-hourly beyond that).
 #
 # valid_range: Used for PNG encoding to ensure consistent colormap rendering
 # across different viewport regions. Values are in the parameter's native units.
@@ -15,7 +16,7 @@ model: hrrr-subh
 collections:
   - id: hrrr-subh-atmosphere
     title: "HRRR 15-minute - Composite Reflectivity"
-    description: "Composite reflectivity every 15 minutes, 0-6 h ahead of each HRRR cycle"
+    description: "Composite reflectivity every 15 minutes, 0-18 h ahead of each HRRR cycle"
     level_filter:
       level_type: entire_atmosphere
       level_code: 10
@@ -28,7 +29,7 @@ collections:
   # Precipitation rate and type. The type flags are categorical (0/1), sampled nearest.
   - id: hrrr-subh-surface
     title: "HRRR 15-minute - Precipitation"
-    description: "Precipitation rate and type (rain, snow, freezing rain, ice pellets) every 15 minutes, 0-6 h ahead of each HRRR cycle"
+    description: "Precipitation rate and type (rain, snow, freezing rain, ice pellets) every 15 minutes, 0-18 h ahead of each HRRR cycle"
     level_filter:
       level_type: surface
       level_code: 1

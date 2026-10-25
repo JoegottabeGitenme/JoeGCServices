@@ -10,14 +10,16 @@
 #  - the 60-minute step is the same valid time as the hourly file, and datasets are keyed by
 #    (model, parameter, level, run, hour, minute) -- two writers of one slot would overwrite;
 #  - it has its own, much shorter retention.
-# Only the first 6 hours are fetched (a short-range radar loop); extending it to 18 is one
-# number below. Sub-hourly REFC is ~1.1 MB a grid, so 6 h of 15-minute steps is ~25 grids a
-# parameter per cycle.
+# All 18 hours NCEP publishes are fetched, so a 15-minute loop runs ~17 h ahead before it has to
+# fall back to the hourly `hrrr` model (nothing sub-hourly exists past 18 h). It was 6 h first,
+# which left a seam about 5 h out where frames went from 15 to 60 minutes apart.
+# Measured on production: ~1.6 MB of Zarr per 15-minute step across the six parameters (REFC
+# 869 kB of it), 73 steps a cycle, so ~114 MB a cycle and ~1.4 GB resident at 12 h retention.
 
 model:
   id: hrrr-subh
   name: "HRRR - 15-minute output"
-  description: "HRRR composite reflectivity, precipitation rate and precipitation type every 15 minutes, 0-6 h"
+  description: "HRRR composite reflectivity, precipitation rate and precipitation type every 15 minutes, 0-18 h"
   enabled: true
 
 dimensions:
@@ -62,14 +64,14 @@ grid:
 
 schedule:
   cycles: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] # Hourly
-  # File numbers, not lead hours: wrfsubhf00 (analysis) through wrfsubhf06 (6 h). 0-18 exist.
+  # File numbers, not lead hours: wrfsubhf00 (analysis) through wrfsubhf18 (18 h, the last one).
   forecast_hours:
     start: 0
-    end: 6
+    end: 18
     step: 1
   poll_interval_secs: 3600
-  # Sub-hourly files land at the same time as the other HRRR files of their hour, about 50
-  # minutes after the cycle for the first and up to ~2 h for the deepest; the lookback below
+  # Sub-hourly files land about 50 minutes after the cycle for the first and 1 h 13 min to 1 h 25 min
+  # for the last (measured: the 12Z cycle's f18 at 13:13, the 13Z cycle's at 14:24); the lookback below
   # picks up whatever was not there yet.
   delay_hours: 1
   cycle_lookback: 3
