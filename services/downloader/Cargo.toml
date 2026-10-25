@@ -54,3 +54,5 @@ tokio-test = { workspace = true }
 tempfile = "3"
 filetime = "0.2"
 wiremock = "0.6"
+# paused virtual time for the fixed-period scheduler test
+tokio = { workspace = true, features = ["test-util"] }

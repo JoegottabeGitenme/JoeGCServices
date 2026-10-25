@@ -56,6 +56,9 @@ schedule:
     step: 1
   poll_interval_secs: 3600
   delay_hours: 2
+  # Revisit the newest cycle and the 3 before it each poll: a cycle is published over time, and a
+  # single look per cycle lost whatever had not appeared yet. Downloaded files cost no request.
+  cycle_lookback: 3
   max_concurrent: 2
 
 retention:

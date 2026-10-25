@@ -187,6 +187,24 @@ pub struct ScheduleConfig {
     /// Polling interval in seconds
     #[serde(default = "default_poll_interval")]
     pub poll_interval_secs: u64,
+    /// How many *previous* cycles (beyond the newest) every poll revisits.
+    ///
+    /// A cycle's files do not all appear at once: HRRR's 48 h synoptic runs publish f00 about
+    /// 50 minutes after the cycle but f48 after about 2 h 05 m. A runner that looked at each
+    /// cycle exactly once therefore kept whatever existed at that single moment and never came
+    /// back for the rest. With a lookback each poll re-examines the last `cycle_lookback + 1`
+    /// cycles; files already downloaded cost no network request, so only genuinely missing
+    /// hours are probed. `0` (the default) keeps the old one-cycle behaviour.
+    #[serde(default)]
+    pub cycle_lookback: u32,
+    /// Cycles that publish a longer forecast than `forecast_hours` (e.g. HRRR 00/06/12/18Z run
+    /// to 48 h while the other hourly cycles stop at 18 h). Requires `extended_forecast_hours`.
+    #[serde(default)]
+    pub extended_cycles: Vec<u32>,
+    /// Forecast hours for the cycles in `extended_cycles`; every other cycle uses
+    /// `forecast_hours`.
+    #[serde(default)]
+    pub extended_forecast_hours: Option<ForecastHoursConfig>,
     /// Hours after cycle time that data becomes available
     #[serde(default)]
     pub delay_hours: u32,
@@ -395,17 +413,53 @@ impl ModelConfig {
             config.schedule.max_concurrent = 1;
         }
 
+        config
+            .validate_schedule()
+            .with_context(|| format!("Invalid schedule in {}", path.display()))?;
+
         debug!(model = %config.model.id, path = %path.display(), "Loaded model config");
         Ok(config)
     }
 
-    /// Get forecast hours as a Vec.
+    /// Reject schedules whose extended-cycle settings cannot work, rather than silently
+    /// downloading the wrong hours.
+    fn validate_schedule(&self) -> Result<()> {
+        let s = &self.schedule;
+        match (s.extended_cycles.is_empty(), s.extended_forecast_hours.is_some()) {
+            (true, false) | (false, true) => {}
+            (true, true) => anyhow::bail!(
+                "extended_forecast_hours is set but extended_cycles is empty, so it would never apply"
+            ),
+            (false, false) => anyhow::bail!(
+                "extended_cycles is set but extended_forecast_hours is missing"
+            ),
+        }
+        if let Some(stray) = s.extended_cycles.iter().find(|c| !s.cycles.contains(c)) {
+            anyhow::bail!("extended_cycles contains {stray}, which is not in cycles");
+        }
+        Ok(())
+    }
+
+    /// Get the base forecast hours as a Vec (the hours of every cycle that is not extended).
+    ///
+    /// Use [`forecast_hours_for_cycle`](Self::forecast_hours_for_cycle) when the cycle is known.
     pub fn forecast_hours(&self) -> Vec<u32> {
         self.schedule
             .forecast_hours
             .as_ref()
             .map(|fh| fh.hours())
             .unwrap_or_default()
+    }
+
+    /// Forecast hours published by a particular cycle: the extended list for
+    /// `extended_cycles`, the base list for everything else.
+    pub fn forecast_hours_for_cycle(&self, cycle: u32) -> Vec<u32> {
+        if self.schedule.extended_cycles.contains(&cycle) {
+            if let Some(fh) = self.schedule.extended_forecast_hours.as_ref() {
+                return fh.hours();
+            }
+        }
+        self.forecast_hours()
     }
 
     /// Check if this is an observation-type data source (vs forecast).
@@ -611,6 +665,11 @@ impl DevLimits {
                     fh.cap(max_hours);
                 }
             }
+            if let Some(ref mut fh) = config.schedule.extended_forecast_hours {
+                if fh.max_hour() > max_hours {
+                    fh.cap(max_hours);
+                }
+            }
         }
 
         // Cap retention hours.
@@ -795,6 +854,110 @@ ranges:
         let yaml = "{ start: 0, end: 3 }";
         let fh: ForecastHoursConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(fh.hours(), vec![0, 1, 2, 3]);
+    }
+
+    fn model_yaml(schedule_extra: &str) -> String {
+        format!(
+            r#"
+model:
+  id: hrrrlike
+  name: "HRRR-like"
+  enabled: true
+source:
+  type: aws_s3
+  bucket: b
+  prefix_template: "p.{{date}}"
+  file_pattern: "f{{cycle:02}}.{{forecast:02}}"
+grid:
+  projection: geographic
+  resolution: "0.25deg"
+  bbox: {{ min_lon: 0.0, min_lat: -90.0, max_lon: 360.0, max_lat: 90.0 }}
+schedule:
+  cycles: [0, 1, 2, 3, 6]
+  forecast_hours: {{ start: 0, end: 18, step: 1 }}
+{schedule_extra}
+"#
+        )
+    }
+
+    #[test]
+    fn extended_cycles_get_the_extended_hours_and_the_rest_the_base_hours() {
+        let yaml = model_yaml(
+            "  extended_cycles: [0, 6]\n  extended_forecast_hours: { start: 0, end: 48, step: 1 }",
+        );
+        let m: ModelConfig = serde_yaml::from_str(&yaml).unwrap();
+        m.validate_schedule().unwrap();
+        assert_eq!(m.forecast_hours_for_cycle(6).len(), 49);
+        assert_eq!(m.forecast_hours_for_cycle(0).last(), Some(&48));
+        assert_eq!(m.forecast_hours_for_cycle(1).len(), 19);
+        assert_eq!(m.forecast_hours_for_cycle(3).last(), Some(&18));
+        // the unqualified accessor is the base list
+        assert_eq!(m.forecast_hours().last(), Some(&18));
+    }
+
+    #[test]
+    fn a_model_without_extended_cycles_is_unchanged() {
+        let m: ModelConfig = serde_yaml::from_str(&model_yaml("")).unwrap();
+        m.validate_schedule().unwrap();
+        assert_eq!(
+            m.schedule.cycle_lookback, 0,
+            "default keeps one-cycle behaviour"
+        );
+        for c in [0, 1, 6] {
+            assert_eq!(m.forecast_hours_for_cycle(c), m.forecast_hours());
+        }
+    }
+
+    #[test]
+    fn inconsistent_extended_settings_are_rejected_at_load() {
+        // hours without cycles would never apply; cycles without hours would silently fall back
+        // to the short list; a cycle that is not scheduled can never run
+        for (extra, why) in [
+            (
+                "  extended_forecast_hours: { start: 0, end: 48 }",
+                "hours without cycles",
+            ),
+            ("  extended_cycles: [0]", "cycles without hours"),
+            (
+                "  extended_cycles: [5]\n  extended_forecast_hours: { start: 0, end: 48 }",
+                "cycle 5 is not in cycles",
+            ),
+        ] {
+            let m: ModelConfig = serde_yaml::from_str(&model_yaml(extra)).unwrap();
+            assert!(m.validate_schedule().is_err(), "should reject: {why}");
+        }
+    }
+
+    #[test]
+    fn load_refuses_a_file_with_an_inconsistent_schedule() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("bad.yaml");
+        std::fs::write(&bad, model_yaml("  extended_cycles: [0]")).unwrap();
+        let err = ModelConfig::load(&bad).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("extended_forecast_hours"),
+            "{err:#}"
+        );
+
+        let good = dir.path().join("good.yaml");
+        std::fs::write(&good, model_yaml("")).unwrap();
+        ModelConfig::load(&good).unwrap();
+    }
+
+    #[test]
+    fn dev_hour_cap_also_caps_the_extended_hours() {
+        let yaml = model_yaml(
+            "  extended_cycles: [0]\n  extended_forecast_hours: { start: 0, end: 48, step: 1 }",
+        );
+        let mut m: ModelConfig = serde_yaml::from_str(&yaml).unwrap();
+        DevLimits {
+            max_forecast_hours: Some(6),
+            max_retention_hours: None,
+            max_cycles: None,
+        }
+        .apply(&mut m);
+        assert_eq!(m.forecast_hours_for_cycle(0).last(), Some(&6));
+        assert_eq!(m.forecast_hours_for_cycle(1).last(), Some(&6));
     }
 
     #[test]
@@ -1055,6 +1218,69 @@ retention:
             .into_iter()
             .find(|m| m.model.id == id)
             .unwrap_or_else(|| panic!("model {id} not found or not enabled"))
+    }
+
+    // ------------------------------------------------------------------
+    // Hourly-cycle models: every cycle is revisited, HRRR's tiers are explicit
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn hrrr_short_cycles_stop_at_18h_and_the_synoptic_cycles_reach_48h() {
+        // Measured against NOMADS: t17z.wrfprsf18 exists and wrfprsf19 is 404, while
+        // t18z.wrfprsf48 exists.
+        let m = real_model("hrrr");
+        for c in 0..24u32 {
+            let hours = m.forecast_hours_for_cycle(c);
+            let want_last = if [0, 6, 12, 18].contains(&c) { 48 } else { 18 };
+            assert_eq!(hours.first(), Some(&0), "cycle {c}");
+            assert_eq!(hours.last(), Some(&want_last), "cycle {c}");
+            assert_eq!(
+                hours.len() as u32,
+                want_last + 1,
+                "cycle {c}: hourly, no holes"
+            );
+        }
+    }
+
+    #[test]
+    fn every_hourly_cycle_model_revisits_recent_cycles() {
+        // A poll that looked at one cycle once lost whole cycles (the period drifted) and the
+        // tail of every long run (published after the poll). All six models that run every hour
+        // need the lookback; 3 previous cycles outlast HRRR's ~2 h 05 m publication of f48.
+        let models = real_models();
+        let hourly: Vec<&ModelConfig> = models
+            .iter()
+            .filter(|m| !m.is_observation() && m.schedule.cycles.len() == 24)
+            .collect();
+        let mut ids: Vec<&str> = hourly.iter().map(|m| m.model.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            [
+                "hrrr",
+                "nbm-alaska",
+                "nbm-conus",
+                "nbm-guam",
+                "nbm-hawaii",
+                "nbm-puertorico"
+            ]
+        );
+        for m in hourly {
+            assert_eq!(m.schedule.cycle_lookback, 3, "{}", m.model.id);
+        }
+    }
+
+    #[test]
+    fn every_forecast_model_yields_hours_for_every_cycle() {
+        for m in real_models().iter().filter(|m| !m.is_observation()) {
+            for &c in &m.schedule.cycles {
+                assert!(
+                    !m.forecast_hours_for_cycle(c).is_empty(),
+                    "{} cycle {c} has no forecast hours",
+                    m.model.id
+                );
+            }
+        }
     }
 
     #[test]

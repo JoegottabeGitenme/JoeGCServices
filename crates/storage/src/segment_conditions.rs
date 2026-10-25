@@ -148,7 +148,10 @@ impl SegmentConditionsCatalog {
     /// version, Session 14): the horizon then depends on which run happens
     /// to be newest *at that moment*. Measured on production: recent runs
     /// hold 5-41 forecast hours (the newest run is partial while it ingests;
-    /// hourly HRRR runs are shorter than the 6-hourly synoptic ones), so a
+    /// non-synoptic hourly HRRR runs stop at 18 h; and, until the downloader
+    /// revisited recent cycles -- see docs/downloader-cycle-lookback.md --
+    /// even the 48 h runs were often cut short because their later hours
+    /// were published after the single look the downloader took), so a
     /// "firm until 10am" chart would have a 5-hour horizon one minute and
     /// 18 the next. Stitching by valid_time gives a stable horizon (the
     /// furthest hour ANY recent run reaches) and the freshest value for
