@@ -17,10 +17,39 @@ services:
   # ==========================================================================
   postgres:
     ports: []
+    # Stock settings (128 MB shared_buffers, 1 GB max_wal_size) under ~10 GB/h of WAL forced a
+    # checkpoint every ~2.7 minutes (427 requested vs 182 timed in 27 h), each followed by a wave
+    # of full-page images (21% of WAL records), and every query read through a 128 MB cache:
+    # slow statements everywhere, a 10-connection ingester pool running dry, storm-event upserts
+    # at 60-150 ms a row. Sized for this host (31 GB RAM, NVMe, ~200 GB free disk).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=8GB
+      - -c
+      - max_wal_size=16GB
+      - -c
+      - min_wal_size=2GB
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - wal_buffers=64MB
+      - -c
+      - wal_compression=on
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=512MB
+    # Parallel queries allocate dynamic shared memory in /dev/shm (Docker's default is 64 MB).
+    shm_size: 1g
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 6G
 
   redis:
     ports: []
