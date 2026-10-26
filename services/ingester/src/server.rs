@@ -1841,5 +1841,17 @@ mod storm_events_http_tests {
             .await
             .unwrap();
         assert_eq!(stored, BATCH as i64);
+
+        // ... and written by ONE transaction (every row carries the writing transaction's id in
+        // xmin): one WAL flush for the batch, not 2,000, and the batch lands whole or not at all.
+        let transactions: i64 =
+            sqlx::query_scalar("SELECT COUNT(DISTINCT xmin::text) FROM storm_events")
+                .fetch_one(catalog.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            transactions, 1,
+            "the batch must be written in a single transaction"
+        );
     }
 }

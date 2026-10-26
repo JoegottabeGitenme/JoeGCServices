@@ -208,121 +208,25 @@ impl StormEventCatalog {
     /// using the begin point (NULL when no county contains the point or when
     /// coordinates are missing).
     pub async fn upsert_event(&self, event: &StormEvent) -> WmsResult<()> {
-        let is_tornado = event.event_type == "tornado";
-        let has_track = is_tornado
-            && event.end_lat.is_some()
-            && event.end_lon.is_some()
-            && event.begin_lat.is_some()
-            && event.begin_lon.is_some();
-
-        sqlx::query(
-            r#"
-            INSERT INTO storm_events (
-                event_id, episode_id, event_type, begin_time, end_time,
-                geom_point, geom_track,
-                begin_lat, begin_lon, end_lat, end_lon,
-                magnitude, magnitude_unit, tor_f_scale,
-                state, cz_name, cz_fips, cz_type,
-                county_fips, source, raw,
-                event_narrative, episode_narrative, report_source,
-                damage_property, damage_crops,
-                injuries_direct, deaths_direct,
-                begin_location, tor_length_mi, tor_width_yd,
-                ingested_at
-            ) VALUES (
-                $1, $2, $3, $4, $5,
-                CASE WHEN $7::float8 IS NOT NULL AND $6::float8 IS NOT NULL
-                     THEN ST_SetSRID(ST_MakePoint($7, $6), 4326) END,
-                CASE WHEN $18 THEN
-                     ST_SetSRID(ST_MakeLine(ST_MakePoint($7, $6), ST_MakePoint($9, $8)), 4326)
-                     END,
-                $6, $7, $8, $9,
-                $10, $11, $12,
-                $13, $14, $15, $16,
-                (SELECT geoid FROM tiger_counties
-                   WHERE $7::float8 IS NOT NULL AND $6::float8 IS NOT NULL
-                     AND ST_Contains(geom, ST_SetSRID(ST_MakePoint($7, $6), 4326))
-                   LIMIT 1),
-                'storm_events', $17,
-                $19, $20, $21,
-                $22, $23,
-                $24, $25,
-                $26, $27, $28,
-                NOW()
-            )
-            ON CONFLICT (event_id) DO UPDATE SET
-                episode_id = EXCLUDED.episode_id,
-                event_type = EXCLUDED.event_type,
-                begin_time = EXCLUDED.begin_time,
-                end_time = EXCLUDED.end_time,
-                geom_point = EXCLUDED.geom_point,
-                geom_track = EXCLUDED.geom_track,
-                begin_lat = EXCLUDED.begin_lat,
-                begin_lon = EXCLUDED.begin_lon,
-                end_lat = EXCLUDED.end_lat,
-                end_lon = EXCLUDED.end_lon,
-                magnitude = EXCLUDED.magnitude,
-                magnitude_unit = EXCLUDED.magnitude_unit,
-                tor_f_scale = EXCLUDED.tor_f_scale,
-                state = EXCLUDED.state,
-                cz_name = EXCLUDED.cz_name,
-                cz_fips = EXCLUDED.cz_fips,
-                cz_type = EXCLUDED.cz_type,
-                county_fips = EXCLUDED.county_fips,
-                raw = EXCLUDED.raw,
-                event_narrative = EXCLUDED.event_narrative,
-                episode_narrative = EXCLUDED.episode_narrative,
-                report_source = EXCLUDED.report_source,
-                damage_property = EXCLUDED.damage_property,
-                damage_crops = EXCLUDED.damage_crops,
-                injuries_direct = EXCLUDED.injuries_direct,
-                deaths_direct = EXCLUDED.deaths_direct,
-                begin_location = EXCLUDED.begin_location,
-                tor_length_mi = EXCLUDED.tor_length_mi,
-                tor_width_yd = EXCLUDED.tor_width_yd,
-                ingested_at = NOW()
-            "#,
-        )
-        .bind(event.event_id) // $1
-        .bind(event.episode_id) // $2
-        .bind(&event.event_type) // $3
-        .bind(event.begin_time) // $4
-        .bind(event.end_time) // $5
-        .bind(event.begin_lat) // $6
-        .bind(event.begin_lon) // $7
-        .bind(event.end_lat) // $8
-        .bind(event.end_lon) // $9
-        .bind(event.magnitude) // $10
-        .bind(&event.magnitude_unit) // $11
-        .bind(event.tor_f_scale) // $12
-        .bind(&event.state) // $13
-        .bind(&event.cz_name) // $14
-        .bind(&event.cz_fips) // $15
-        .bind(&event.cz_type) // $16
-        .bind(&event.raw) // $17
-        .bind(has_track) // $18
-        .bind(&event.event_narrative) // $19
-        .bind(&event.episode_narrative) // $20
-        .bind(&event.report_source) // $21
-        .bind(&event.damage_property) // $22
-        .bind(&event.damage_crops) // $23
-        .bind(event.injuries_direct) // $24
-        .bind(event.deaths_direct) // $25
-        .bind(&event.begin_location) // $26
-        .bind(event.tor_length_mi) // $27
-        .bind(event.tor_width_yd) // $28
-        .execute(&self.pool)
-        .await
-        .map_err(|e| WmsError::DatabaseError(format!("Upsert storm event failed: {}", e)))?;
-
-        Ok(())
+        upsert_event_on(&self.pool, event).await
     }
 
-    /// Batch upsert. Returns the number of events processed.
+    /// Batch upsert, in ONE transaction. Returns the number of events processed.
+    ///
+    /// Each statement used to commit on its own: 2,000 WAL flushes per downloader batch, which on
+    /// a busy database took 60-150 ms a row, so batches outran the downloader's 5-minute timeout
+    /// and whole years never finished loading. One commit per batch also makes a batch land
+    /// whole or not at all.
     pub async fn upsert_events(&self, events: &[StormEvent]) -> WmsResult<usize> {
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            WmsError::DatabaseError(format!("Begin storm event batch failed: {}", e))
+        })?;
         for event in events {
-            self.upsert_event(event).await?;
+            upsert_event_on(&mut *tx, event).await?;
         }
+        tx.commit().await.map_err(|e| {
+            WmsError::DatabaseError(format!("Commit storm event batch failed: {}", e))
+        })?;
         Ok(events.len())
     }
 
@@ -825,4 +729,119 @@ mod indexmap_lite {
                 .collect()
         }
     }
+}
+/// The upsert behind [`StormEventCatalog::upsert_event`] and the batch, on any executor (the pool
+/// or a transaction).
+async fn upsert_event_on<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    event: &StormEvent,
+) -> WmsResult<()> {
+    let is_tornado = event.event_type == "tornado";
+    let has_track = is_tornado
+        && event.end_lat.is_some()
+        && event.end_lon.is_some()
+        && event.begin_lat.is_some()
+        && event.begin_lon.is_some();
+
+    sqlx::query(
+        r#"
+            INSERT INTO storm_events (
+                event_id, episode_id, event_type, begin_time, end_time,
+                geom_point, geom_track,
+                begin_lat, begin_lon, end_lat, end_lon,
+                magnitude, magnitude_unit, tor_f_scale,
+                state, cz_name, cz_fips, cz_type,
+                county_fips, source, raw,
+                event_narrative, episode_narrative, report_source,
+                damage_property, damage_crops,
+                injuries_direct, deaths_direct,
+                begin_location, tor_length_mi, tor_width_yd,
+                ingested_at
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                CASE WHEN $7::float8 IS NOT NULL AND $6::float8 IS NOT NULL
+                     THEN ST_SetSRID(ST_MakePoint($7, $6), 4326) END,
+                CASE WHEN $18 THEN
+                     ST_SetSRID(ST_MakeLine(ST_MakePoint($7, $6), ST_MakePoint($9, $8)), 4326)
+                     END,
+                $6, $7, $8, $9,
+                $10, $11, $12,
+                $13, $14, $15, $16,
+                (SELECT geoid FROM tiger_counties
+                   WHERE $7::float8 IS NOT NULL AND $6::float8 IS NOT NULL
+                     AND ST_Contains(geom, ST_SetSRID(ST_MakePoint($7, $6), 4326))
+                   LIMIT 1),
+                'storm_events', $17,
+                $19, $20, $21,
+                $22, $23,
+                $24, $25,
+                $26, $27, $28,
+                NOW()
+            )
+            ON CONFLICT (event_id) DO UPDATE SET
+                episode_id = EXCLUDED.episode_id,
+                event_type = EXCLUDED.event_type,
+                begin_time = EXCLUDED.begin_time,
+                end_time = EXCLUDED.end_time,
+                geom_point = EXCLUDED.geom_point,
+                geom_track = EXCLUDED.geom_track,
+                begin_lat = EXCLUDED.begin_lat,
+                begin_lon = EXCLUDED.begin_lon,
+                end_lat = EXCLUDED.end_lat,
+                end_lon = EXCLUDED.end_lon,
+                magnitude = EXCLUDED.magnitude,
+                magnitude_unit = EXCLUDED.magnitude_unit,
+                tor_f_scale = EXCLUDED.tor_f_scale,
+                state = EXCLUDED.state,
+                cz_name = EXCLUDED.cz_name,
+                cz_fips = EXCLUDED.cz_fips,
+                cz_type = EXCLUDED.cz_type,
+                county_fips = EXCLUDED.county_fips,
+                raw = EXCLUDED.raw,
+                event_narrative = EXCLUDED.event_narrative,
+                episode_narrative = EXCLUDED.episode_narrative,
+                report_source = EXCLUDED.report_source,
+                damage_property = EXCLUDED.damage_property,
+                damage_crops = EXCLUDED.damage_crops,
+                injuries_direct = EXCLUDED.injuries_direct,
+                deaths_direct = EXCLUDED.deaths_direct,
+                begin_location = EXCLUDED.begin_location,
+                tor_length_mi = EXCLUDED.tor_length_mi,
+                tor_width_yd = EXCLUDED.tor_width_yd,
+                ingested_at = NOW()
+            "#,
+    )
+    .bind(event.event_id) // $1
+    .bind(event.episode_id) // $2
+    .bind(&event.event_type) // $3
+    .bind(event.begin_time) // $4
+    .bind(event.end_time) // $5
+    .bind(event.begin_lat) // $6
+    .bind(event.begin_lon) // $7
+    .bind(event.end_lat) // $8
+    .bind(event.end_lon) // $9
+    .bind(event.magnitude) // $10
+    .bind(&event.magnitude_unit) // $11
+    .bind(event.tor_f_scale) // $12
+    .bind(&event.state) // $13
+    .bind(&event.cz_name) // $14
+    .bind(&event.cz_fips) // $15
+    .bind(&event.cz_type) // $16
+    .bind(&event.raw) // $17
+    .bind(has_track) // $18
+    .bind(&event.event_narrative) // $19
+    .bind(&event.episode_narrative) // $20
+    .bind(&event.report_source) // $21
+    .bind(&event.damage_property) // $22
+    .bind(&event.damage_crops) // $23
+    .bind(event.injuries_direct) // $24
+    .bind(event.deaths_direct) // $25
+    .bind(&event.begin_location) // $26
+    .bind(event.tor_length_mi) // $27
+    .bind(event.tor_width_yd) // $28
+    .execute(executor)
+    .await
+    .map_err(|e| WmsError::DatabaseError(format!("Upsert storm event failed: {}", e)))?;
+
+    Ok(())
 }
