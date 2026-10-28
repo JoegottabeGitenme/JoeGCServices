@@ -560,8 +560,10 @@ impl DownloadManager {
             .collect();
 
         let missing: Vec<_> = requested.difference(&found_filters).collect();
+        // NBM and friends publish different fields per forecast hour, so a
+        // partial match is normal; debug keeps it out of production logs.
         if !missing.is_empty() {
-            warn!(
+            debug!(
                 missing_params = ?missing,
                 "Some requested parameters not found in index"
             );
