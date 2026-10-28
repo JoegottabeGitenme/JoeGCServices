@@ -163,11 +163,12 @@ pub async fn ingest_grib2(
             })
             .collect();
 
-        // Log warning if significant portion of data was out of range
+        // Masking is routine (land/sea masks, no-echo radar, fill values hit
+        // this on most files), so log at debug rather than warn
         let total_points = grid_data.len();
         let out_of_range_pct = (out_of_range_count as f64 / total_points as f64) * 100.0;
         if out_of_range_count > 0 && out_of_range_pct > 0.1 {
-            warn!(
+            debug!(
                 param = %param,
                 level = %level,
                 out_of_range = out_of_range_count,

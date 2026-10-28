@@ -6,7 +6,9 @@ model:
   id: nldas-noah
   name: "NLDAS-2 Noah Land Surface Model"
   description: "North American Land Data Assimilation System - Noah 0.125 hourly"
-  enabled: true
+  # Disabled 2026-10-27: GES DISC returns 400 for every granule in the lookback
+  # (~17k WARN lines per 6h in production). Re-enable once the request is fixed.
+  enabled: false
 
 dimensions:
   type: observation

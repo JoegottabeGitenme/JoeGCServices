@@ -25,7 +25,7 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 use tracing::{debug, info, warn};
 
 use crate::error::{NetCdfError, NetCdfResult};
-use crate::native::silence_hdf5_errors;
+use crate::native::{silence_hdf5_errors, TempFileGuard};
 
 /// A single data variable extracted from a CF-convention NetCDF file.
 #[derive(Debug, Clone)]
@@ -109,17 +109,13 @@ pub fn load_cf_netcdf(
     // Write to temp file (netcdf C library needs a file handle)
     let temp_dir = get_optimal_temp_dir();
     let temp_file = temp_dir.join(generate_temp_filename());
+    let _cleanup = TempFileGuard(temp_file.clone());
 
     let mut file = std::fs::File::create(&temp_file)?;
     file.write_all(data)?;
     drop(file);
 
-    let result = read_cf_file(&temp_file, var_filter);
-
-    // Always clean up temp file
-    let _ = std::fs::remove_file(&temp_file);
-
-    result
+    read_cf_file(&temp_file, var_filter)
 }
 
 /// Internal: read from an on-disk NetCDF file.

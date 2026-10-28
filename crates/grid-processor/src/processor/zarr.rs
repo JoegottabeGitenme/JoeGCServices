@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use async_trait::async_trait;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use zarrs::array::Array;
 use zarrs::array_subset::ArraySubset;
 use zarrs::storage::ReadableStorageTraits;
@@ -153,7 +153,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
 
         let path_hash = hash_path(path);
 
-        info!(
+        debug!(
             path = %path,
             model = %metadata.model,
             parameter = %metadata.parameter,
