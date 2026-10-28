@@ -83,6 +83,7 @@ pub fn load_goes_netcdf_from_bytes(
     // Use memory-backed filesystem on Linux for faster I/O
     let temp_dir = get_optimal_temp_dir();
     let temp_file = temp_dir.join(generate_temp_filename());
+    let _cleanup = TempFileGuard(temp_file.clone());
 
     // Write temp file
     let mut file = std::fs::File::create(&temp_file)?;
@@ -159,9 +160,6 @@ pub fn load_goes_netcdf_from_bytes(
         sweep_angle_axis: "x".to_string(),
     };
 
-    // Clean up
-    let _ = std::fs::remove_file(&temp_file);
-
     Ok((
         data, width, height, projection, x_offset, y_offset, x_scale, y_scale,
     ))
@@ -191,6 +189,17 @@ pub(crate) fn get_optimal_temp_dir() -> PathBuf {
     }
 
     std::env::temp_dir()
+}
+
+/// Removes a temp file when dropped, so an early return (a full /dev/shm, an unreadable
+/// file) can't leave it behind. A leaked file in a small /dev/shm made every later NetCDF
+/// ingest fail with "No space left on device".
+pub(crate) struct TempFileGuard(pub(crate) PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// Generate a unique temp file name for concurrent safety.
@@ -246,6 +255,18 @@ mod tests {
     fn test_optimal_temp_dir() {
         let dir = get_optimal_temp_dir();
         assert!(dir.exists(), "Temp dir should exist");
+    }
+
+    #[test]
+    fn temp_file_guard_removes_the_file_on_early_return() {
+        let path = std::env::temp_dir().join(generate_temp_filename());
+        let failing = || -> std::io::Result<()> {
+            let _cleanup = TempFileGuard(path.clone());
+            std::fs::write(&path, b"partial")?;
+            Err(std::io::Error::other("disk full"))
+        };
+        assert!(failing().is_err());
+        assert!(!path.exists(), "temp file must not outlive an error");
     }
 
     #[test]
