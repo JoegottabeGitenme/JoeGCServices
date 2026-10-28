@@ -104,7 +104,12 @@ services:
       RUST_BACKTRACE: ${RUST_BACKTRACE:-0}
       TOKIO_WORKER_THREADS: ${TOKIO_WORKER_THREADS:-16}
       ENABLE_L1_CACHE: ${ENABLE_L1_CACHE:-true}
-      TILE_CACHE_SIZE_MB: ${TILE_CACHE_SIZE_MB:-8192}
+      # Cache sizes are set here per service, not from the shared .env: both APIs read 8 GB from
+      # it, which with MEMORY_LIMIT_MB=28000 overran their containers and pushed 5-7 GB of cache
+      # into swap (a "hit" then waited on disk) and GetCapabilities health checks past their
+      # timeout. Measured over 24 h: the tile cache peaks ~380 MB (10-minute TTL); the chunk cache
+      # sat full at 8 GB with a 54% hit rate.
+      TILE_CACHE_SIZE_MB: "1024"
       TILE_CACHE_TTL_SECS: ${TILE_CACHE_TTL_SECS:-600}
       ENABLE_PREFETCH: ${ENABLE_PREFETCH:-true}
       PREFETCH_RINGS: ${PREFETCH_RINGS:-2}
@@ -116,10 +121,22 @@ services:
       CACHE_WARMING_LAYERS: ${CACHE_WARMING_LAYERS:-gfs_TMP:temperature}
       CACHE_WARMING_CONCURRENCY: ${CACHE_WARMING_CONCURRENCY:-8}
       ENABLE_MEMORY_PRESSURE: ${ENABLE_MEMORY_PRESSURE:-true}
-      MEMORY_LIMIT_MB: ${MEMORY_LIMIT_MB:-28000}
+      CHUNK_CACHE_SIZE_MB: "4096"
+      # What the memory-pressure manager budgets against (evicts above 80% of it); inside the
+      # 16G container limit below, so caches are trimmed before the kernel swaps them out.
+      MEMORY_LIMIT_MB: "10240"
       MEMORY_PRESSURE_THRESHOLD: ${MEMORY_PRESSURE_THRESHOLD:-0.80}
       MEMORY_PRESSURE_TARGET: ${MEMORY_PRESSURE_TARGET:-0.70}
       INGESTER_URL: http://ingester:8082
+    # Liveness only. The base check fetched a full GetCapabilities (a 435 KB, database-built
+    # document) every 10 s with a 5 s timeout; a slow database then got wms-api restarted by
+    # autoheal (4 times on the night of 2026-10-25), which fixes nothing.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-s", "-o", "/dev/null", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -137,7 +154,9 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       EDR_BASE_URL: https://${DOMAIN:-folkweather.com}/edr
-      EDR_CHUNK_CACHE_MB: ${CHUNK_CACHE_SIZE_MB:-8192}
+      # Its own budget (it inherited wms-api's 8192 through CHUNK_CACHE_SIZE_MB): inside the 8G
+      # container limit with room for request buffers, instead of 6.9 GB of it in swap.
+      EDR_CHUNK_CACHE_MB: "3072"
       EDR_LISTEN_ADDR: "0.0.0.0:8083"
       RUST_LOG: ${RUST_LOG:-info}
       RUST_BACKTRACE: ${RUST_BACKTRACE:-0}
