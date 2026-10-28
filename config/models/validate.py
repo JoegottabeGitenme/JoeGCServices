@@ -49,6 +49,7 @@ VALID_SOURCE_TYPES = {
     "nasa_gesdisc",
     "ndbc_latest_obs",
     "dart_realtime",
+    "storm_events_csv",
 }
 VALID_PROJECTION_TYPES = {
     "geographic",
@@ -425,8 +426,9 @@ class ModelValidator:
 
         if "hours" in retention:
             hours = retention["hours"]
-            if not isinstance(hours, int) or hours <= 0:
-                self.add_error("retention.hours", "Must be a positive integer")
+            # 0 means "never expire" (historical archives such as storm-events)
+            if not isinstance(hours, int) or hours < 0:
+                self.add_error("retention.hours", "Must be a non-negative integer")
 
     def _validate_precaching_section(self):
         """Validate the 'precaching' section (optional)."""
@@ -498,6 +500,7 @@ class ModelValidator:
                         "ndbc_latest_obs",
                         "dart_realtime",
                         "aws_s3_glm",
+                        "storm_events_csv",
                     )
                     and dim_type != "static"
                 ):

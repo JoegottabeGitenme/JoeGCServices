@@ -43,7 +43,13 @@ VALID_DATA_TYPES = {
     "pointobservation",
     "pointforecast",
     "static",
+    "featurecollection",
+    "populated_places",
 }
+
+# Collections of these types proxy other collections or serve features, so
+# they carry no parameter list of their own.
+PARAMETERLESS_DATA_TYPES = {"populated_places"}
 
 VALID_OUTPUT_FORMATS = {
     "application/vnd.cov+json",
@@ -286,9 +292,10 @@ class EDRValidator:
         if "description" in coll and not isinstance(coll["description"], str):
             self.add_error(f"{path}.description", "Must be a string")
 
-        # Required: parameters
+        # Required: parameters (except for proxy/feature collection types)
         if "parameters" not in coll:
-            self.add_error(f"{path}.parameters", "Missing required field 'parameters'")
+            if self.data.get("data_type") not in PARAMETERLESS_DATA_TYPES:
+                self.add_error(f"{path}.parameters", "Missing required field 'parameters'")
         else:
             self._validate_parameters(coll["parameters"], f"{path}.parameters")
 
