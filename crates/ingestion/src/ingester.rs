@@ -2,8 +2,9 @@
 
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use std::sync::Arc;
-use tracing::warn;
+use std::sync::{Arc, LazyLock};
+use tokio::sync::Semaphore;
+use tracing::{info, warn};
 
 use storage::{Catalog, ObjectStorage};
 
@@ -14,6 +15,36 @@ use crate::grib2;
 use crate::metadata::{detect_file_type, extract_model_from_filename, FileType};
 use crate::netcdf;
 use grib2_parser::strip_wmo_headers;
+
+/// Default for `INGEST_MAX_CONCURRENT`.
+const DEFAULT_MAX_CONCURRENT_INGESTS: usize = 6;
+
+/// How many files below the large-file size may ingest at once.
+///
+/// The downloader gives every model a guaranteed slot, so while it replays a backlog it sends
+/// one ingest per model at once (13-16 were measured on the NUC), which pushed the ingester
+/// past its 12 GiB limit. Large files go through netcdf's one-at-a-time gate instead, so they
+/// never hold one of these slots while waiting for that one.
+static INGEST_GATE: LazyLock<Semaphore> = LazyLock::new(|| {
+    let max = max_concurrent_ingests(|k| std::env::var(k).ok());
+    info!(max, "Ingest concurrency limit");
+    Semaphore::new(max)
+});
+
+/// `INGEST_MAX_CONCURRENT` from a lookup function (`std::env::var` in production).
+fn max_concurrent_ingests(lookup: impl Fn(&str) -> Option<String>) -> usize {
+    match lookup("INGEST_MAX_CONCURRENT") {
+        None => DEFAULT_MAX_CONCURRENT_INGESTS,
+        Some(v) => match v.trim().parse::<usize>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                warn!(value = %v, default = DEFAULT_MAX_CONCURRENT_INGESTS,
+                      "Invalid INGEST_MAX_CONCURRENT, using default");
+                DEFAULT_MAX_CONCURRENT_INGESTS
+            }
+        },
+    }
+}
 
 /// Options for ingestion operations.
 #[derive(Debug, Clone, Default)]
@@ -64,7 +95,17 @@ impl Ingester {
         file_path: &str,
         options: IngestOptions,
     ) -> Result<IngestionResult> {
-        // Read file
+        // Wait for a slot before reading, so queued files hold no memory. Held for the whole
+        // ingest. Neither semaphore is ever closed, so acquire() cannot fail.
+        let len = tokio::fs::metadata(file_path).await?.len() as usize;
+        let _permit = match netcdf::large_ingest_permit(len).await {
+            Some(permit) => permit,
+            None => INGEST_GATE
+                .acquire()
+                .await
+                .expect("ingest gate is never closed"),
+        };
+
         let data = tokio::fs::read(file_path).await?;
         let data = Bytes::from(data);
 
@@ -226,6 +267,23 @@ impl Ingester {
 mod tests {
     use super::*;
     use chrono::{Datelike, TimeZone};
+
+    #[test]
+    fn max_concurrent_ingests_reads_env_and_falls_back_on_bad_values() {
+        let env = |v: Option<&'static str>| move |_: &str| v.map(String::from);
+        assert_eq!(
+            max_concurrent_ingests(env(None)),
+            DEFAULT_MAX_CONCURRENT_INGESTS
+        );
+        assert_eq!(max_concurrent_ingests(env(Some("3"))), 3);
+        assert_eq!(max_concurrent_ingests(env(Some(" 4 "))), 4);
+        for bad in ["0", "-1", "lots", ""] {
+            assert_eq!(
+                max_concurrent_ingests(env(Some(bad))),
+                DEFAULT_MAX_CONCURRENT_INGESTS
+            );
+        }
+    }
 
     // Tests for IngestOptions
     #[test]

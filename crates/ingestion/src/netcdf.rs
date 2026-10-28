@@ -33,11 +33,14 @@ const LARGE_GOES_FILE_BYTES: usize = 100 * 1024 * 1024;
 /// two overlapping ones exceed the ingester's memory limit and the kernel
 /// OOM-kills the whole process (dropping every other in-flight ingest). The
 /// downloader happily sends several at once, especially when replaying a
-/// backlog, so the bound has to live here.
+/// backlog, so the bound has to live in the ingester (`Ingester::ingest_file`
+/// takes it before reading the file).
 static LARGE_INGEST_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 /// Acquire the large-file gate if `len` calls for it; small files pass freely.
-async fn large_ingest_permit(len: usize) -> Option<tokio::sync::SemaphorePermit<'static>> {
+pub(crate) async fn large_ingest_permit(
+    len: usize,
+) -> Option<tokio::sync::SemaphorePermit<'static>> {
     if len >= LARGE_GOES_FILE_BYTES {
         // The semaphore is never closed, so acquire() cannot fail.
         LARGE_INGEST_GATE.acquire().await.ok()
@@ -93,9 +96,6 @@ pub async fn ingest_netcdf(
     file_path: &str,
     options: &IngestOptions,
 ) -> Result<IngestionResult> {
-    // Held for the whole ingest (dropped on return).
-    let _large_permit = large_ingest_permit(data.len()).await;
-
     let filename = Path::new(file_path)
         .file_name()
         .and_then(|s| s.to_str())
