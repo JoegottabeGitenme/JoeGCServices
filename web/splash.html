@@ -716,6 +716,33 @@
             gap: 1.25rem;
         }
 
+        .mcp-add {
+            display: inline-block;
+            background: var(--ink);
+            color: var(--paper-card);
+            border-radius: 10px;
+            padding: 0.7rem 1.3rem;
+            margin-bottom: 0.75rem;
+            font-weight: 600;
+            text-decoration: none;
+            box-shadow: var(--paper-shadow-flat);
+        }
+
+        .mcp-add:hover {
+            background: var(--ink-2);
+            color: var(--paper-card);
+        }
+
+        .mcp-more {
+            color: var(--ink-2);
+            font-size: 0.9rem;
+            margin-top: 1rem;
+        }
+
+        .mcp-more a {
+            color: var(--ochre-deep);
+        }
+
         .mcp-steps {
             color: var(--ink-2);
             font-size: 0.9rem;
@@ -1191,6 +1218,8 @@
                         <span class="card-icon">&#128172;</span>
                         <span class="card-title">Claude</span>
                     </div>
+                    <a class="mcp-add" href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=FolkWeather&amp;connectorUrl=https%3A%2F%2Ffolkweather.com%2Fmcp" rel="noopener">Add to Claude</a>
+                    <p class="card-description">Opens Claude with FolkWeather filled in; check the details and choose Add. Or by hand:</p>
                     <ol class="mcp-steps">
                         <li>Open Settings, then Connectors.</li>
                         <li>Choose Add custom connector.</li>
@@ -1216,9 +1245,9 @@
                         <span class="card-title">ChatGPT</span>
                     </div>
                     <p class="card-description" style="margin-bottom: 0;">
-                        Turn on developer mode in Settings, then add a connector (some versions call it an app)
-                        and give it the URL above. No sign-in is needed. Menu names change from release to
-                        release, so look for Connectors or Apps.
+                        Custom connectors need a paid plan and are added in ChatGPT on the web, not the phone
+                        app: turn on developer mode in Settings, then add a connector (some versions call it an
+                        app) with the URL above. No sign-in is needed. Menu names change between releases.
                     </p>
                 </div>
 
@@ -1233,6 +1262,11 @@
                     </p>
                 </div>
             </div>
+            <p class="mcp-more">
+                On your phone, or sending it to a friend? <a href="/connect?src=splash">folkweather.com/connect</a>
+                has one-tap setup and steps for each assistant.
+                <a href="/mcp/docs">Documentation</a> &middot; <a href="/mcp/privacy">Privacy</a>
+            </p>
 
             <h3 class="mcp-sub">What it can do</h3>
             <div class="mcp-tools-grid">
