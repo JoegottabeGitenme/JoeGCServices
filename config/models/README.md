@@ -42,12 +42,16 @@ model:
   enabled: true                        # Enable/disable this model
 ```
 
-`enabled: false` stops the downloader fetching the model. The ingester's retention then
-expires and deletes everything the model left in the catalog and object storage (no
-`keep_latest_*` safeguard, cutoff = now), except static datasets (`retention.static: true`,
-e.g. VIIRS), which are never purged. WMS/WMTS layers and EDR collections are only advertised
-while the catalog has data for them, but remove the model's `config/layers/` and `config/edr/`
-entries as well so they disappear immediately instead of when the purge finishes.
+`enabled: false` stops the downloader fetching the model, but on its own it does **not**
+delete anything: the ingester's retention keeps applying the model's normal `retention`
+settings to whatever is already in the catalog. Several models are disabled for reasons
+unrelated to freeing space (the NLDAS models are off until their upstream request is fixed
+and keep their data, VIIRS is ingested by hand), so purging is opt-in per model with
+`retention.purge_when_disabled: true` (see [`retention`](#retention-recommended)).
+
+WMS/WMTS layers and EDR collections are only advertised while the catalog has data for
+them. When disabling a model for good, also remove its `config/layers/` and `config/edr/`
+entries so they disappear immediately instead of when the purge finishes.
 
 ### `dimensions` (recommended)
 
@@ -157,6 +161,14 @@ retention:
 - `keep_latest_observations` (observation models): Protects N recent observations
 
 These safeguards ensure data is never completely deleted during ingestion outages.
+
+**Purging a disabled model:**
+- `purge_when_disabled: true` (default `false`): once the model is also `model.enabled: false`,
+  the ingester expires everything it left in the catalog and object storage on its next
+  cycle (cutoff = now, `keep_latest_*` ignored, since nothing will refresh the model again).
+  It has no effect while the model is enabled, and leaves `hours` / `keep_latest_*` as written,
+  so setting `enabled: true` again restores normal retention. Without the flag a disabled model
+  keeps its normal retention. Static datasets (`static: true`) are never purged.
 
 ### `precaching` (optional)
 

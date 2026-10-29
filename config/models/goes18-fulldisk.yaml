@@ -43,6 +43,7 @@ schedule:
 retention:
   hours: 3 # Keep 3 hours of imagery for animation loops
   keep_latest_observations: 18 # ~3 hours of observations (updates every ~10 min)
+  purge_when_disabled: true # model is disabled: expire all leftovers (ignored again once enabled: true)
 
 # Precaching configuration - disabled for full disk (large files)
 precaching:

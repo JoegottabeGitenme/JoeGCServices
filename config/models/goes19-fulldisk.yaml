@@ -44,6 +44,7 @@ schedule:
 retention:
   hours: 2                               # Keep 2 hours of imagery
   keep_latest_observations: 12           # Always keep ~2 hours of observations (updates every ~10 min)
+  purge_when_disabled: true # model is disabled: expire all leftovers (ignored again once enabled: true)
 
 # Precaching configuration - disabled for full disk (large files)
 precaching:

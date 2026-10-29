@@ -430,6 +430,8 @@ class ModelValidator:
             if not isinstance(hours, int) or hours < 0:
                 self.add_error("retention.hours", "Must be a non-negative integer")
 
+        self._optional_bool(retention, "retention.purge_when_disabled")
+
     def _validate_precaching_section(self):
         """Validate the 'precaching' section (optional)."""
         if "precaching" not in self.data:
