@@ -619,6 +619,385 @@
             color: var(--ink);
         }
 
+        /* MCP section */
+        [hidden] {
+            display: none !important;
+        }
+
+        .mcp-lede {
+            font-family: var(--serif);
+            font-size: 1.3rem;
+            line-height: 1.45;
+            max-width: 46rem;
+            margin-bottom: 0.85rem;
+        }
+
+        .mcp-lede em {
+            color: var(--ochre-deep);
+        }
+
+        .mcp-text {
+            color: var(--ink-2);
+            font-size: 0.92rem;
+            max-width: 46rem;
+            margin-bottom: 0.6rem;
+        }
+
+        .mcp-endpoint {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.35rem 0.9rem;
+            margin-top: 1.25rem;
+            padding: 1rem 1.1rem;
+            background: var(--paper-bg);
+            border: 1px dashed var(--ochre);
+            border-radius: 12px;
+        }
+
+        .mcp-endpoint .edr-example-title {
+            flex: 0 0 100%;
+            margin-bottom: 0;
+        }
+
+        .mcp-url {
+            font-size: 1.15rem;
+            font-weight: 600;
+            padding: 0.3rem 0.65rem;
+            background: var(--paper-card);
+            border-color: var(--ochre);
+            border-radius: 8px;
+            overflow-wrap: anywhere;
+            user-select: all;
+        }
+
+        .endpoint-btn.mcp-copy {
+            font-family: inherit;
+            line-height: 1.2;
+            flex: none;
+        }
+
+        .mcp-endpoint-note {
+            flex: 0 0 100%;
+            color: var(--ink-2);
+            font-size: 0.8rem;
+        }
+
+        .mcp-asks {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 1.1rem;
+        }
+
+        .mcp-asks li {
+            font-family: var(--serif);
+            font-style: italic;
+            font-size: 0.95rem;
+            color: var(--ink-2);
+            background: var(--paper-bg);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 999px;
+            padding: 0.25rem 0.85rem;
+        }
+
+        .mcp-sub {
+            font-family: var(--serif);
+            font-size: 1.2rem;
+            font-weight: 600;
+            line-height: 1.25;
+            margin: 2rem 0 0.9rem;
+        }
+
+        .mcp-connect {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.25rem;
+        }
+
+        .mcp-steps {
+            color: var(--ink-2);
+            font-size: 0.9rem;
+            margin: 0 0 0 1.15rem;
+        }
+
+        .mcp-steps li + li {
+            margin-top: 0.25rem;
+        }
+
+        .mcp-cmd {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.5rem;
+            background: var(--paper-bg);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 8px;
+            padding: 0.6rem 0.7rem;
+        }
+
+        .mcp-cmd code {
+            align-self: stretch;
+            background: none;
+            border: 0;
+            padding: 0;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+
+        .mcp-cmd .endpoint-btn {
+            padding: 0.25rem 0.65rem;
+            font-size: 0.75rem;
+        }
+
+        .mcp-tools-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 1.25rem;
+        }
+
+        .mcp-split {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 0 1.5rem;
+        }
+
+        .mcp-group {
+            background: var(--paper-bg);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .mcp-tool-list {
+            list-style: none;
+            padding: 0.3rem 0.95rem 0.5rem;
+        }
+
+        .mcp-tool-list li {
+            padding: 0.65rem 0;
+            border-top: 1px dashed var(--paper-card-edge);
+        }
+
+        .mcp-tool-list li:first-child {
+            border-top: 0;
+        }
+
+        .mcp-tool-name {
+            display: block;
+            font-family: var(--mono);
+            font-size: 0.86rem;
+            font-weight: 700;
+            color: var(--ink);
+        }
+
+        .mcp-tool-desc {
+            display: block;
+            color: var(--ink-2);
+            font-size: 0.86rem;
+        }
+
+        .mcp-also {
+            margin-top: 0.9rem;
+            color: var(--ink-2);
+            font-size: 0.86rem;
+        }
+
+        .mcp-split > div {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .mcp-split .mcp-sub {
+            margin-top: 2rem;
+        }
+
+        /* Illustrative lore entry: an index card */
+        .mcp-lorecard {
+            flex: 1;
+            background: var(--paper-card);
+            border: 1px solid var(--paper-card-edge);
+            border-top: 4px solid var(--ochre);
+            border-radius: 12px;
+            box-shadow: var(--paper-shadow-soft);
+            padding: 1.1rem 1.4rem 1.3rem;
+        }
+
+        .mcp-lorecard-head {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.4rem 0.75rem;
+            margin-bottom: 0.9rem;
+        }
+
+        .mcp-lorecard-head .edr-example-title {
+            margin-bottom: 0;
+        }
+
+        .mcp-stamp {
+            font-size: 0.66rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ink-2);
+            border: 1px dashed var(--ink-3);
+            border-radius: 6px;
+            padding: 0.15rem 0.5rem;
+        }
+
+        .mcp-saying {
+            font-family: var(--serif);
+            font-size: 1.85rem;
+            font-style: italic;
+            font-weight: 600;
+            line-height: 1.2;
+            letter-spacing: -0.01em;
+            margin-bottom: 0.8rem;
+        }
+
+        .mcp-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-bottom: 1rem;
+        }
+
+        .mcp-chip {
+            font-size: 0.74rem;
+            font-weight: 600;
+            color: var(--ink);
+            background: var(--window-soft);
+            border: 1px solid var(--ochre);
+            border-radius: 999px;
+            padding: 0.1rem 0.65rem;
+        }
+
+        .mcp-chip.go {
+            background: var(--go-soft);
+            border-color: var(--go);
+        }
+
+        .mcp-fields dt {
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ochre-deep);
+        }
+
+        .mcp-fields dd {
+            color: var(--ink-2);
+            font-size: 0.9rem;
+            margin: 0.1rem 0 0.8rem;
+        }
+
+        .mcp-fields dd:last-child {
+            margin-bottom: 0;
+        }
+
+        .mcp-fields q {
+            font-family: var(--serif);
+            font-style: italic;
+            color: var(--ink);
+        }
+
+        .mcp-principles {
+            flex: 1;
+            list-style: none;
+            background: var(--paper-card);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 12px;
+            box-shadow: var(--paper-shadow-flat);
+            padding: 0.5rem 1.4rem;
+        }
+
+        .mcp-principles li {
+            position: relative;
+            padding: 0.8rem 0 0.8rem 1.25rem;
+            border-top: 1px dashed var(--paper-card-edge);
+            color: var(--ink-2);
+            font-size: 0.9rem;
+        }
+
+        .mcp-principles li:first-child {
+            border-top: 0;
+        }
+
+        .mcp-principles li::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 1.3rem;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--ochre);
+        }
+
+        .mcp-principles strong {
+            font-family: var(--serif);
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--ink);
+        }
+
+        .mcp-beta {
+            margin-top: 1.5rem;
+            padding: 0.55rem 1rem;
+            background: var(--window-soft);
+            border: 1px solid var(--ochre);
+            border-radius: 12px;
+            color: var(--ochre-deep);
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .mcp-fine {
+            margin-top: 0.6rem;
+            color: var(--ink-2);
+            font-size: 0.8rem;
+        }
+
+        @media (min-width: 641px) {
+            .mcp-connect,
+            .mcp-tools-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (min-width: 901px) {
+            .mcp-split {
+                grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+            }
+        }
+
+        @media (max-width: 640px) {
+            .mcp-lede {
+                font-size: 1.15rem;
+            }
+
+            .mcp-url {
+                font-size: 0.95rem;
+            }
+
+            .mcp-saying {
+                font-size: 1.6rem;
+            }
+
+            .mcp-lorecard {
+                padding: 1rem 1.1rem 1.15rem;
+            }
+
+            .mcp-principles {
+                padding: 0.4rem 1.1rem;
+            }
+        }
+
         /* Footer */
         .footer {
             background: var(--paper-card);
@@ -737,6 +1116,7 @@
                 <span class="logo-text">FolkWeather</span>
             </a>
             <nav class="nav-links">
+                <a href="#mcp" class="nav-link">MCP</a>
                 <a href="#services" class="nav-link">Services</a>
                 <a href="#ocean" class="nav-link">Ocean</a>
                 <a href="#trails" class="nav-link">Trails</a>
@@ -766,6 +1146,192 @@
     </section>
 
     <main class="main">
+        <!-- MCP Server Section -->
+        <section class="section" id="mcp">
+            <h2 class="section-title">
+                <span class="icon">&#128172;</span>
+                Weather for your AI assistant
+            </h2>
+
+            <div class="examples-section">
+                <p class="mcp-lede">
+                    Ask your AI assistant <em>&ldquo;what&rsquo;s it like out there today?&rdquo;</em>
+                    and get a short, grounded read built on NOAA and NASA data &mdash; with an old weather
+                    saying when one genuinely fits, and the science behind why.
+                </p>
+                <p class="mcp-text">
+                    FolkWeather&rsquo;s MCP server lets an assistant like Claude or ChatGPT fetch the real forecast,
+                    observations and alerts for your town, plus any weather saying that fits the day. The assistant
+                    writes the words; the numbers and the sources come from us.
+                </p>
+                <p class="mcp-text">
+                    Built on HRRR, NBM and GFS model data, airport METAR observations, MRMS radar rainfall,
+                    official NWS alerts, and sun and moon tables. If the best model is late, the next one answers
+                    and says so.
+                </p>
+
+                <div class="mcp-endpoint">
+                    <div class="edr-example-title">Server URL</div>
+                    <code class="mcp-url" id="mcp-url">https://folkweather.com/mcp</code>
+                    <button type="button" class="endpoint-btn mcp-copy" data-copy="https://folkweather.com/mcp" aria-live="polite" hidden>Copy</button>
+                    <div class="mcp-endpoint-note">Remote MCP over streamable HTTP &middot; no sign-in &middot; free</div>
+                </div>
+
+                <ul class="mcp-asks" aria-label="Things you might ask">
+                    <li>&ldquo;What&rsquo;s the weather like today in Fort Collins?&rdquo;</li>
+                    <li>&ldquo;Will there be frost tonight?&rdquo;</li>
+                    <li>&ldquo;Where does &lsquo;red sky at night&rsquo; come from?&rdquo;</li>
+                </ul>
+            </div>
+
+            <h3 class="mcp-sub">Connect it</h3>
+            <div class="mcp-connect">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#128172;</span>
+                        <span class="card-title">Claude</span>
+                    </div>
+                    <ol class="mcp-steps">
+                        <li>Open Settings, then Connectors.</li>
+                        <li>Choose Add custom connector.</li>
+                        <li>Paste <code>https://folkweather.com/mcp</code> and save.</li>
+                    </ol>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#128187;</span>
+                        <span class="card-title">Claude Code</span>
+                    </div>
+                    <p class="card-description">Run this once in your terminal:</p>
+                    <div class="mcp-cmd">
+                        <code id="mcp-cmd">claude mcp add --transport http folkweather https://folkweather.com/mcp</code>
+                        <button type="button" class="endpoint-btn mcp-copy" data-copy="claude mcp add --transport http folkweather https://folkweather.com/mcp" aria-live="polite" hidden>Copy</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#129513;</span>
+                        <span class="card-title">ChatGPT</span>
+                    </div>
+                    <p class="card-description" style="margin-bottom: 0;">
+                        Turn on developer mode in Settings, then add a connector (some versions call it an app)
+                        and give it the URL above. No sign-in is needed. Menu names change from release to
+                        release, so look for Connectors or Apps.
+                    </p>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon">&#128279;</span>
+                        <span class="card-title">Any MCP client</span>
+                    </div>
+                    <p class="card-description" style="margin-bottom: 0;">
+                        Add <code>https://folkweather.com/mcp</code> as a remote server over
+                        <strong>streamable HTTP</strong>. There is no authentication and no API key.
+                    </p>
+                </div>
+            </div>
+
+            <h3 class="mcp-sub">What it can do</h3>
+            <div class="mcp-tools-grid">
+                <div class="mcp-group">
+                    <div class="edr-example-header">
+                        <span class="location-icon">&#127774;</span>
+                        <span class="location-name">Daily read</span>
+                        <span class="location-id">weather + lore</span>
+                    </div>
+                    <ul class="mcp-tool-list">
+                        <li>
+                            <span class="mcp-tool-name">morning_almanac</span>
+                            <span class="mcp-tool-desc">The day ahead: high and low, sky, rain or snow and when, wind, pressure trend, yesterday&rsquo;s actuals, sun and moon, NWS alerts, and up to three sayings that fit.</span>
+                        </li>
+                        <li>
+                            <span class="mcp-tool-name">evening_outlook</span>
+                            <span class="mcp-tool-desc">Tonight and tomorrow, plus the evening signs: red sky, a ring around the moon, dew and frost.</span>
+                        </li>
+                        <li>
+                            <span class="mcp-tool-name">lore_lookup</span>
+                            <span class="mcp-tool-desc">Where a saying comes from: the mechanism, the printed source, and its provenance.</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="mcp-group">
+                    <div class="edr-example-header">
+                        <span class="location-icon">&#128202;</span>
+                        <span class="location-name">Data</span>
+                        <span class="location-id">numbers only</span>
+                    </div>
+                    <ul class="mcp-tool-list">
+                        <li>
+                            <span class="mcp-tool-name">hourly_forecast</span>
+                            <span class="mcp-tool-desc">Hour-by-hour numbers for up to 48 hours.</span>
+                        </li>
+                        <li>
+                            <span class="mcp-tool-name">current_conditions</span>
+                            <span class="mcp-tool-desc">The nearest airport observation (with the raw METAR), the current model hour, and any alerts.</span>
+                        </li>
+                        <li>
+                            <span class="mcp-tool-name">point_query</span>
+                            <span class="mcp-tool-desc">Advanced: any model collection and parameter at a point.</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <p class="mcp-also">
+                Also included: reference pages your assistant can read (about, the writing style guide, the lore index,
+                the dataset catalog) and a <code>daily_read</code> prompt that writes the morning brief.
+            </p>
+
+            <div class="mcp-split">
+                <div>
+                    <h3 class="mcp-sub">What a saying looks like</h3>
+                    <article class="mcp-lorecard" aria-label="Example lore entry (illustration)">
+                        <div class="mcp-lorecard-head">
+                            <div class="edr-example-title">Lore entry &middot; evening_outlook</div>
+                            <span class="mcp-stamp">Illustration, not today&rsquo;s weather</span>
+                        </div>
+                        <p class="mcp-saying">Clear moon, frost soon.</p>
+                        <div class="mcp-chips">
+                            <span class="mcp-chip">Attested</span>
+                            <span class="mcp-chip">Merit: strong</span>
+                            <span class="mcp-chip go">Holds today: yes</span>
+                        </div>
+                        <dl class="mcp-fields">
+                            <dt>Why today</dt>
+                            <dd>Clear skies, 1.2 m/s winds overnight, dewpoint &minus;3&nbsp;&deg;C at dusk (HRRR); moon 78% lit.</dd>
+                            <dt>The physics</dt>
+                            <dd>On a clear, calm night the ground radiates heat straight to space with no cloud to trap it. If the air is dry, the surface cools below the dewpoint and frost forms before dawn.</dd>
+                            <dt>Printed source</dt>
+                            <dd><q>Clear moon, / Frost soon.</q> &mdash; Abercromby &amp; Marriott, 1882, via Dunwoody, <cite>Weather Proverbs</cite> (U.S. Signal Service, 1883).</dd>
+                            <dt>It predicts</dt>
+                            <dd>Frost by dawn: a low at or below 0&nbsp;&deg;C within the next 12 hours.</dd>
+                        </dl>
+                    </article>
+                </div>
+
+                <div>
+                    <h3 class="mcp-sub">How the lore stays honest</h3>
+                    <ul class="mcp-principles">
+                        <li><strong>Tied to measurements.</strong> Every saying has a measurable precondition, checked against today&rsquo;s data before it is offered.</li>
+                        <li><strong>Printed word for word.</strong> 14 of the 15 sayings are attested, with the exact printed wording, from public-domain collections: Dunwoody&rsquo;s <cite>Weather Proverbs</cite> (1883), FitzRoy (1859), Wright (1913), and Abercromby &amp; Marriott (1882).</li>
+                        <li><strong>Ours are labeled ours.</strong> House sayings are marked as FolkWeather&rsquo;s own and never passed off as old wisdom.</li>
+                        <li><strong>Color, never authority.</strong> A saying can&rsquo;t change a number or hide an alert.</li>
+                        <li><strong>Quiet days stay quiet.</strong> If nothing fits, it says nothing rather than inventing a saying.</li>
+                        <li><strong>It tells you when they disagree.</strong> Each saying reports whether it agrees with today&rsquo;s forecast.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <p class="mcp-beta">Private beta &mdash; sayings are self-reviewed; detailed models cover the continental US.</p>
+            <p class="mcp-fine">
+                Alaska, Hawaii, Puerto Rico and Guam get a coarser read; anywhere else uses the global model only,
+                and the answer says so. Name a US city or ZIP code, or give latitude and longitude.
+            </p>
+        </section>
+
         <!-- Services Section -->
         <section class="section" id="services">
             <h2 class="section-title">
@@ -1907,6 +2473,25 @@
     </footer>
 
     <script>
+        // Copy buttons: shown only when the clipboard API is available
+        document.querySelectorAll('[data-copy]').forEach(btn => {
+            if (!(navigator.clipboard && navigator.clipboard.writeText)) return;
+            btn.hidden = false;
+            btn.addEventListener('click', () => {
+                const label = btn.textContent;
+                navigator.clipboard.writeText(btn.dataset.copy).then(() => {
+                    btn.textContent = 'Copied';
+                }, () => {
+                    // Clipboard blocked: select the text so Ctrl+C works
+                    const code = btn.parentElement.querySelector('code');
+                    if (code) window.getSelection().selectAllChildren(code);
+                    btn.textContent = 'Select, then copy';
+                }).finally(() => {
+                    setTimeout(() => { btn.textContent = label; }, 1800);
+                });
+            });
+        });
+
         // Lazy load images
         document.addEventListener('DOMContentLoaded', function() {
             const images = document.querySelectorAll('.example-img[data-src]');
