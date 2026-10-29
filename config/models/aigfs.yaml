@@ -15,7 +15,7 @@ model:
   id: aigfs
   name: "AIGFS - AI Global Forecast System"
   description: "NCEP AI Global Forecast System, 0.25° resolution"
-  enabled: true
+  enabled: false # Disabled 2026-10-29 (data diet): not downloaded, ingested or advertised; retention purges leftovers
 
 # WMS/WMTS dimension configuration
 dimensions:

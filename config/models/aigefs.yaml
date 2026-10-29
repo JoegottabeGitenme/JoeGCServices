@@ -18,7 +18,7 @@ model:
   id: aigefs
   name: "AIGEFS - AI GFS Ensemble (Mean)"
   description: "NCEP AI GFS Ensemble System Ensemble Mean, 0.25° resolution"
-  enabled: true
+  enabled: false # Disabled 2026-10-29 (data diet): not downloaded, ingested or advertised; retention purges leftovers
 
 # WMS/WMTS dimension configuration
 dimensions:

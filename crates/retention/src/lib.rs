@@ -251,6 +251,38 @@ struct ModelConfigFile {
 #[derive(Debug, Deserialize)]
 struct ModelConfigModel {
     id: String,
+    /// `model.enabled`; absent means enabled. A disabled model is no longer
+    /// downloaded or ingested, so whatever is left in the catalog is purged
+    /// (see [`purge_everything_if_disabled`]).
+    enabled: Option<bool>,
+}
+
+/// Retention settings for a model that `model.enabled: false` switched off.
+///
+/// A disabled model is not downloaded or ingested any more, so nothing will
+/// ever refresh or supersede what it left in the catalog. The usual
+/// safeguards would then pin that data forever: `keep_latest_runs` /
+/// `keep_latest_observations` always keep the newest N runs/observations, and
+/// `hours` keeps the rest until it ages out. For a disabled model the whole
+/// point is to reclaim the space, so everything is expired on the next cycle
+/// (cutoff = now, nothing protected).
+///
+/// Static datasets (`retention.static: true` / `dimensions.type: static`, e.g.
+/// VIIRS, which is `enabled: false` only because it is ingested by hand) are
+/// left alone: they never expire by design.
+fn purge_everything_if_disabled(
+    enabled: bool,
+    config: ModelRetentionConfig,
+) -> ModelRetentionConfig {
+    if enabled || config.model_type == ModelType::Static {
+        return config;
+    }
+    ModelRetentionConfig {
+        hours: 0,
+        keep_latest_runs: 0,
+        keep_latest_observations: 0,
+        ..config
+    }
 }
 
 impl CleanupConfig {
@@ -347,21 +379,25 @@ impl CleanupConfig {
                                     .and_then(|r| r.keep_latest_observations)
                                     .unwrap_or(1); // Default: always keep at least 1 observation
 
-                                let model_config = ModelRetentionConfig {
-                                    hours,
-                                    model_type,
-                                    keep_latest_runs,
-                                    keep_latest_observations,
-                                    expected_forecast_hours,
-                                };
+                                let model_config = purge_everything_if_disabled(
+                                    config.model.enabled.unwrap_or(true),
+                                    ModelRetentionConfig {
+                                        hours,
+                                        model_type,
+                                        keep_latest_runs,
+                                        keep_latest_observations,
+                                        expected_forecast_hours,
+                                    },
+                                );
 
                                 info!(
                                     model = %model_id,
-                                    retention_hours = hours,
-                                    model_type = ?model_type,
-                                    keep_latest_runs = keep_latest_runs,
-                                    keep_latest_observations = keep_latest_observations,
-                                    expected_forecast_hours = ?expected_forecast_hours,
+                                    enabled = config.model.enabled.unwrap_or(true),
+                                    retention_hours = model_config.hours,
+                                    model_type = ?model_config.model_type,
+                                    keep_latest_runs = model_config.keep_latest_runs,
+                                    keep_latest_observations = model_config.keep_latest_observations,
+                                    expected_forecast_hours = ?model_config.expected_forecast_hours,
                                     "Loaded retention config"
                                 );
 
@@ -1715,6 +1751,130 @@ retention:
 
         // Cleanup
         std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    // ------------------------------------------------------------------
+    // Disabled models: leftovers are purged, not pinned by the safeguards
+    // ------------------------------------------------------------------
+
+    fn protected(model_type: ModelType) -> ModelRetentionConfig {
+        ModelRetentionConfig {
+            hours: 48,
+            model_type,
+            keep_latest_runs: 2,
+            keep_latest_observations: 18,
+            expected_forecast_hours: Some(65),
+        }
+    }
+
+    #[test]
+    fn enabled_model_keeps_its_retention_settings() {
+        let c = purge_everything_if_disabled(true, protected(ModelType::Forecast));
+        assert_eq!(
+            (c.hours, c.keep_latest_runs, c.keep_latest_observations),
+            (48, 2, 18)
+        );
+        assert_eq!(c.expected_forecast_hours, Some(65));
+    }
+
+    #[test]
+    fn disabled_forecast_and_observation_models_expire_everything() {
+        for t in [ModelType::Forecast, ModelType::Observation] {
+            let c = purge_everything_if_disabled(false, protected(t));
+            assert_eq!(c.hours, 0, "{t:?}: cutoff must be now");
+            assert_eq!(c.keep_latest_runs, 0, "{t:?}: no run may be protected");
+            assert_eq!(
+                c.keep_latest_observations, 0,
+                "{t:?}: no observation may be protected"
+            );
+            assert_eq!(c.model_type, t, "{t:?}: model type is unchanged");
+        }
+    }
+
+    #[test]
+    fn disabled_static_model_is_left_alone() {
+        // VIIRS is `enabled: false` because it is ingested by hand, not because it is unwanted.
+        let c = purge_everything_if_disabled(false, protected(ModelType::Static));
+        assert_eq!(c.model_type, ModelType::Static);
+        assert_eq!(
+            (c.hours, c.keep_latest_runs, c.keep_latest_observations),
+            (48, 2, 18)
+        );
+    }
+
+    #[test]
+    fn load_model_configs_still_loads_disabled_models_and_purges_them() {
+        use std::io::Write;
+        let temp_dir =
+            std::env::temp_dir().join(format!("cleanup_disabled_{}", std::process::id()));
+        let models_dir = temp_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        let write = |name: &str, yaml: &str| {
+            std::fs::File::create(models_dir.join(name))
+                .unwrap()
+                .write_all(yaml.as_bytes())
+                .unwrap();
+        };
+        write(
+            "off.yaml",
+            "model: {id: off-model, enabled: false}\ndimensions: {type: forecast}\nretention: {hours: 48, keep_latest_runs: 2}\n",
+        );
+        write(
+            "on.yaml",
+            "model: {id: on-model, enabled: true}\ndimensions: {type: forecast}\nretention: {hours: 48, keep_latest_runs: 2}\n",
+        );
+        write(
+            "no-flag.yaml",
+            "model: {id: no-flag}\ndimensions: {type: observation}\nretention: {hours: 3, keep_latest_observations: 36}\n",
+        );
+        write(
+            "off-static.yaml",
+            "model: {id: off-static, enabled: false}\ndimensions: {type: static}\nretention: {static: true}\n",
+        );
+
+        let configs = CleanupConfig::load_model_configs(temp_dir.to_str().unwrap());
+        std::fs::remove_dir_all(&temp_dir).ok();
+
+        let off = &configs["off-model"];
+        assert_eq!((off.hours, off.keep_latest_runs), (0, 0));
+        let on = &configs["on-model"];
+        assert_eq!((on.hours, on.keep_latest_runs), (48, 2));
+        let no_flag = &configs["no-flag"];
+        assert_eq!((no_flag.hours, no_flag.keep_latest_observations), (3, 36));
+        assert_eq!(configs["off-static"].model_type, ModelType::Static);
+    }
+
+    #[test]
+    fn real_configs_purge_the_data_diet_models_and_keep_goes_conus() {
+        let config_path = format!("{}/../../config", env!("CARGO_MANIFEST_DIR"));
+        if !Path::new(&config_path).join("models/aigfs.yaml").exists() {
+            eprintln!("Skipping test: config/models not found at {config_path}");
+            return;
+        }
+        let configs = CleanupConfig::load_model_configs(&config_path);
+        for id in ["aigfs", "aigefs", "goes18-fulldisk", "goes19-fulldisk"] {
+            let c = configs
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} must still have a retention config"));
+            assert_eq!(
+                (c.hours, c.keep_latest_runs, c.keep_latest_observations),
+                (0, 0, 0),
+                "{id} is disabled: its leftovers must be purged, not protected"
+            );
+        }
+        for id in ["goes18", "goes19"] {
+            let c = &configs[id];
+            assert_eq!(
+                (c.hours, c.keep_latest_observations),
+                (3, 36),
+                "{id} is still ingested"
+            );
+        }
+        assert_eq!(
+            configs["viirs"].model_type,
+            ModelType::Static,
+            "VIIRS must stay static"
+        );
     }
 
     // ------------------------------------------------------------------

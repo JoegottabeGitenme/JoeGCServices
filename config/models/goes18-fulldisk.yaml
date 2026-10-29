@@ -5,7 +5,7 @@ model:
   id: goes18-fulldisk
   name: "GOES-18 Full Disk - GOES West"
   description: "GOES-18 (GOES West) satellite imagery, ABI Full Disk product"
-  enabled: true
+  enabled: false # Disabled 2026-10-29 (data diet): no full disk; retention purges leftovers
 
 # WMS/WMTS dimension configuration
 dimensions:

@@ -42,6 +42,13 @@ model:
   enabled: true                        # Enable/disable this model
 ```
 
+`enabled: false` stops the downloader fetching the model. The ingester's retention then
+expires and deletes everything the model left in the catalog and object storage (no
+`keep_latest_*` safeguard, cutoff = now), except static datasets (`retention.static: true`,
+e.g. VIIRS), which are never purged. WMS/WMTS layers and EDR collections are only advertised
+while the catalog has data for them, but remove the model's `config/layers/` and `config/edr/`
+entries as well so they disappear immediately instead of when the purge finishes.
+
 ### `dimensions` (recommended)
 
 Defines which WMS/WMTS dimensions are exposed for this model.
