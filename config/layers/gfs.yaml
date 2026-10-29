@@ -183,10 +183,12 @@ layers:
       native: gpm
       display: m
     levels:
-      # Lower troposphere (1000 mb is the only level currently ingested)
-      - value: "1000 mb"
-        default: true
+      # 500 mb is the default because styles/geopotential.json is tuned for it (480-600 dkm).
+      # Every other level sits outside that range and renders in the end colours.
       - value: "500 mb"
+        default: true
+      # Lower troposphere
+      - value: "1000 mb"
       - value: "925 mb"
       - value: "850 mb"
       - value: "700 mb"
