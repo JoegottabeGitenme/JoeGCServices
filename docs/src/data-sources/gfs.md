@@ -70,6 +70,8 @@ Upper-air parameters are available on multiple pressure levels, exposed via the 
 | UGRD | `gfs_UGRD` | 1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100 | U-wind component |
 | VGRD | `gfs_VGRD` | 1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100 | V-wind component |
 
+`gfs_HGT` defaults to 500 mb: its colour scale (480-600 dkm) and contour range are tuned for that surface, so other levels are drawn in the end colours of the gradient.
+
 ### Composite Layers
 
 | Layer | Requires | Description |
@@ -118,10 +120,21 @@ https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod/gfs.{YYYYMMDD}/{HH}/atmo
 
 ## File Sizes
 
-- Per file: ~550 MB (full GRIB2 with all parameters)
-- Per forecast hour (ingested): ~50 parameters × 2.5 MB = ~125 MB Zarr
-- Per cycle (6 forecast hours): ~750 MB Zarr
-- Per day (4 cycles): ~3 GB Zarr
+Figures from 2026-10-29. The Zarr write was emulated on real f003 messages from the AWS bucket (f32, 512x512 chunks, Blosc zstd level 1 with byte shuffle, full resolution plus one 2x pyramid level) and calibrated to the ~1.55 MiB per field average measured in production.
+
+- Per file as downloaded: ~63-71 MB (the `.idx` selects 89 messages; the full GRIB2 is ~550 MB)
+- Per forecast hour (ingested): 86 fields (22 surface and near-surface, 64 isobaric), ~200 MiB of Zarr
+  - Isobaric fields compress worse than the surface mix: ~2.5 MiB each on average (UGRD/VGRD ~3.3, HGT ~2.4, TMP ~2.4, RH ~2.3) against ~1.6 MiB for the others
+- Per run (209 forecast hours: hourly to f120, then 3-hourly to f384): ~40 GiB
+- Resident (48 h retention, 4 runs a day, so 7-8 runs on disk): ~300 GiB. Plan disk for ~365 GiB if cleanup lags by a run
+
+Before the isobaric level fix (the config was in millibars where the ingester reads pascals) only 24 fields were written per forecast hour (the 22 above plus TMP and HGT at 10 mb): ~39 MiB, ~8 GiB per run, ~60 GiB resident. The fix adds about 240 GiB.
+
+### Ingest cost
+
+Download volume does not change (the downloader always fetched all 64 isobaric messages); ingest work does. The ingester decides per message whether to unpack it, so the 62 isobaric messages that used to be discarded are now unpacked, pyramided, compressed and uploaded. Before the fix forecast hours landed at about 2.7 per minute (~21 s each, 24 fields, give or take 30%, measured while other models were also ingesting), a run in ~75 minutes. Cost scales with fields written, so expect about 3.6x per forecast hour and ~4-5 hours of the 6-hour cycle per run.
+
+After rolling out a change to the level list, watch the time from cycle start to the last forecast hour landing and the ingester's memory and OOM history (HRRR and GOES share it). If a run takes longer than ~4 hours, raise `INGEST_MAX_CONCURRENT` (default 6) or trim levels. UGRD and VGRD are the most expensive to keep (24 fields at ~3.3 MiB, ~78 MiB per forecast hour); RH, TMP and HGT cost ~2.3-2.4 MiB a field.
 
 ## Storage Format
 
