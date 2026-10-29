@@ -1526,7 +1526,8 @@ pub async fn cleanup_run_handler(Extension(state): Extension<Arc<AppState>>) -> 
             marked_expired: stats.marked_expired,
             files_deleted: stats.files_deleted,
             records_deleted: stats.records_deleted,
-            errors: stats.delete_errors,
+            // Models skipped because their expiry marking failed count as errors too.
+            errors: stats.delete_errors + stats.mark_errors,
         }),
         Err(e) => {
             error!(error = %e, "Manual cleanup failed");

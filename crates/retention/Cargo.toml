@@ -9,6 +9,7 @@ storage = { path = "../storage" }
 
 # Async runtime
 tokio = { workspace = true }
+futures = { workspace = true }
 
 # Serialization (model config YAML parsing + stats responses)
 serde = { workspace = true }
@@ -25,3 +26,10 @@ anyhow = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+# Docker-backed run_once test (tests/cleanup_integration.rs)
+test-utils = { path = "../test-utils", features = ["containers"] }
+object_store = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+sqlx = { workspace = true }
+wms-common = { path = "../wms-common" }

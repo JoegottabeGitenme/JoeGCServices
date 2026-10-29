@@ -30,11 +30,32 @@
 //! ## Observation Models (MRMS, GOES)
 //! - Uses `keep_latest_observations` to always keep the N most recent observations
 //! - Prevents deletion even if data exceeds retention hours
+//!
+//! # Deleting expired data
+//!
+//! Marking datasets `expired` is cheap; removing their files is not. The deletion
+//! phase of [`CleanupTask::run_once`] therefore
+//!
+//! - deletes each expired `.zarr` directory with one bulk prefix delete
+//!   (`ObjectStorage::delete_prefix`), keeping per-zarr prefixes because listing a
+//!   whole run directory is far too slow on RustFS,
+//! - runs up to `CLEANUP_DELETE_CONCURRENCY` (default 16) of those at once,
+//! - removes a path's database rows only after its files are gone, in batches as it
+//!   goes, so a restart mid-cycle keeps its progress and a path whose storage delete
+//!   failed stays `expired` and is retried next cycle, and
+//! - skips (and logs) a model whose marking fails instead of aborting the cycle.
+//!
+//! A serial per-object delete managed ~4 s per zarr in production; with 65k expired
+//! paths queued that was days of work, slower than ingest added data, and the disk
+//! filled.
 
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt::Display;
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::time::{interval_at, Duration as TokioDuration, Instant, MissedTickBehavior};
@@ -122,6 +143,20 @@ pub struct CleanupConfig {
     pub model_configs: HashMap<String, ModelRetentionConfig>,
     /// Default retention if model not specified (in hours)
     pub default_retention_hours: u32,
+    /// How many expired storage paths (zarr directories) are deleted from
+    /// object storage at the same time (`CLEANUP_DELETE_CONCURRENCY`).
+    pub delete_concurrency: usize,
+}
+
+/// Default for [`CleanupConfig::delete_concurrency`].
+pub const DEFAULT_DELETE_CONCURRENCY: usize = 16;
+
+/// Parse `CLEANUP_DELETE_CONCURRENCY`; unset, unparsable or zero falls back to
+/// [`DEFAULT_DELETE_CONCURRENCY`] (zero would stall the delete stream).
+fn parse_delete_concurrency(raw: Option<&str>) -> usize {
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_DELETE_CONCURRENCY)
 }
 
 impl Default for CleanupConfig {
@@ -131,6 +166,7 @@ impl Default for CleanupConfig {
             interval_secs: 3600, // Run every hour
             model_configs: HashMap::new(),
             default_retention_hours: 24, // 24 hours default
+            delete_concurrency: DEFAULT_DELETE_CONCURRENCY,
         }
     }
 }
@@ -235,6 +271,9 @@ impl CleanupConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(24); // 24 hours default
 
+        let delete_concurrency =
+            parse_delete_concurrency(std::env::var("CLEANUP_DELETE_CONCURRENCY").ok().as_deref());
+
         // Load model retention settings from config files
         let model_configs = Self::load_model_configs(config_dir);
 
@@ -243,6 +282,7 @@ impl CleanupConfig {
             interval_secs,
             model_configs,
             default_retention_hours,
+            delete_concurrency,
         }
     }
 
@@ -445,6 +485,13 @@ impl CleanupTask {
     }
 
     /// Run the cleanup task once.
+    ///
+    /// Phase 1 marks datasets past retention as `expired`, model by model; a
+    /// model whose marking fails is logged and skipped so it cannot block the
+    /// others. Phase 2 deletes the files of every expired dataset (including
+    /// ones marked by earlier cycles) concurrently and removes each database
+    /// row only once its files are gone, so an interrupted or partially failed
+    /// cycle keeps its progress and the leftovers are retried next time.
     pub async fn run_once(&self) -> Result<CleanupStats> {
         let mut stats = CleanupStats::default();
 
@@ -478,21 +525,34 @@ impl CleanupTask {
             let marked = match model_config.model_type {
                 ModelType::Forecast => {
                     self.cleanup_forecast_model(model, &model_config, cutoff)
-                        .await?
+                        .await
                 }
                 ModelType::Observation => {
                     self.cleanup_observation_model(model, &model_config, cutoff)
-                        .await?
+                        .await
                 }
                 ModelType::Static => {
                     // Already handled above with continue, but need for exhaustive match
-                    0
+                    Ok(0)
                 }
             };
 
-            if marked > 0 {
-                info!(model = %model, count = marked, "Marked datasets as expired");
-                stats.marked_expired += marked;
+            match marked {
+                Ok(0) => {}
+                Ok(count) => {
+                    info!(model = %model, count, "Marked datasets as expired");
+                    stats.marked_expired += count;
+                }
+                Err(e) => {
+                    // One model's failure must not stop the others being
+                    // marked, nor the deletion phase below.
+                    warn!(
+                        model = %model,
+                        error = %e,
+                        "Failed to mark expired datasets for model; skipping it this cycle"
+                    );
+                    stats.mark_errors += 1;
+                }
             }
         }
 
@@ -502,36 +562,25 @@ impl CleanupTask {
         if !expired_paths.is_empty() {
             info!(
                 count = expired_paths.len(),
+                concurrency = self.config.delete_concurrency,
                 "Deleting expired files from storage"
             );
 
-            // Delete files from object storage
-            for path in &expired_paths {
-                // Use delete_prefix for Zarr directories to delete all files
-                let result = if path.ends_with(".zarr") {
-                    // Add trailing slash to ensure we only delete within the zarr directory
-                    let prefix = format!("{}/", path);
-                    self.ctx.storage.delete_prefix(&prefix).await.map(|_| ())
-                } else {
-                    self.ctx.storage.delete(path).await
-                };
+            let storage = &self.ctx.storage;
+            let catalog = &self.ctx.catalog;
+            let outcome = purge_expired_paths(
+                expired_paths,
+                self.config.delete_concurrency,
+                DB_DELETE_BATCH_SIZE,
+                |path| async move { delete_storage_path(storage, &path).await },
+                |paths| async move { Ok(catalog.delete_expired_by_paths(&paths).await?) },
+            )
+            .await?;
 
-                match result {
-                    Ok(()) => {
-                        stats.files_deleted += 1;
-                    }
-                    Err(e) => {
-                        // Log but continue - file might already be deleted
-                        warn!(path = %path, error = %e, "Failed to delete file");
-                        stats.delete_errors += 1;
-                    }
-                }
-            }
-
-            // Delete expired records from database
-            let deleted = self.ctx.catalog.delete_expired().await?;
-            stats.records_deleted = deleted;
-            info!(count = deleted, "Deleted expired records from database");
+            stats.files_deleted = outcome.paths_deleted;
+            stats.objects_deleted = outcome.objects_deleted;
+            stats.delete_errors = outcome.delete_errors;
+            stats.records_deleted = outcome.records_deleted;
 
             // NOTE: this previously invalidated wms-api's in-process
             // GetCapabilities cache. Retention now runs outside wms-api, so
@@ -543,7 +592,9 @@ impl CleanupTask {
 
         info!(
             marked = stats.marked_expired,
+            mark_errors = stats.mark_errors,
             files = stats.files_deleted,
+            objects = stats.objects_deleted,
             records = stats.records_deleted,
             errors = stats.delete_errors,
             "Cleanup cycle complete"
@@ -729,12 +780,172 @@ impl CleanupTask {
 pub struct CleanupStats {
     /// Number of datasets marked as expired
     pub marked_expired: u64,
-    /// Number of files deleted from storage
+    /// Number of models whose expiry marking failed (skipped for this cycle)
+    pub mark_errors: u64,
+    /// Number of storage paths (zarr directories / single files) deleted from storage
     pub files_deleted: u64,
+    /// Number of individual objects removed from storage
+    pub objects_deleted: u64,
     /// Number of database records deleted
     pub records_deleted: u64,
-    /// Number of delete errors
+    /// Number of storage paths whose delete failed (their rows are kept for retry)
     pub delete_errors: u64,
+}
+
+/// Expired rows are removed from the database in batches of this many
+/// successfully deleted paths, so a restart mid-cycle loses little progress.
+const DB_DELETE_BATCH_SIZE: usize = 500;
+
+/// Log a progress line every this many processed paths.
+const PROGRESS_LOG_EVERY: usize = 1000;
+
+/// Delete everything stored for one catalog `storage_path`; returns how many
+/// objects were removed.
+///
+/// A `.zarr` path is a directory of objects (7-11 for HRRR/GOES) removed with
+/// one prefix delete. The trailing slash keeps it inside that directory. Only
+/// per-zarr prefixes are used: listing a whole run directory is far too slow
+/// on RustFS.
+async fn delete_storage_path(storage: &ObjectStorage, path: &str) -> Result<u64> {
+    if path.ends_with(".zarr") {
+        Ok(storage.delete_prefix(&format!("{}/", path)).await?)
+    } else {
+        storage.delete(path).await?;
+        Ok(1)
+    }
+}
+
+/// Result of [`purge_expired_paths`].
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct PurgeOutcome {
+    /// Paths whose storage delete succeeded.
+    paths_deleted: u64,
+    /// Objects removed from storage across those paths.
+    objects_deleted: u64,
+    /// Paths whose storage delete failed; their rows were NOT deleted.
+    delete_errors: u64,
+    /// Database rows deleted.
+    records_deleted: u64,
+}
+
+/// Delete expired storage paths concurrently and their database rows
+/// incrementally.
+///
+/// - `delete_path(path)` removes a path's files from storage and returns how
+///   many objects it removed. Up to `concurrency` calls run at once.
+/// - `delete_rows(paths)` removes the database rows of paths whose files are
+///   gone and returns how many rows it deleted. It is called with at most
+///   `batch_size` paths, whenever that many have accumulated and once more at
+///   the end for the remainder.
+///
+/// A path whose `delete_path` failed is logged and counted, and is never
+/// passed to `delete_rows`, so its row stays `expired` and is retried by the
+/// next cycle. A `delete_rows` failure aborts the run (the database is
+/// unusable); the files of the unflushed paths are already gone, which makes
+/// their retry next cycle a cheap no-op.
+async fn purge_expired_paths<D, DF, DE, R, RF>(
+    paths: Vec<String>,
+    concurrency: usize,
+    batch_size: usize,
+    delete_path: D,
+    delete_rows: R,
+) -> Result<PurgeOutcome>
+where
+    D: Fn(String) -> DF,
+    DF: Future<Output = std::result::Result<u64, DE>>,
+    DE: Display,
+    R: Fn(Vec<String>) -> RF,
+    RF: Future<Output = Result<u64>>,
+{
+    let total = paths.len();
+    let batch_size = batch_size.max(1);
+    let started = Instant::now();
+    let mut outcome = PurgeOutcome::default();
+    let mut done_paths: Vec<String> = Vec::with_capacity(batch_size);
+    let mut processed = 0usize;
+
+    let mut results = stream::iter(paths)
+        .map(|path| {
+            let deleting = delete_path(path.clone());
+            async move { (path, deleting.await) }
+        })
+        .buffer_unordered(concurrency.max(1));
+
+    while let Some((path, result)) = results.next().await {
+        processed += 1;
+        match result {
+            Ok(objects) => {
+                outcome.paths_deleted += 1;
+                outcome.objects_deleted += objects;
+                done_paths.push(path);
+                if done_paths.len() >= batch_size {
+                    outcome.records_deleted += flush_rows(&delete_rows, &mut done_paths).await?;
+                }
+            }
+            Err(e) => {
+                // Keep the row: the next cycle retries this path.
+                warn!(path = %path, error = %e, "Failed to delete file");
+                outcome.delete_errors += 1;
+            }
+        }
+
+        if processed % PROGRESS_LOG_EVERY == 0 && processed < total {
+            let elapsed = started.elapsed().as_secs_f64();
+            info!(
+                done = processed,
+                total,
+                deleted = outcome.paths_deleted,
+                errors = outcome.delete_errors,
+                rate_per_sec = format!("{:.1}", processed as f64 / elapsed.max(f64::EPSILON)),
+                "Expired file deletion progress"
+            );
+        }
+    }
+
+    outcome.records_deleted += flush_rows(&delete_rows, &mut done_paths).await?;
+
+    let elapsed = started.elapsed();
+    info!(
+        total,
+        files_deleted = outcome.paths_deleted,
+        objects_deleted = outcome.objects_deleted,
+        delete_errors = outcome.delete_errors,
+        records_deleted = outcome.records_deleted,
+        elapsed_secs = format!("{:.1}", elapsed.as_secs_f64()),
+        rate_per_sec = format!(
+            "{:.1}",
+            total as f64 / elapsed.as_secs_f64().max(f64::EPSILON)
+        ),
+        "Finished deleting expired files"
+    );
+
+    Ok(outcome)
+}
+
+/// Delete the database rows of the accumulated, already-deleted paths.
+async fn flush_rows<R, RF>(delete_rows: &R, done_paths: &mut Vec<String>) -> Result<u64>
+where
+    R: Fn(Vec<String>) -> RF,
+    RF: Future<Output = Result<u64>>,
+{
+    if done_paths.is_empty() {
+        return Ok(0);
+    }
+    let batch = std::mem::take(done_paths);
+    let batch_len = batch.len();
+    match delete_rows(batch).await {
+        Ok(rows) => {
+            debug!(
+                paths = batch_len,
+                rows, "Deleted expired records from database"
+            );
+            Ok(rows)
+        }
+        Err(e) => {
+            error!(paths = batch_len, error = %e, "Failed to delete expired records from database");
+            Err(e)
+        }
+    }
 }
 
 /// Statistics from a sync operation.
@@ -1330,6 +1541,7 @@ retention:
             interval_secs: 3600,
             model_configs,
             default_retention_hours: 24,
+            delete_concurrency: DEFAULT_DELETE_CONCURRENCY,
         };
 
         let viirs_config = config.get_model_config("viirs");
@@ -1503,5 +1715,229 @@ retention:
 
         // Cleanup
         std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    // ------------------------------------------------------------------
+    // Bulk, concurrent storage deletion (`purge_expired_paths`)
+    // ------------------------------------------------------------------
+
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    use std::sync::Mutex;
+
+    fn paths(n: usize) -> Vec<String> {
+        (0..n)
+            .map(|i| format!("grids/hrrr/20261029_12z/p{:03}.zarr", i))
+            .collect()
+    }
+
+    /// `purge_expired_paths` with a storage that fails every path containing "bad", and a row
+    /// store that records each batch it is asked to delete. Returns the outcome and the batches.
+    async fn purge_with_failures(
+        all: Vec<String>,
+        concurrency: usize,
+        batch_size: usize,
+    ) -> (PurgeOutcome, Vec<Vec<String>>) {
+        let batches: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
+        let outcome = purge_expired_paths(
+            all,
+            concurrency,
+            batch_size,
+            |path: String| async move {
+                if path.contains("bad") {
+                    Err(format!("storage unavailable for {}", path))
+                } else {
+                    Ok(10u64)
+                }
+            },
+            |batch: Vec<String>| {
+                let batches = &batches;
+                async move {
+                    let n = batch.len() as u64;
+                    batches.lock().unwrap().push(batch);
+                    Ok(n)
+                }
+            },
+        )
+        .await
+        .expect("purge should succeed");
+        (outcome, batches.into_inner().unwrap())
+    }
+
+    #[tokio::test]
+    async fn rows_are_deleted_only_for_paths_whose_storage_delete_succeeded() {
+        let mut all = paths(40);
+        let bad: Vec<String> = (0..7).map(|i| format!("grids/gfs/bad{}.zarr", i)).collect();
+        all.extend(bad.clone());
+
+        let (outcome, batches) = purge_with_failures(all, 8, 16).await;
+
+        assert_eq!(outcome.paths_deleted, 40);
+        assert_eq!(outcome.objects_deleted, 400);
+        assert_eq!(outcome.delete_errors, 7);
+        assert_eq!(outcome.records_deleted, 40);
+
+        let mut deleted_rows: Vec<String> = batches.into_iter().flatten().collect();
+        deleted_rows.sort();
+        assert_eq!(deleted_rows, paths(40), "exactly the successful paths");
+        assert!(
+            deleted_rows.iter().all(|p| !bad.contains(p)),
+            "a failed path's row must be kept so the next cycle retries it"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_database_is_not_touched_when_every_storage_delete_fails() {
+        let all: Vec<String> = (0..5).map(|i| format!("grids/bad{}.zarr", i)).collect();
+
+        let (outcome, batches) = purge_with_failures(all, 4, 2).await;
+
+        assert_eq!(outcome.delete_errors, 5);
+        assert_eq!(outcome.paths_deleted, 0);
+        assert_eq!(outcome.records_deleted, 0);
+        assert!(batches.is_empty(), "no row deletes: {:?}", batches);
+    }
+
+    #[tokio::test]
+    async fn nothing_to_purge_is_a_no_op() {
+        let (outcome, batches) = purge_with_failures(Vec::new(), 4, 2).await;
+        assert_eq!(outcome, PurgeOutcome::default());
+        assert!(batches.is_empty());
+    }
+
+    /// Rows go out in batches as the work progresses, not in one go at the end: that is what
+    /// preserves progress when the ingester restarts mid-cycle.
+    #[tokio::test]
+    async fn rows_are_deleted_incrementally_in_batches() {
+        let events: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        let outcome = purge_expired_paths(
+            paths(25),
+            1, // sequential, so the interleaving is deterministic
+            10,
+            |path: String| {
+                let events = &events;
+                async move {
+                    events.lock().unwrap().push(format!("del {}", path));
+                    Ok::<u64, String>(1)
+                }
+            },
+            |batch: Vec<String>| {
+                let events = &events;
+                async move {
+                    events.lock().unwrap().push(format!("rows {}", batch.len()));
+                    Ok(batch.len() as u64)
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.records_deleted, 25);
+
+        let events = events.into_inner().unwrap();
+        let summary: Vec<&str> = events
+            .iter()
+            .map(|e| {
+                if e.starts_with("del") {
+                    "del"
+                } else {
+                    e.as_str()
+                }
+            })
+            .collect();
+        let mut expected = Vec::new();
+        expected.extend(vec!["del"; 10]);
+        expected.push("rows 10");
+        expected.extend(vec!["del"; 10]);
+        expected.push("rows 10");
+        expected.extend(vec!["del"; 5]);
+        expected.push("rows 5");
+        assert_eq!(summary, expected);
+    }
+
+    /// Deletes really overlap (virtual time: 20 paths x 100 ms at 4 at a time = 500 ms, versus
+    /// 2 s sequentially) and never exceed the configured bound.
+    #[tokio::test(start_paused = true)]
+    async fn storage_deletes_run_concurrently_up_to_the_configured_bound() {
+        let in_flight = AtomicUsize::new(0);
+        let max_in_flight = AtomicUsize::new(0);
+        let started = Instant::now();
+
+        let outcome = purge_expired_paths(
+            paths(20),
+            4,
+            500,
+            |_path: String| {
+                let (in_flight, max_in_flight) = (&in_flight, &max_in_flight);
+                async move {
+                    let now = in_flight.fetch_add(1, SeqCst) + 1;
+                    max_in_flight.fetch_max(now, SeqCst);
+                    tokio::time::sleep(TokioDuration::from_millis(100)).await;
+                    in_flight.fetch_sub(1, SeqCst);
+                    Ok::<u64, String>(1)
+                }
+            },
+            |batch: Vec<String>| async move { Ok(batch.len() as u64) },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.paths_deleted, 20);
+        assert_eq!(max_in_flight.load(SeqCst), 4);
+        assert_eq!(started.elapsed(), TokioDuration::from_millis(500));
+    }
+
+    #[tokio::test]
+    async fn zero_concurrency_is_treated_as_one_instead_of_hanging() {
+        let result = tokio::time::timeout(
+            TokioDuration::from_secs(5),
+            purge_with_failures(paths(3), 0, 0),
+        )
+        .await
+        .expect("must not hang");
+        assert_eq!(result.0.paths_deleted, 3);
+    }
+
+    /// A database failure aborts the run, but batches already committed stay committed.
+    #[tokio::test]
+    async fn a_database_failure_aborts_the_purge_and_keeps_earlier_batches() {
+        let committed: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+        let calls = AtomicUsize::new(0);
+
+        let result = purge_expired_paths(
+            paths(30),
+            1,
+            10,
+            |_path: String| async move { Ok::<u64, String>(1) },
+            |batch: Vec<String>| {
+                let (committed, calls) = (&committed, &calls);
+                async move {
+                    if calls.fetch_add(1, SeqCst) == 1 {
+                        anyhow::bail!("connection reset");
+                    }
+                    committed.lock().unwrap().push(batch.len());
+                    Ok(batch.len() as u64)
+                }
+            },
+        )
+        .await;
+
+        let err = result.expect_err("a failed row delete must surface");
+        assert!(err.to_string().contains("connection reset"), "{err}");
+        assert_eq!(
+            *committed.lock().unwrap(),
+            vec![10],
+            "first batch committed"
+        );
+    }
+
+    #[test]
+    fn delete_concurrency_comes_from_the_environment_with_a_safe_default() {
+        assert_eq!(parse_delete_concurrency(None), 16);
+        assert_eq!(parse_delete_concurrency(Some("32")), 32);
+        assert_eq!(parse_delete_concurrency(Some(" 4 ")), 4);
+        // zero would stall the delete stream; junk falls back to the default
+        assert_eq!(parse_delete_concurrency(Some("0")), 16);
+        assert_eq!(parse_delete_concurrency(Some("many")), 16);
+        assert_eq!(parse_delete_concurrency(Some("-3")), 16);
+        assert_eq!(CleanupConfig::default().delete_concurrency, 16);
     }
 }
