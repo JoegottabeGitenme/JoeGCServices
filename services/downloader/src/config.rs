@@ -367,7 +367,9 @@ pub struct LevelConfig {
     pub level_code: Option<u8>,
     /// Single level value (for height_above_ground, etc.)
     pub value: Option<u32>,
-    /// Multiple level values (for isobaric levels)
+    /// Multiple level values. Careful with isobaric levels: `build_param_filters` reads a list
+    /// as millibars (x100) while a single `value` and the ingester are pascals, so isobaric
+    /// levels are written as one `value:` each, in Pa (hrrr.yaml, gfs.yaml).
     pub values: Option<Vec<u32>>,
     /// Display name (e.g., "2 m above ground")
     pub display: Option<String>,
@@ -537,8 +539,9 @@ impl ModelConfig {
                 // If we have multiple values (e.g., isobaric levels)
                 if let Some(ref values) = level.values {
                     for &value in values {
-                        // For isobaric levels, values in config are in mb but .idx uses Pa
-                        // Convert to what level_to_idx_string expects (Pa)
+                        // For isobaric levels a `values:` list is read as mb, but .idx uses Pa
+                        // Convert to what level_to_idx_string expects (Pa). The ingester reads
+                        // the same list as Pa, so isobaric levels must not be written as a list.
                         let value_for_idx = if level_code == 100 {
                             // Config stores mb values, multiply by 100 for Pa
                             value * 100
@@ -1443,6 +1446,105 @@ retention:
                 "{} is configured but yields no selective-download filter",
                 p.name
             );
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // GFS pressure levels: written in pascals, requested in millibars
+    // ------------------------------------------------------------------
+
+    fn gfs_idx() -> String {
+        // gfs.t12z.pgrb2.0p25.f000.idx, 2026-10-29: every line of the real index (696 messages)
+        std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/gfs.t12z.pgrb2.0p25.f000.idx"),
+        )
+        .expect("fixture")
+    }
+
+    /// `(parameter, level string)` of every isobaric filter: the ones ending in " mb".
+    fn isobaric_filters(m: &ModelConfig) -> Vec<(String, String)> {
+        m.build_param_filters()
+            .into_iter()
+            .filter(|(_, l)| l.ends_with(" mb"))
+            .collect()
+    }
+
+    #[test]
+    fn gfs_config_value_50000_pa_selects_the_500_mb_idx_line() {
+        let filters = isobaric_filters(&real_model("gfs"));
+        for p in ["TMP", "HGT", "UGRD", "VGRD", "RH"] {
+            assert!(
+                filters.contains(&(p.to_string(), "500 mb".to_string())),
+                "{p} 500 mb missing"
+            );
+            // the millibar-for-pascal mix-up asked for 1000 -> "10 mb", 500 -> "5 mb"
+            assert!(
+                !filters.contains(&(p.to_string(), "5 mb".to_string())),
+                "{p}"
+            );
+        }
+        // 100000 Pa is the surface-most level, not the stratosphere
+        assert!(filters.contains(&("TMP".to_string(), "1000 mb".to_string())));
+        assert!(filters.contains(&("TMP".to_string(), "10 mb".to_string())));
+        // 64 = TMP 17 + HGT 14 + UGRD 12 + VGRD 12 + RH 9, none twice
+        assert_eq!(filters.len(), 64);
+    }
+
+    #[test]
+    fn every_gfs_pressure_level_filter_selects_exactly_one_line_of_the_real_index() {
+        use crate::grib_index::{GribIndex, ParamFilter};
+        let idx = gfs_idx();
+        let published: std::collections::HashSet<(String, String)> = idx
+            .lines()
+            .filter_map(|l| {
+                let p: Vec<&str> = l.split(':').collect();
+                (p.len() > 4).then(|| (p[3].to_string(), p[4].to_string()))
+            })
+            .collect();
+        assert!(published.len() > 600, "fixture looks truncated");
+
+        let filters = isobaric_filters(&real_model("gfs"));
+        let dead: Vec<_> = filters.iter().filter(|f| !published.contains(*f)).collect();
+        assert!(
+            dead.is_empty(),
+            "filters that match no GFS index line: {dead:?}"
+        );
+
+        // matched by (parameter, level) text, so "10 mb" must not also take "0.1 mb" or "100 mb":
+        // one filter, one message
+        let index = GribIndex::parse(&idx, Some(493_963_081)).unwrap();
+        let pf: Vec<ParamFilter> = filters
+            .iter()
+            .map(|(p, l)| ParamFilter::new(p.clone(), l.clone()))
+            .collect();
+        assert_eq!(index.find_matching_entries(&pf).len(), filters.len());
+    }
+
+    #[test]
+    fn every_enabled_models_isobaric_levels_are_requested_as_the_millibars_the_config_writes_in_pa()
+    {
+        // The config number is pascals for the ingester (and for the label). The downloader must
+        // ask the index for the same level: 85000 -> "850 mb". A `values:` list of pascals would
+        // be multiplied by 100 again and request "85000 mb"; a list of millibars (the old
+        // gfs.yaml) requests the right level but the ingester then reads it as pascals.
+        for m in real_models() {
+            let mut want = std::collections::BTreeSet::new();
+            for p in &m.parameters {
+                for l in p.levels.iter().filter(|l| l.level_code == Some(100)) {
+                    assert!(
+                        l.values.is_none(),
+                        "{} {}: write isobaric levels as one `value:` in Pa each, not a list",
+                        m.model.id,
+                        p.name
+                    );
+                    if let Some(pa) = l.value {
+                        want.insert((p.name.clone(), format!("{} mb", pa / 100)));
+                    }
+                }
+            }
+            let got: std::collections::BTreeSet<_> = isobaric_filters(&m).into_iter().collect();
+            assert_eq!(got, want, "{}", m.model.id);
         }
     }
 

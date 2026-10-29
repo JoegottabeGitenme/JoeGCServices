@@ -196,8 +196,9 @@ parameters:
         value: 2
         display: "2 m above ground"
       - type: isobaric
-        values: [1000, 850, 500, 250]
-        display_template: "{value} mb"
+        level_code: 100
+        value: 85000                  # PASCALS: 850 mb. One `value:` per level.
+        display_template: "{value_mb} mb"   # stored level name: "850 mb"
     units: K                      # Native units
     display_units: "C"           # Display units
     conversion: K_to_C            # Unit conversion
@@ -207,7 +208,11 @@ parameters:
 - `surface` - Surface level
 - `height_above_ground` - Height in meters above ground
 - `height_above_ground_layer` - Layer averaged (e.g., 0-6km)
-- `isobaric` - Pressure level (mb/hPa)
+- `isobaric` - Pressure level, written in **pascals** (850 mb = `85000`), one `value:` per level.
+  The ingester compares the number with the GRIB2 level value (Pa) and `{value_mb}` divides by
+  100 for the stored name. Do not write millibars (a millibar number selects a different level
+  without any error) and do not use a `values:` list (the downloader reads it as millibars).
+  `validate.py` and the ingestion tests reject non-pascal values.
 - `mean_sea_level` - Mean sea level
 - `entire_atmosphere` - Column-integrated
 - `low_cloud_layer` / `middle_cloud_layer` / `high_cloud_layer` - Cloud layers
