@@ -1048,7 +1048,7 @@ function initMapWithCRS(crsType) {
         addGraticuleLayer();
         map.attributionControl.addAttribution('Graticule: 5° intervals | Weather Data: WMTS Service');
     } else {
-        // Web Mercator mode: use CartoDB/OSM tiles
+        // Web Mercator mode: use OpenFreeMap/OSM base layers
         addMercatorBaseLayers();
         map.attributionControl.addAttribution('Weather Data: WMTS Service');
     }
@@ -1136,7 +1136,24 @@ function addGraticuleLayer() {
     };
 }
 
-// Add Mercator base layers (CartoDB, OSM)
+// OpenFreeMap serves free vector basemaps (no API key). Leaflet draws them through MapLibre GL via
+// the maplibre-gl-leaflet plugin loaded in index.html. Their terms require this attribution, and it
+// is passed to the plugin explicitly because Leaflet's attribution control cannot read MapLibre's own
+// (the plugin would also fail to remove it again when the layer is taken off the map).
+const OPENFREEMAP_ATTRIBUTION =
+    '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> ' +
+    '&copy; <a href="https://www.openmaptiles.org/" target="_blank">OpenMapTiles</a> ' +
+    'Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>';
+
+function openFreeMapLayer(styleName) {
+    // No pane option: the GL canvas lives in Leaflet's tilePane (z-index 200), below weatherPane (450).
+    return L.maplibreGL({
+        style: `https://tiles.openfreemap.org/styles/${styleName}`,
+        attributionControl: { customAttribution: OPENFREEMAP_ATTRIBUTION }
+    });
+}
+
+// Add Mercator base layers (OpenFreeMap Light/Dark, OSM)
 function addMercatorBaseLayers() {
     // Reset background color
     document.getElementById('map').style.backgroundColor = '';
@@ -1145,24 +1162,25 @@ function addMercatorBaseLayers() {
         attribution: '&copy; OpenStreetMap contributors',
         maxZoom: 19
     });
-    
-    const cartoLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-        maxZoom: 19
-    });
-    
-    const cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-        maxZoom: 19
-    });
+
+    // Without the MapLibre scripts (CDN blocked or down) fall back to the raster OSM layer alone
+    if (typeof L.maplibreGL !== 'function') {
+        console.warn('maplibre-gl-leaflet is not loaded; using the OpenStreetMap base layer only');
+        osmLayer.addTo(map);
+        window.baseLayers = { 'OpenStreetMap': osmLayer };
+        return;
+    }
+
+    const lightLayer = openFreeMapLayer('positron');
+    const darkLayer = openFreeMapLayer('dark');
 
     // Add default base layer
-    cartoLight.addTo(map);
+    lightLayer.addTo(map);
 
-    // Store base layers for layer control
+    // Store base layers for layer control (the first one is the default)
     window.baseLayers = {
-        'CartoDB Light': cartoLight,
-        'CartoDB Dark': cartoDark,
+        'Light': lightLayer,
+        'Dark': darkLayer,
         'OpenStreetMap': osmLayer
     };
 }

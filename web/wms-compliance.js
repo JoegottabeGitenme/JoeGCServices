@@ -3783,9 +3783,18 @@ function initMap() {
         keyboard: false
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-        maxZoom: 19
+    // OpenFreeMap dark vector basemap drawn with MapLibre GL (free, no API key). Their terms require
+    // the attribution below; the plugin is given it explicitly because Leaflet's attribution control
+    // cannot read MapLibre's own.
+    L.maplibreGL({
+        style: 'https://tiles.openfreemap.org/styles/dark',
+        maxZoom: 19,
+        attributionControl: {
+            customAttribution:
+                '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> ' +
+                '&copy; <a href="https://www.openmaptiles.org/" target="_blank">OpenMapTiles</a> ' +
+                'Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>'
+        }
     }).addTo(map);
 }
 

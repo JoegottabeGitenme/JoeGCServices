@@ -14,7 +14,7 @@ The Weather WMS web dashboard provides a real-time interactive interface for vie
 
 The main map viewer uses Leaflet.js to display weather data layers:
 
-- **Base Maps**: OpenStreetMap, dark theme options
+- **Base Maps**: Light and Dark vector maps from [OpenFreeMap](https://openfreemap.org) (free, no API key; drawn with MapLibre GL through the `maplibre-gl-leaflet` plugin, so the browser needs WebGL), plus raster OpenStreetMap. The EPSG:4326 view draws a graticule instead
 - **Weather Layers**: All WMS/WMTS layers from the catalog
 - **Protocol Toggle**: Switch between WMS and WMTS
 - **Style Selection**: Choose from available styles per layer
