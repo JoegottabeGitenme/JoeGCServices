@@ -712,13 +712,40 @@ impl Catalog {
         Ok(paths)
     }
 
-    /// Delete expired dataset records from the database.
-    /// Call this AFTER deleting files from object storage.
+    /// Delete ALL expired dataset records from the database, whether or not
+    /// their files have actually been removed from object storage.
+    ///
+    /// Call this only AFTER deleting files from object storage. Retention no
+    /// longer uses it (a storage failure would orphan the objects of the rows
+    /// it blindly drops); it deletes incrementally with
+    /// [`Catalog::delete_expired_by_paths`] instead.
     pub async fn delete_expired(&self) -> WmsResult<u64> {
         let result = sqlx::query("DELETE FROM datasets WHERE status = 'expired'")
             .execute(&self.pool)
             .await
             .map_err(|e| WmsError::DatabaseError(format!("Delete failed: {}", e)))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Delete the expired dataset records whose `storage_path` is in `paths`.
+    ///
+    /// Call this AFTER the files behind `paths` were removed from object
+    /// storage. Only rows still marked `expired` are touched, so a path that
+    /// has since been re-registered as available is left alone, and expired
+    /// rows whose storage delete failed (not passed in) stay for the next
+    /// cleanup cycle to retry. Returns the number of rows deleted.
+    pub async fn delete_expired_by_paths(&self, paths: &[String]) -> WmsResult<u64> {
+        if paths.is_empty() {
+            return Ok(0);
+        }
+
+        let result =
+            sqlx::query("DELETE FROM datasets WHERE status = 'expired' AND storage_path = ANY($1)")
+                .bind(paths)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| WmsError::DatabaseError(format!("Delete failed: {}", e)))?;
 
         Ok(result.rows_affected())
     }

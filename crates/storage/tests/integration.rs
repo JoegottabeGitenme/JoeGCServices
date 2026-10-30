@@ -519,6 +519,55 @@ async fn test_catalog_mark_expired_and_delete() {
     assert_eq!(count, 1);
 }
 
+/// Retention deletes rows only for the paths whose files it managed to delete.
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn test_catalog_delete_expired_by_paths_only_touches_the_named_expired_rows() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url())
+        .await
+        .expect("Failed to connect");
+    catalog.migrate().await.expect("Failed to migrate");
+
+    let mut old = Vec::new();
+    for fhr in 0..4 {
+        let mut entry = test_entry("gfs", "temp", fhr);
+        entry.reference_time = Utc::now() - Duration::days(30);
+        catalog.register_dataset(&entry).await.unwrap();
+        old.push(entry.storage_path);
+    }
+    let fresh = test_entry("gfs", "temp", 12);
+    catalog.register_dataset(&fresh).await.unwrap();
+
+    let marked = catalog
+        .mark_model_expired("gfs", Utc::now() - Duration::days(7))
+        .await
+        .unwrap();
+    assert_eq!(marked, 4);
+
+    // Nothing named, nothing deleted.
+    assert_eq!(catalog.delete_expired_by_paths(&[]).await.unwrap(), 0);
+    assert_eq!(catalog.count_expired().await.unwrap(), 4);
+
+    // Two of the four expired paths, plus the available row's path and an unknown one: only the
+    // two expired rows go.
+    let named = vec![
+        old[0].clone(),
+        old[2].clone(),
+        fresh.storage_path.clone(),
+        "gfs/nope/f999.zarr".to_string(),
+    ];
+    assert_eq!(catalog.delete_expired_by_paths(&named).await.unwrap(), 2);
+
+    let mut left = catalog.get_expired_storage_paths().await.unwrap();
+    left.sort();
+    assert_eq!(left, vec![old[1].clone(), old[3].clone()]);
+    assert_eq!(catalog.count_available().await.unwrap(), 1);
+
+    // Repeating is harmless (a retried batch finds nothing to delete).
+    assert_eq!(catalog.delete_expired_by_paths(&named).await.unwrap(), 0);
+}
+
 /// The sync task's DB snapshot: one entry per available storage path, carrying the NEWEST
 /// ingest time of the rows that share it (a re-ingest refreshes the path), expired rows left out.
 #[tokio::test]
