@@ -1,21 +1,18 @@
 // WMS Dashboard Application
 // 
 // MEMORY LEAK FIXES (Jan 2026):
-// - Added visibility-based polling (pauses all intervals when tab hidden)
-// - Reduced heatmap data structure limits (MAX_HEATMAP_ENTRIES: 500->200, MAX_SERVER_COUNTS_ENTRIES: 1000->400)
-// - More frequent pruning of heatmap data (30s -> 10s)
+// - Network pollers (service status, validation, data panel) pause while the tab is hidden
+//   and never overlap: a poll is skipped while the previous run of the same poller is still pending
 // - Thorough Leaflet tile cleanup on layer removal (clearing tile.el.src, event listeners)
 // - Added keepBuffer:2 to tile layers to reduce off-screen tile caching
-// - Centralized interval management for easier pause/resume
 
 // Smart API URL detection:
 // - localhost:8000 (docker-compose) -> use localhost:8080
 // - Otherwise (production/K8s) -> use relative URLs (same origin)
 const IS_LOCAL_DEV = window.location.port === '8000';
 const API_BASE = IS_LOCAL_DEV ? 'http://localhost:8080' : '';
-const DOWNLOADER_URL = IS_LOCAL_DEV ? 'http://localhost:8081' : '/downloader';
 const EDR_URL = IS_LOCAL_DEV ? 'http://localhost:8083/edr' : '/edr';
-const REDIS_URL = `${API_BASE}/api/ingestion`;
+const DOWNLOADER_URL = IS_LOCAL_DEV ? 'http://localhost:8081' : '/downloader';
 
 // External service URLs - different for local dev vs production
 const EXTERNAL_URLS = IS_LOCAL_DEV ? {
@@ -32,7 +29,6 @@ const EXTERNAL_URLS = IS_LOCAL_DEV ? {
 let map;
 let wmsLayer = null;
 let selectedLayer = null;
-let ingestionStatusInterval = null;
 let currentForecastHour = 0; // Default to analysis/earliest (hour 0)
 let currentRun = 'latest'; // Default to latest run
 let currentElevation = ''; // Default to surface/empty
@@ -51,77 +47,65 @@ let layerControl = null; // Leaflet layer control
 let preloadedLayers = {}; // Cache of preloaded tile layers for animation
 
 // Interval references for cleanup (prevents memory leaks on page refresh/SPA navigation)
-let backendMetricsInterval = null;
-let containerStatsInterval = null;
-let dataStatsInterval = null;
-let wmsLayerCountsInterval = null;
-let serviceStatusInterval = null;
 let clockInterval = null;
-let heatmapPollingInterval = null;
 let observationTimeRefreshInterval = null; // Periodic refresh for observation layer times (MRMS, GOES)
 
 // ============================================================================
-// MEMORY MANAGEMENT - Visibility-based polling to prevent memory leaks
+// POLLING - network pollers pause while the tab is hidden and never overlap
 // ============================================================================
 
-// Track whether the page is visible (pause polling when tab is hidden)
-let isPageVisible = true;
-let allIntervalsPaused = false;
+const pollers = new Map();
+const pollsInFlight = new Map();
 
-// All managed intervals for pause/resume
-const managedIntervals = {
-    backendMetrics: { fn: null, ms: 2000, ref: null },
-    containerStats: { fn: null, ms: 5000, ref: null },
-    dataStats: { fn: null, ms: 30000, ref: null },
-    wmsLayerCounts: { fn: null, ms: 60000, ref: null },
-    serviceStatus: { fn: null, ms: 30000, ref: null },
-    heatmapPolling: { fn: null, ms: 2000, ref: null },
-    ingestionStatus: { fn: null, ms: 10000, ref: null },
-    downloadsWidget: { fn: null, ms: 5000, ref: null },
-    ingestionWidget: { fn: null, ms: 2000, ref: null },
-    dataPanel: { fn: null, ms: 15000, ref: null },
-    configWidget: { fn: null, ms: 300000, ref: null },
-    perfWidget: { fn: null, ms: 10000, ref: null },
-    gridProcessorWidget: { fn: null, ms: 5000, ref: null },
-    validation: { fn: null, ms: 300000, ref: null },
-    fade: { fn: null, ms: 500, ref: null }
-};
-
-// Register an interval for management (pause when tab hidden)
-function registerManagedInterval(name, fn, ms) {
-    managedIntervals[name] = { fn, ms, ref: null };
-    if (isPageVisible && !allIntervalsPaused) {
-        managedIntervals[name].ref = setInterval(fn, ms);
-    }
-    return managedIntervals[name];
+// Run a task unless a run of the same name is still pending; callers share the pending run.
+function runOnce(name, task) {
+    if (pollsInFlight.has(name)) return pollsInFlight.get(name);
+    const run = Promise.resolve()
+        .then(task)
+        .catch(error => console.error(`Poll "${name}" failed:`, error))
+        .finally(() => pollsInFlight.delete(name));
+    pollsInFlight.set(name, run);
+    return run;
 }
 
-// Start all managed intervals
-function startAllIntervals() {
-    if (allIntervalsPaused) return;
-    Object.keys(managedIntervals).forEach(name => {
-        const interval = managedIntervals[name];
-        if (interval.fn && !interval.ref) {
-            interval.ref = setInterval(interval.fn, interval.ms);
-        }
+// Start polling `task` every `ms`. The first run happens now when `immediate` is true; pass
+// false when the caller already holds fresh data. Nothing runs while the tab is hidden;
+// resumePollers() restarts the timers.
+function startPoller(name, task, ms, immediate = true) {
+    stopPoller(name);
+    const poller = { tick: () => { poller.lastRun = Date.now(); return runOnce(name, task); }, ms, ref: null, lastRun: immediate ? 0 : Date.now() };
+    pollers.set(name, poller);
+    if (document.hidden) return;
+    if (immediate) poller.tick();
+    poller.ref = setInterval(poller.tick, ms);
+}
+
+function stopPoller(name) {
+    const poller = pollers.get(name);
+    if (!poller) return;
+    clearInterval(poller.ref);
+    pollers.delete(name);
+}
+
+function pausePollers() {
+    pollers.forEach(poller => {
+        clearInterval(poller.ref);
+        poller.ref = null;
     });
 }
 
-// Pause all managed intervals (when tab hidden)
-function pauseAllIntervals() {
-    Object.keys(managedIntervals).forEach(name => {
-        const interval = managedIntervals[name];
-        if (interval.ref) {
-            clearInterval(interval.ref);
-            interval.ref = null;
-        }
+// Restart paused timers; a poller whose last run is older than its period runs right away.
+function resumePollers() {
+    pollers.forEach(poller => {
+        if (poller.ref) return;
+        if (Date.now() - poller.lastRun >= poller.ms) poller.tick();
+        poller.ref = setInterval(poller.tick, poller.ms);
     });
 }
 
-// Clear all managed intervals (on page unload)
-function clearAllIntervals() {
-    allIntervalsPaused = true;
-    pauseAllIntervals();
+function stopAllPollers() {
+    pausePollers();
+    pollers.clear();
 }
 
 // ============================================================================
@@ -140,11 +124,9 @@ function logMemoryUsage(context = '') {
         console.log(`[Memory${context ? ' - ' + context : ''}] Used: ${used}MB / Total: ${total}MB / Limit: ${limit}MB`);
     }
     
-    // Also log data structure sizes (handle case where they might not be initialized yet)
-    const heatmapSize = typeof tileRequestHeatmap !== 'undefined' ? Object.keys(tileRequestHeatmap).length : 0;
-    const serverCountsSize = typeof lastServerCounts !== 'undefined' ? Object.keys(lastServerCounts).length : 0;
+    // Also log data structure sizes
     const preloadedSize = Object.keys(preloadedLayers).length;
-    console.log(`[DataStructures${context ? ' - ' + context : ''}] Heatmap: ${heatmapSize}, ServerCounts: ${serverCountsSize}, PreloadedLayers: ${preloadedSize}`);
+    console.log(`[DataStructures${context ? ' - ' + context : ''}] PreloadedLayers: ${preloadedSize}`);
 }
 
 // Periodic memory logging (every 30 seconds if debug mode enabled)
@@ -166,11 +148,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Handle page visibility changes - pause polling when tab is hidden
 document.addEventListener('visibilitychange', () => {
-    isPageVisible = !document.hidden;
-    
     if (document.hidden) {
         console.log('Tab hidden - pausing all polling intervals to save memory');
-        pauseAllIntervals();
+        pausePollers();
         stopObservationTimeRefresh();
         // Also stop any playback
         if (isPlaying) {
@@ -178,101 +158,10 @@ document.addEventListener('visibilitychange', () => {
         }
     } else {
         console.log('Tab visible - resuming polling intervals');
-        startAllIntervals();
+        resumePollers();
         startObservationTimeRefresh(); // Resume if on an observation layer
     }
 });
-
-// DOM Elements
-const wmsStatusEl = document.getElementById('wms-status');
-const wmtsStatusEl = document.getElementById('wmts-status');
-const edrStatusEl = document.getElementById('edr-status');
-const ingesterServiceStatusEl = document.getElementById('ingester-service-status');
-const datasetCountEl = document.getElementById('dataset-count');
-const modelsListEl = document.getElementById('models-list');
-const storageSizeEl = document.getElementById('storage-size');
-
-
-
-// Performance Tracking
-const performanceStats = {
-    tilesLoaded: 0,
-    tileTimes: [],
-    currentLayer: null,
-    layerStartTime: null
-};
-
-const lastTileTimeEl = document.getElementById('last-tile-time');
-const avgTileTimeEl = document.getElementById('avg-tile-time');
-const tilesLoadedCountEl = document.getElementById('tiles-loaded-count');
-const slowestTileTimeEl = document.getElementById('slowest-tile-time');
-const currentLayerNameEl = document.getElementById('current-layer-name');
-
-// Backend Metrics Elements
-const metricWmsRequestsEl = document.getElementById('metric-wms-requests');
-const metricWmtsRequestsEl = document.getElementById('metric-wmts-requests');
-const metricRendersEl = document.getElementById('metric-renders');
-const metricRenderAvgEl = document.getElementById('metric-render-avg');
-const metricRenderLastEl = document.getElementById('metric-render-last');
-const metricCacheStatusEl = document.getElementById('metric-cache-status');
-const metricCacheKeysEl = document.getElementById('metric-cache-keys');
-const metricCacheMemoryEl = document.getElementById('metric-cache-memory');
-const metricMemoryEl = document.getElementById('metric-memory');
-const metricThreadsEl = document.getElementById('metric-threads');
-const metricUptimeEl = document.getElementById('metric-uptime');
-
-// Info Bar Cache Elements - L1
-const infoL1HitsEl = document.getElementById('info-l1-hits');
-const infoL1RateEl = document.getElementById('info-l1-rate');
-const infoL1TilesEl = document.getElementById('info-l1-tiles');
-const infoL1SizeEl = document.getElementById('info-l1-size');
-// Info Bar Cache Elements - L2
-const infoL2HitsEl = document.getElementById('info-l2-hits');
-const infoL2RateEl = document.getElementById('info-l2-rate');
-const infoL2TilesEl = document.getElementById('info-l2-tiles');
-const infoL2SizeEl = document.getElementById('info-l2-size');
-
-// Info Bar Chunk Cache Elements (Zarr)
-const infoChunkEntriesEl = document.getElementById('info-chunk-entries');
-const infoChunkMemoryEl = document.getElementById('info-chunk-memory');
-const infoChunkHitsEl = document.getElementById('info-chunk-hits');
-const infoChunkRateEl = document.getElementById('info-chunk-rate');
-
-// Info Bar System Stats Elements
-const infoSysCpusEl = document.getElementById('info-sys-cpus');
-const infoSysLoad1El = document.getElementById('info-sys-load1');
-const infoSysLoad5El = document.getElementById('info-sys-load5');
-const infoSysRamUsedEl = document.getElementById('info-sys-ram-used');
-const infoSysRamTotalEl = document.getElementById('info-sys-ram-total');
-const infoSysRamPctEl = document.getElementById('info-sys-ram-pct');
-const infoSysStorageEl = document.getElementById('info-sys-storage');
-const infoSysFilesEl = document.getElementById('info-sys-files');
-const infoSysUptimeEl = document.getElementById('info-sys-uptime');
-
-// Info Bar Request Stats Elements
-const infoWmsTotalEl = document.getElementById('info-wms-total');
-const infoWms1mEl = document.getElementById('info-wms-1m');
-const infoWms5mEl = document.getElementById('info-wms-5m');
-const infoWmtsTotalEl = document.getElementById('info-wmts-total');
-const infoWmts1mEl = document.getElementById('info-wmts-1m');
-const infoWmts5mEl = document.getElementById('info-wmts-5m');
-const infoRenderTotalEl = document.getElementById('info-render-total');
-const infoRender1mEl = document.getElementById('info-render-1m');
-const infoRender5mEl = document.getElementById('info-render-5m');
-const infoRenderAvgEl = document.getElementById('info-render-avg');
-const infoRenderMinMaxEl = document.getElementById('info-render-minmax');
-
-// Info Bar Data Stats Elements
-const infoDataFilesEl = document.getElementById('info-data-files');
-const infoDataSizeEl = document.getElementById('info-data-size');
-const infoDataDatasetsEl = document.getElementById('info-data-datasets');
-const infoDataParamsEl = document.getElementById('info-data-params');
-const infoDataModelsEl = document.getElementById('info-data-models');
-const infoDataRawEl = document.getElementById('info-data-raw');
-const infoDataShreddedEl = document.getElementById('info-data-shredded');
-const infoRedisStatusEl = document.getElementById('info-redis-status');
-const infoRedisKeysEl = document.getElementById('info-redis-keys');
-const infoRedisMemoryEl = document.getElementById('info-redis-memory');
 
 // State for layer selection
 let availableLayers = [];
@@ -288,12 +177,23 @@ let selectedFormat = 'image/png'; // 'image/png', 'image/webp', or 'image/jpeg'
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
-    checkServiceStatus();
+    startPoller('serviceStatus', checkServiceStatus, 30000);
     loadAvailableLayers();
-    initIngestionStatus();
     setupEventListeners();
     setupMapClickHandler();
+    watchMapSize();
 });
+
+// Keep Leaflet's cached size in step with the #map element. Leaflet only re-measures on window
+// resize, but the page layout can shift after init (the header reflows as the badges fill in), so
+// without this the map keeps sizing itself to the container it had at init.
+function watchMapSize() {
+    const mapEl = document.getElementById('map');
+    if (!mapEl || typeof ResizeObserver === 'undefined') return;
+    new ResizeObserver(() => {
+        if (map) map.invalidateSize();
+    }).observe(mapEl);
+}
 
 // Setup event listeners
 function setupEventListeners() {
@@ -1267,58 +1167,38 @@ function addMercatorBaseLayers() {
     };
 }
 
-// Check WMS, WMTS, and EDR service status
+// Health checks behind the header status badges: a service is online when its probe succeeds.
+const SERVICE_CHECKS = {
+    wms: { url: `${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities` },
+    wmts: { url: `${API_BASE}/wmts?SERVICE=WMTS&REQUEST=GetCapabilities` },
+    edr: { url: EDR_URL },
+    downloader: { url: `${DOWNLOADER_URL}/health` },
+    // wms-api proxies the ingester's /status and answers 200 with an "error" field when it is unreachable
+    ingester: {
+        url: `${API_BASE}/api/admin/ingestion/active`,
+        isOnline: async response => !(await response.json()).error
+    }
+};
+
+// Check WMS, WMTS, EDR, downloader and ingester status
 async function checkServiceStatus() {
-    try {
-        // Check WMS
-        const wmsResponse = await fetch(
-            `${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`,
-            { mode: 'cors', cache: 'no-cache' }
-        );
-        setStatusIndicator('wms', wmsResponse.ok ? 'online' : 'offline');
-    } catch (error) {
-        console.error('WMS status check failed:', error);
-        setStatusIndicator('wms', 'offline');
-    }
-
-    try {
-        // Check WMTS
-        const wmtsResponse = await fetch(
-            `${API_BASE}/wmts?SERVICE=WMTS&REQUEST=GetCapabilities`,
-            { mode: 'cors', cache: 'no-cache' }
-        );
-        setStatusIndicator('wmts', wmtsResponse.ok ? 'online' : 'offline');
-    } catch (error) {
-        console.error('WMTS status check failed:', error);
-        setStatusIndicator('wmts', 'offline');
-    }
-
-    try {
-        // Check EDR
-        const edrResponse = await fetch(
-            `${EDR_URL}`,
-            { mode: 'cors', cache: 'no-cache' }
-        );
-        setStatusIndicator('edr', edrResponse.ok ? 'online' : 'offline');
-    } catch (error) {
-        console.error('EDR status check failed:', error);
-        setStatusIndicator('edr', 'offline');
-    }
+    await Promise.all(Object.entries(SERVICE_CHECKS).map(async ([service, check]) => {
+        try {
+            const response = await fetch(check.url, { mode: 'cors', cache: 'no-cache' });
+            const online = response.ok && (!check.isOnline || await check.isOnline(response));
+            setStatusIndicator(service, online ? 'online' : 'offline');
+        } catch (error) {
+            console.error(`${service} status check failed:`, error);
+            setStatusIndicator(service, 'offline');
+        }
+    }));
 }
 
 // Update status indicator
 function setStatusIndicator(service, status) {
-    let element;
-    if (service === 'wms') {
-        element = wmsStatusEl;
-    } else if (service === 'wmts') {
-        element = wmtsStatusEl;
-    } else if (service === 'edr') {
-        element = edrStatusEl;
-    }
-    
+    const element = document.getElementById(`${service}-status`);
     if (!element) return;
-    
+
     const statusDot = element.querySelector('.status-dot');
     const statusText = element.querySelector('.status-text');
 
@@ -1665,24 +1545,12 @@ function loadLayerOnMap(layerName) {
     selectedLayer = layerName;
     selectedStyle = 'default';
 
-    // Reset performance tracking
-    performanceStats.currentLayer = layerName;
-    performanceStats.tileTimes = [];
-    performanceStats.tilesLoaded = 0;
-    performanceStats.layerStartTime = null;
-
     // Reset time mode to forecast (default) before loading
     layerTimeMode = 'forecast';
     currentObservationTime = null;
     currentForecastHour = null; // Will be set by fetchAvailableTimes
     currentElevation = ''; // Reset elevation - will be populated from capabilities
 
-    // Update current layer display
-    if (currentLayerNameEl) {
-        currentLayerNameEl.textContent = `${formatLayerName(layerName)} (${selectedProtocol.toUpperCase()})`;
-    }
-    updatePerformanceDisplay();
-    
     // Fetch available times FIRST, then create the layer with correct time values
     fetchAvailableTimes();
 }
@@ -1712,18 +1580,6 @@ function createWeatherLayer() {
             keepBuffer: 2          // Reduce tile buffer to minimize memory usage
         });
         
-        // Hook into tile load events for performance tracking
-        wmsLayer.on('loading', function() {
-            performanceStats.layerStartTime = Date.now();
-        });
-        
-        wmsLayer.on('load', function() {
-            if (performanceStats.layerStartTime) {
-                const loadTime = Date.now() - performanceStats.layerStartTime;
-                trackTileLoadTime(loadTime);
-            }
-        });
-        
         wmsLayer.on('tileerror', function(e) {
             console.error('Tile load error:', e);
         });
@@ -1748,22 +1604,11 @@ function createWmsImageOverlay(layerName, style) {
     const size = map.getSize();
     const url = buildWmsGetMapUrl(layerName, style, bounds, size);
     
-    performanceStats.layerStartTime = Date.now();
-    
     const overlay = L.imageOverlay(url, bounds, {
         opacity: 0.7,
         pane: 'weatherPane', // Custom pane above base layers
         interactive: false,
         attribution: `${formatLayerName(layerName)} (WMS - ${style})`
-    });
-    
-    // Track when image loads
-    overlay.on('load', function() {
-        if (performanceStats.layerStartTime) {
-            const loadTime = Date.now() - performanceStats.layerStartTime;
-            trackTileLoadTime(loadTime);
-            console.log(`WMS GetMap loaded in ${loadTime}ms`);
-        }
     });
     
     overlay.on('error', function(e) {
@@ -1917,355 +1762,6 @@ function onMapMoveEnd() {
     wmsLayer.addTo(map);
 }
 
-// Initialize ingestion status monitoring
-function initIngestionStatus() {
-    checkIngestionStatus();
-    fetchBackendMetrics();
-    fetchContainerStats();
-    fetchDataStats();
-    fetchWmsLayerCounts();
-    // Refresh ingestion status every 10 seconds
-    ingestionStatusInterval = setInterval(() => {
-        checkIngestionStatus();
-    }, 10000);
-    // Refresh backend metrics every 2 seconds
-    backendMetricsInterval = setInterval(fetchBackendMetrics, 2000);
-    // Refresh container stats every 5 seconds
-    containerStatsInterval = setInterval(fetchContainerStats, 5000);
-    // Refresh data stats every 30 seconds
-    dataStatsInterval = setInterval(fetchDataStats, 30000);
-    // Refresh WMS layer counts every 60 seconds
-    wmsLayerCountsInterval = setInterval(fetchWmsLayerCounts, 60000);
-}
-
-// Fetch WMS layer counts from GetCapabilities
-async function fetchWmsLayerCounts() {
-    try {
-        const response = await fetch(`${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`);
-        if (!response.ok) return;
-        
-        const text = await response.text();
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(text, 'text/xml');
-        const layers = doc.querySelectorAll('Layer > Name');
-        
-        // Map model names to display IDs
-        const modelMapping = {
-            'gfs': 'gfs',
-            'hrrr': 'hrrr',
-            'goes16': 'goes',
-            'goes18': 'goes',
-            'mrms': 'mrms'
-        };
-        
-        // Count parameter layers per model (e.g., gfs_TMP, hrrr_GUST, goes18_CMI_C01)
-        const layerCounts = { gfs: 0, hrrr: 0, goes: 0, mrms: 0 };
-        layers.forEach(layer => {
-            const name = layer.textContent;
-            // Match pattern: model_PARAM (parameter layers only, not group layers)
-            const match = name.match(/^(gfs|hrrr|goes16|goes18|mrms)_/i);
-            if (match) {
-                const modelName = match[1].toLowerCase();
-                const displayName = modelMapping[modelName] || modelName;
-                if (layerCounts[displayName] !== undefined) {
-                    layerCounts[displayName]++;
-                }
-            }
-        });
-        
-        // Update UI
-        for (const [model, count] of Object.entries(layerCounts)) {
-            const el = document.getElementById(`info-layer-${model}`);
-            if (el) {
-                const countEl = el.querySelector('.info-layer-count');
-                if (countEl) {
-                    countEl.textContent = count > 0 ? count : '-';
-                    countEl.className = 'info-layer-count' + (count === 0 ? ' none' : '');
-                }
-            }
-        }
-    } catch (e) {
-        console.debug('Could not fetch WMS layer counts:', e.message);
-    }
-}
-
-// Fetch data/ingestion stats from admin API
-async function fetchDataStats() {
-    try {
-        const response = await fetch(`${API_BASE}/api/admin/ingestion/status`);
-        if (!response.ok) return;
-        
-        const data = await response.json();
-        const catalog = data.catalog_summary || {};
-        const models = data.models || [];
-        
-        // Update Info Bar data stats
-        if (infoDataDatasetsEl) {
-            infoDataDatasetsEl.textContent = (catalog.total_datasets ?? 0).toLocaleString();
-        }
-        if (infoDataParamsEl) {
-            infoDataParamsEl.textContent = (catalog.total_parameters ?? 0).toLocaleString();
-        }
-        if (infoDataModelsEl) {
-            // Count active models
-            const activeModels = models.filter(m => m.status === 'active').length;
-            infoDataModelsEl.textContent = activeModels.toLocaleString();
-        }
-        if (infoDataRawEl) {
-            infoDataRawEl.textContent = (catalog.raw_object_count ?? 0).toLocaleString();
-        }
-        if (infoDataShreddedEl) {
-            infoDataShreddedEl.textContent = (catalog.shredded_object_count ?? 0).toLocaleString();
-        }
-        
-        // Update per-model stats in the Data info bar
-        updatePerModelStats(models, catalog);
-    } catch (error) {
-        console.error('Error fetching data stats:', error);
-    }
-}
-
-// Update per-model statistics in the Data info bar
-// Fetches from: downloader schedule, ingestion status, and WMS capabilities
-async function updatePerModelStats(models, catalog) {
-    // Map model names to element IDs (handle variations like goes16/goes18 -> goes)
-    const modelMapping = {
-        'gfs': 'gfs',
-        'hrrr': 'hrrr',
-        'goes16': 'goes',
-        'goes18': 'goes',
-        'mrms': 'mrms'
-    };
-    
-    // Aggregate stats per display model (e.g., combine goes16 + goes18)
-    const aggregated = {};
-    
-    // First, try to get enabled status from downloader schedule
-    try {
-        const scheduleResponse = await fetch(`${DOWNLOADER_URL}/schedule`);
-        if (scheduleResponse.ok) {
-            const schedule = await scheduleResponse.json();
-            (schedule.models || []).forEach(m => {
-                const name = (m.id || '').toLowerCase();
-                const displayName = modelMapping[name] || name;
-                if (!displayName) return;
-                
-                if (!aggregated[displayName]) {
-                    aggregated[displayName] = {
-                        status: m.enabled ? 'enabled' : 'disabled',
-                        files: 0,
-                        params: 0,
-                        hasData: false
-                    };
-                } else if (m.enabled && aggregated[displayName].status === 'disabled') {
-                    aggregated[displayName].status = 'enabled';
-                }
-            });
-        }
-    } catch (e) {
-        // Downloader not available, continue with ingestion data only
-    }
-    
-    // Process models array from ingestion status
-    models.forEach(model => {
-        // Use model.id (e.g., "gfs") not model.name (e.g., "GFS Model")
-        const name = (model.id || model.name || '').toLowerCase();
-        const displayName = modelMapping[name] || name;
-        
-        if (!displayName) return;
-        
-        if (!aggregated[displayName]) {
-            aggregated[displayName] = {
-                status: 'inactive',
-                files: 0,
-                params: 0,
-                hasData: false
-            };
-        }
-        
-        // If any sub-model is active (has data), mark as active
-        if (model.status === 'active') {
-            aggregated[displayName].status = 'active';
-        } else if (model.status === 'error' && aggregated[displayName].status !== 'active') {
-            aggregated[displayName].status = 'error';
-        }
-        
-        // Sum up files and params (API uses total_files and parameters)
-        aggregated[displayName].files += model.total_files || model.file_count || 0;
-        aggregated[displayName].params += (model.parameters ? model.parameters.length : 0) || model.parameter_count || 0;
-        
-        if ((model.total_files || model.file_count) > 0) {
-            aggregated[displayName].hasData = true;
-            aggregated[displayName].status = 'active';
-        }
-    });
-    
-    // Also check catalog per-model stats if available (it's an array, not object)
-    const catalogModels = catalog.models || [];
-    catalogModels.forEach(stats => {
-        const name = (stats.model || '').toLowerCase();
-        const displayName = modelMapping[name] || name;
-        
-        if (!displayName) return;
-        
-        if (!aggregated[displayName]) {
-            aggregated[displayName] = {
-                status: 'inactive',
-                files: 0,
-                params: 0,
-                hasData: false
-            };
-        }
-        
-        // Use catalog counts if higher (more accurate)
-        const datasetCount = stats.dataset_count || stats.datasets || 0;
-        const paramCount = stats.parameter_count || stats.parameters || 0;
-        
-        if (datasetCount > aggregated[displayName].files) {
-            aggregated[displayName].files = datasetCount;
-        }
-        if (paramCount > aggregated[displayName].params) {
-            aggregated[displayName].params = paramCount;
-        }
-        if (datasetCount > 0) {
-            aggregated[displayName].hasData = true;
-            aggregated[displayName].status = 'active';
-        }
-    });
-    
-    // Update the UI for each model
-    ['gfs', 'hrrr', 'goes', 'mrms'].forEach(modelName => {
-        const modelEl = document.getElementById(`info-model-${modelName}`);
-        if (!modelEl) return;
-        
-        const stats = aggregated[modelName] || { status: 'inactive', files: 0, params: 0 };
-        
-        const statusEl = modelEl.querySelector('.info-model-status');
-        const filesEl = modelEl.querySelector('.info-model-files');
-        const paramsEl = modelEl.querySelector('.info-model-params');
-        
-        if (statusEl) {
-            // Show a status indicator
-            statusEl.className = 'info-model-status ' + stats.status;
-            if (stats.status === 'active') {
-                statusEl.textContent = '\u2713'; // checkmark - has data
-            } else if (stats.status === 'enabled') {
-                statusEl.textContent = '\u25cb'; // circle - enabled but no data yet
-            } else if (stats.status === 'error') {
-                statusEl.textContent = '\u2717'; // X mark - error
-            } else if (stats.status === 'disabled') {
-                statusEl.textContent = '\u2212'; // minus - disabled
-            } else {
-                statusEl.textContent = '-';
-            }
-        }
-        
-        if (filesEl) {
-            filesEl.textContent = stats.files > 0 ? stats.files.toLocaleString() + 'f' : '-';
-        }
-        
-        if (paramsEl) {
-            paramsEl.textContent = stats.params > 0 ? stats.params.toLocaleString() + 'p' : '-';
-        }
-    });
-}
-
-// Check ingestion status from catalog database
-async function checkIngestionStatus() {
-    try {
-        // For now, we'll simulate ingestion status
-        // In a production system, this would fetch from the ingester API
-        await updateIngestionMetrics();
-    } catch (error) {
-        console.error('Failed to check ingestion status:', error);
-        setIngestionStatus('unknown');
-    }
-}
-
-// Update ingestion metrics from WMS capabilities
-async function updateIngestionMetrics() {
-    try {
-        const response = await fetch(
-            `${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities`,
-            { mode: 'cors', cache: 'no-cache' }
-        );
-        
-        if (!response.ok) {
-            setIngestionStatus('offline');
-            return;
-        }
-
-        const text = await response.text();
-        const parser = new DOMParser();
-        const xml = parser.parseFromString(text, 'text/xml');
-        
-        // Count available layers
-        const layers = xml.querySelectorAll('Layer[queryable="1"]');
-        const datasetCount = layers.length;
-        
-        // Extract unique models from layer names (format: "gfs_TMP" -> "gfs")
-        const models = new Set();
-        layers.forEach(layer => {
-            const name = getElementText(layer, 'Name');
-            if (name) {
-                // Split on underscore and take the first part as model name
-                const model = name.split('_')[0];
-                if (model) models.add(model);
-            }
-        });
-
-        // Update UI
-        setIngestionStatus('online');
-        if (datasetCountEl) datasetCountEl.textContent = datasetCount;
-        if (modelsListEl) modelsListEl.textContent = Array.from(models).join(', ') || 'None';
-        
-        // Fetch actual storage stats from API
-        fetchStorageStats();
-        
-        // Add log entry
-        addLogEntry(`Found ${datasetCount} datasets, models: ${Array.from(models).join(', ')}`, 'success');
-        
-    } catch (error) {
-        console.error('Error updating ingestion metrics:', error);
-        addLogEntry(`Error: ${error.message}`, 'error');
-        setIngestionStatus('offline');
-    }
-}
-
-// Set ingestion service status
-function setIngestionStatus(status) {
-    if (!ingesterServiceStatusEl) return;
-    
-    const statusDot = ingesterServiceStatusEl.querySelector('.status-dot');
-    const statusText = ingesterServiceStatusEl.querySelector('.status-text');
-    
-    if (statusDot) statusDot.className = `status-dot ${status}`;
-    if (statusText) statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-// Add entry to ingestion log (optional - only if log element exists)
-function addLogEntry(message, type = 'info') {
-    const ingestLogEl = document.getElementById('ingest-log');
-    if (!ingestLogEl) {
-        // Log element doesn't exist in the current UI, just log to console
-        console.log(`[${type.toUpperCase()}] ${message}`);
-        return;
-    }
-    
-    const timestamp = new Date().toLocaleTimeString();
-    const entry = document.createElement('div');
-    entry.className = `log-entry ${type}`;
-    entry.textContent = `[${timestamp}] ${message}`;
-    
-    // Keep log to last 10 entries
-    while (ingestLogEl.children.length >= 10) {
-        ingestLogEl.removeChild(ingestLogEl.firstChild);
-    }
-    
-    ingestLogEl.appendChild(entry);
-    ingestLogEl.scrollTop = ingestLogEl.scrollHeight;
-}
-
 // Format bytes to human readable
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
@@ -2274,425 +1770,6 @@ function formatBytes(bytes) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
-
-// Fetch storage stats from MinIO via API
-async function fetchStorageStats() {
-    try {
-        const response = await fetch(`${API_BASE}/api/storage/stats`);
-        if (response.ok) {
-            const stats = await response.json();
-            if (storageSizeEl) {
-                storageSizeEl.textContent = `${formatBytes(stats.total_size)} (${stats.object_count} files)`;
-            }
-            
-            // Update Info Bar storage stats
-            if (infoSysStorageEl) {
-                infoSysStorageEl.textContent = formatBytes(stats.total_size);
-            }
-            if (infoSysFilesEl) {
-                infoSysFilesEl.textContent = stats.object_count.toLocaleString();
-            }
-            
-            // Update Info Bar data stats
-            if (infoDataFilesEl) {
-                infoDataFilesEl.textContent = stats.object_count.toLocaleString();
-            }
-            if (infoDataSizeEl) {
-                infoDataSizeEl.textContent = formatBytes(stats.total_size);
-            }
-        }
-    } catch (error) {
-        console.error('Error fetching storage stats:', error);
-        if (storageSizeEl) storageSizeEl.textContent = 'N/A';
-    }
-}
-
-// Fetch backend metrics from API
-async function fetchBackendMetrics() {
-    try {
-        const response = await fetch(`${API_BASE}/api/metrics`);
-        if (!response.ok) return;
-        
-        const data = await response.json();
-        const metrics = data.metrics || {};
-        const system = data.system || {};
-        const cache = data.cache || {};
-        
-        // Update request counts (sidebar)
-        if (metricWmsRequestsEl) metricWmsRequestsEl.textContent = metrics.wms_requests ?? 0;
-        if (metricWmtsRequestsEl) metricWmtsRequestsEl.textContent = metrics.wmts_requests ?? 0;
-        
-        // Update render stats (sidebar)
-        if (metricRendersEl) {
-            const errors = (metrics.render_errors ?? 0) > 0 ? ` (${metrics.render_errors} err)` : '';
-            metricRendersEl.textContent = (metrics.renders_total ?? 0) + errors;
-        }
-        if (metricRenderAvgEl) {
-            const avgMs = (metrics.render_avg_ms ?? 0).toFixed(0);
-            metricRenderAvgEl.textContent = `${avgMs}ms`;
-            metricRenderAvgEl.className = 'metric-value ' + getSpeedClass(metrics.render_avg_ms ?? 0);
-        }
-        if (metricRenderLastEl) {
-            const lastMs = (metrics.render_last_ms ?? 0).toFixed(0);
-            metricRenderLastEl.textContent = `${lastMs}ms`;
-            metricRenderLastEl.className = 'metric-value ' + getSpeedClass(metrics.render_last_ms ?? 0);
-        }
-        
-        // Update Info Bar request stats
-        if (infoWmsTotalEl) {
-            infoWmsTotalEl.textContent = (metrics.wms_requests ?? 0).toLocaleString();
-        }
-        if (infoWms1mEl) {
-            infoWms1mEl.textContent = (metrics.wms_count_1m ?? 0).toLocaleString();
-        }
-        if (infoWms5mEl) {
-            infoWms5mEl.textContent = (metrics.wms_count_5m ?? 0).toLocaleString();
-        }
-        if (infoWmtsTotalEl) {
-            infoWmtsTotalEl.textContent = (metrics.wmts_requests ?? 0).toLocaleString();
-        }
-        if (infoWmts1mEl) {
-            infoWmts1mEl.textContent = (metrics.wmts_count_1m ?? 0).toLocaleString();
-        }
-        if (infoWmts5mEl) {
-            infoWmts5mEl.textContent = (metrics.wmts_count_5m ?? 0).toLocaleString();
-        }
-        if (infoRenderTotalEl) {
-            infoRenderTotalEl.textContent = (metrics.renders_total ?? 0).toLocaleString();
-        }
-        if (infoRender1mEl) {
-            infoRender1mEl.textContent = (metrics.render_count_1m ?? 0).toLocaleString();
-        }
-        if (infoRender5mEl) {
-            infoRender5mEl.textContent = (metrics.render_count_5m ?? 0).toLocaleString();
-        }
-        if (infoRenderAvgEl) {
-            infoRenderAvgEl.textContent = (metrics.render_avg_ms ?? 0).toFixed(0) + 'ms';
-        }
-        if (infoRenderMinMaxEl) {
-            const min = (metrics.render_min_ms ?? 0).toFixed(0);
-            const max = (metrics.render_max_ms ?? 0).toFixed(0);
-            infoRenderMinMaxEl.textContent = `${min}/${max}ms`;
-        }
-        
-        // Update Redis cache stats (L2 cache)
-        const l2Cache = data.l2_cache || {};
-        if (metricCacheStatusEl) {
-            const connected = l2Cache.connected ?? false;
-            metricCacheStatusEl.textContent = connected ? 'Connected' : 'Disconnected';
-            metricCacheStatusEl.className = 'metric-value ' + (connected ? 'good' : 'bad');
-        }
-        if (metricCacheKeysEl) {
-            metricCacheKeysEl.textContent = l2Cache.key_count ?? '--';
-        }
-        if (metricCacheMemoryEl) {
-            metricCacheMemoryEl.textContent = l2Cache.memory_used ? formatBytes(l2Cache.memory_used) : '--';
-        }
-        
-        // Update Info Bar Redis stats
-        if (infoRedisStatusEl) {
-            const connected = l2Cache.connected ?? false;
-            infoRedisStatusEl.textContent = connected ? 'OK' : 'Down';
-            infoRedisStatusEl.style.color = connected ? '#10b981' : '#ef4444';
-        }
-        if (infoRedisKeysEl) {
-            infoRedisKeysEl.textContent = (l2Cache.key_count ?? 0).toLocaleString();
-        }
-        if (infoRedisMemoryEl) {
-            infoRedisMemoryEl.textContent = l2Cache.memory_used ? formatBytes(l2Cache.memory_used) : '-';
-        }
-        
-        // Update Info Bar L1 cache stats
-        const l1Cache = data.l1_cache || {};
-        if (infoL1HitsEl) {
-            infoL1HitsEl.textContent = (l1Cache.hits ?? 0).toLocaleString();
-        }
-        if (infoL1RateEl) {
-            infoL1RateEl.textContent = (l1Cache.hit_rate ?? 0).toFixed(1) + '%';
-        }
-        if (infoL1TilesEl) {
-            // Estimate tile count from hits + misses that weren't evicted
-            const l1Tiles = (l1Cache.hits ?? 0) + (l1Cache.misses ?? 0) - (l1Cache.evictions ?? 0) - (l1Cache.expired ?? 0);
-            infoL1TilesEl.textContent = Math.max(0, l1Tiles).toLocaleString();
-        }
-        if (infoL1SizeEl) {
-            infoL1SizeEl.textContent = formatBytes(l1Cache.size_bytes ?? 0);
-        }
-        
-        // Update Info Bar L2 cache stats
-        if (infoL2HitsEl) {
-            infoL2HitsEl.textContent = (metrics.cache_hits ?? 0).toLocaleString();
-        }
-        if (infoL2RateEl) {
-            infoL2RateEl.textContent = (metrics.cache_hit_rate ?? 0).toFixed(1) + '%';
-        }
-        if (infoL2TilesEl) {
-            infoL2TilesEl.textContent = (l2Cache.key_count ?? 0).toLocaleString();
-        }
-        if (infoL2SizeEl) {
-            infoL2SizeEl.textContent = l2Cache.memory_used ? formatBytes(l2Cache.memory_used) : '-';
-        }
-        
-        // Update Info Bar chunk cache stats (Zarr)
-        const chunkCache = data.chunk_cache || {};
-        if (infoChunkEntriesEl) {
-            infoChunkEntriesEl.textContent = (chunkCache.entries ?? 0).toLocaleString();
-        }
-        if (infoChunkMemoryEl) {
-            const memoryMb = chunkCache.memory_mb ?? 0;
-            infoChunkMemoryEl.textContent = memoryMb < 1 ? '<1 MB' : memoryMb.toFixed(1) + ' MB';
-        }
-        if (infoChunkHitsEl) {
-            infoChunkHitsEl.textContent = (chunkCache.hits ?? 0).toLocaleString();
-        }
-        if (infoChunkRateEl) {
-            const total = (chunkCache.hits ?? 0) + (chunkCache.misses ?? 0);
-            const rate = total > 0 ? ((chunkCache.hits ?? 0) / total) * 100 : 0;
-            infoChunkRateEl.textContent = rate.toFixed(1) + '%';
-        }
-        
-        // Update per-source stats from data_source_stats
-        const dataSourceStats = metrics.data_source_stats || {};
-        for (const [source, stats] of Object.entries(dataSourceStats)) {
-            // Update per-source stats
-            const sourceEl = document.getElementById(`info-src-${source}`);
-            if (sourceEl) {
-                const rateEl = sourceEl.querySelector('.info-source-rate');
-                const timeEl = sourceEl.querySelector('.info-source-time');
-                
-                if (rateEl) {
-                    const rate = stats.cache_hit_rate || 0;
-                    rateEl.textContent = rate.toFixed(0) + '%';
-                    rateEl.className = 'info-source-rate' + (rate === 0 ? ' none' : rate < 20 ? ' low' : '');
-                }
-                if (timeEl) {
-                    const avgMs = stats.avg_parse_ms || 0;
-                    timeEl.textContent = avgMs < 1 ? '<1ms' : avgMs.toFixed(0) + 'ms';
-                }
-            }
-        }
-        
-        // Update system stats (sidebar)
-        if (metricMemoryEl) {
-            metricMemoryEl.textContent = system.memory_used_bytes ? formatBytes(system.memory_used_bytes) : '--';
-        }
-        if (metricThreadsEl) {
-            metricThreadsEl.textContent = system.num_threads ?? '--';
-        }
-        if (metricUptimeEl) {
-            metricUptimeEl.textContent = metrics.uptime_secs ? formatUptime(metrics.uptime_secs) : '--';
-        }
-        
-        // Update Info Bar system stats - uptime from metrics
-        if (infoSysUptimeEl) {
-            infoSysUptimeEl.textContent = metrics.uptime_secs ? formatUptime(metrics.uptime_secs) : '-';
-        }
-    } catch (error) {
-        console.error('Error fetching backend metrics:', error);
-    }
-}
-
-// Get CSS class based on render speed
-function getSpeedClass(ms) {
-    if (ms < 200) return 'good';
-    if (ms < 1000) return 'warning';
-    return 'bad';
-}
-
-// Format uptime in human-readable format
-function formatUptime(seconds) {
-    if (seconds < 60) return `${seconds}s`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-    const hours = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    return `${hours}h ${mins}m`;
-}
-
-// Fetch container/pod resource stats
-async function fetchContainerStats() {
-    try {
-        const response = await fetch(`${API_BASE}/api/container/stats`);
-        if (!response.ok) return;
-        
-        const data = await response.json();
-        updateContainerStatsUI(data);
-    } catch (error) {
-        console.error('Error fetching container stats:', error);
-    }
-}
-
-// Update container stats UI
-function updateContainerStatsUI(data) {
-    const { container, memory, process, cpu } = data;
-    
-    // Memory stats
-    const memUsedEl = document.getElementById('container-mem-used');
-    const memLimitEl = document.getElementById('container-mem-limit');
-    const memPercentEl = document.getElementById('container-mem-percent');
-    const memBarEl = document.getElementById('container-mem-bar');
-    
-    if (memUsedEl) memUsedEl.textContent = formatBytes(memory.used_bytes);
-    if (memLimitEl) {
-        if (memory.cgroup_limit_bytes > 0) {
-            memLimitEl.textContent = formatBytes(memory.cgroup_limit_bytes);
-        } else {
-            memLimitEl.textContent = formatBytes(memory.host_total_bytes) + ' (host)';
-        }
-    }
-    if (memPercentEl) {
-        memPercentEl.textContent = memory.percent_used.toFixed(1) + '%';
-        // Color code based on usage
-        memPercentEl.className = 'metric-value ' + getMemoryUsageClass(memory.percent_used);
-    }
-    if (memBarEl) {
-        memBarEl.style.width = Math.min(memory.percent_used, 100) + '%';
-        memBarEl.className = 'memory-bar ' + getMemoryUsageClass(memory.percent_used);
-    }
-    
-    // Process stats
-    const procRssEl = document.getElementById('container-proc-rss');
-    const procVmsEl = document.getElementById('container-proc-vms');
-    
-    if (procRssEl) procRssEl.textContent = formatBytes(process.rss_bytes);
-    if (procVmsEl) procVmsEl.textContent = formatBytes(process.vms_bytes);
-    
-    // CPU stats
-    const cpuCountEl = document.getElementById('container-cpu-count');
-    const load1mEl = document.getElementById('container-load-1m');
-    const load5mEl = document.getElementById('container-load-5m');
-    
-    if (cpuCountEl) cpuCountEl.textContent = cpu.count;
-    if (load1mEl) {
-        load1mEl.textContent = cpu.load_1m.toFixed(2);
-        load1mEl.className = 'metric-value ' + getLoadClass(cpu.load_1m, cpu.count);
-    }
-    if (load5mEl) {
-        load5mEl.textContent = cpu.load_5m.toFixed(2);
-        load5mEl.className = 'metric-value ' + getLoadClass(cpu.load_5m, cpu.count);
-    }
-    
-    // Container info
-    const containerTypeEl = document.getElementById('container-type');
-    const hostnameEl = document.getElementById('container-hostname');
-    
-    if (containerTypeEl) {
-        containerTypeEl.textContent = container.in_container ? 'Yes' : 'No (bare metal)';
-    }
-    if (hostnameEl) {
-        hostnameEl.textContent = container.hostname;
-        hostnameEl.title = container.hostname;
-    }
-    
-    // Update Info Bar system stats
-    if (infoSysCpusEl) {
-        infoSysCpusEl.textContent = cpu.count;
-    }
-    if (infoSysLoad1El) {
-        infoSysLoad1El.textContent = cpu.load_1m.toFixed(2);
-    }
-    if (infoSysLoad5El) {
-        infoSysLoad5El.textContent = cpu.load_5m.toFixed(2);
-    }
-    if (infoSysRamUsedEl) {
-        infoSysRamUsedEl.textContent = formatBytes(process.rss_bytes);
-    }
-    if (infoSysRamTotalEl) {
-        infoSysRamTotalEl.textContent = formatBytes(memory.host_total_bytes);
-    }
-    if (infoSysRamPctEl) {
-        infoSysRamPctEl.textContent = memory.percent_used.toFixed(1) + '%';
-    }
-}
-
-// Get CSS class based on memory usage percentage
-function getMemoryUsageClass(percent) {
-    if (percent < 60) return 'good';
-    if (percent < 80) return 'warning';
-    return 'bad';
-}
-
-// Get CSS class based on CPU load relative to core count
-function getLoadClass(load, cores) {
-    const ratio = load / cores;
-    if (ratio < 0.7) return 'good';
-    if (ratio < 1.0) return 'warning';
-    return 'bad';
-}
-
-// ============================================================================
-// Performance Tracking
-// ============================================================================
-
-function trackTileLoadTime(time) {
-    performanceStats.tileTimes.push(time);
-    performanceStats.tilesLoaded++;
-    
-    // Keep only last 100 tiles in memory
-    if (performanceStats.tileTimes.length > 100) {
-        performanceStats.tileTimes.shift();
-    }
-    
-    updatePerformanceDisplay();
-}
-
-function updatePerformanceDisplay() {
-    // Last tile time
-    if (performanceStats.tileTimes.length > 0 && lastTileTimeEl) {
-        const lastTime = performanceStats.tileTimes[performanceStats.tileTimes.length - 1];
-        lastTileTimeEl.textContent = `${lastTime.toFixed(0)}ms`;
-        lastTileTimeEl.parentElement.classList.remove('fast', 'medium', 'slow');
-        if (lastTime < 500) {
-            lastTileTimeEl.parentElement.classList.add('fast');
-        } else if (lastTime < 1500) {
-            lastTileTimeEl.parentElement.classList.add('medium');
-        } else {
-            lastTileTimeEl.parentElement.classList.add('slow');
-        }
-    }
-    
-    // Average time
-    if (performanceStats.tileTimes.length > 0 && avgTileTimeEl) {
-        const avgTime = performanceStats.tileTimes.reduce((a, b) => a + b, 0) / performanceStats.tileTimes.length;
-        avgTileTimeEl.textContent = `${avgTime.toFixed(0)}ms`;
-        avgTileTimeEl.parentElement.classList.remove('fast', 'medium', 'slow');
-        if (avgTime < 500) {
-            avgTileTimeEl.parentElement.classList.add('fast');
-        } else if (avgTime < 1500) {
-            avgTileTimeEl.parentElement.classList.add('medium');
-        } else {
-            avgTileTimeEl.parentElement.classList.add('slow');
-        }
-    }
-    
-    // Slowest time
-    if (performanceStats.tileTimes.length > 0 && slowestTileTimeEl) {
-        const slowestTime = Math.max(...performanceStats.tileTimes);
-        slowestTileTimeEl.textContent = `${slowestTime.toFixed(0)}ms`;
-        slowestTileTimeEl.parentElement.classList.remove('fast', 'medium', 'slow');
-        if (slowestTime < 500) {
-            slowestTileTimeEl.parentElement.classList.add('fast');
-        } else if (slowestTime < 1500) {
-            slowestTileTimeEl.parentElement.classList.add('medium');
-        } else {
-            slowestTileTimeEl.parentElement.classList.add('slow');
-        }
-    }
-    
-    // Tiles loaded
-    if (tilesLoadedCountEl) {
-        tilesLoadedCountEl.textContent = performanceStats.tilesLoaded;
-    }
-    
-    // Current layer
-    if (performanceStats.currentLayer && currentLayerNameEl) {
-        currentLayerNameEl.textContent = performanceStats.currentLayer;
-    }
-}
-
-// Auto-refresh status every 30 seconds
-serviceStatusInterval = setInterval(() => {
-    checkServiceStatus();
-}, 30000);
 
 // ============================================================================
 // GetFeatureInfo - Click-to-Query
@@ -2850,17 +1927,9 @@ function latLngToWebMercator(lat, lng) {
     return { x: x, y: yMerc };
 }
 
-// Helper function to get text content from XML element
-function getElementText(element, tagName) {
-    const el = element.querySelector(tagName);
-    return el ? el.textContent : null;
-}
-
 // ============================================================================
 // Validation Status Functions
 // ============================================================================
-
-let validationInterval = null;
 
 // Fetch and update validation status
 async function checkValidationStatus() {
@@ -2958,25 +2027,6 @@ function updateComplianceBadge(service, serviceData) {
     btn.title = `OGC ${service.toUpperCase()} Compliance: ${passed}/${total} checks passed\nClick to revalidate`;
 }
 
-
-
-// Start auto-refresh for validation status
-function startValidationAutoRefresh() {
-    // Check immediately
-    checkValidationStatus();
-    
-    // Then check every 5 minutes
-    validationInterval = setInterval(checkValidationStatus, 5 * 60 * 1000);
-}
-
-// Stop auto-refresh
-function stopValidationAutoRefresh() {
-    if (validationInterval) {
-        clearInterval(validationInterval);
-        validationInterval = null;
-    }
-}
-
 // Add event listener for compliance badge buttons
 document.addEventListener('DOMContentLoaded', () => {
     const wmsComplianceBtn = document.getElementById('wms-compliance-btn');
@@ -2994,35 +2044,18 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Start auto-refresh
-    startValidationAutoRefresh();
+    // Check now, then every 5 minutes
+    startPoller('validation', checkValidationStatus, 5 * 60 * 1000);
 });
 
 // Clean up on page unload - centralized interval cleanup to prevent memory leaks
 window.addEventListener('beforeunload', () => {
     console.log('Page unloading - cleaning up all resources');
     
-    // Stop playback and validation
-    stopValidationAutoRefresh();
     stopPlayback();
 
-    // Clear all managed intervals using centralized system
-    clearAllIntervals();
-    
-    // Also clear any legacy interval references
-    if (backendMetricsInterval) clearInterval(backendMetricsInterval);
-    if (containerStatsInterval) clearInterval(containerStatsInterval);
-    if (dataStatsInterval) clearInterval(dataStatsInterval);
-    if (wmsLayerCountsInterval) clearInterval(wmsLayerCountsInterval);
-    if (serviceStatusInterval) clearInterval(serviceStatusInterval);
+    stopAllPollers();
     if (clockInterval) clearInterval(clockInterval);
-    if (heatmapPollingInterval) clearInterval(heatmapPollingInterval);
-    if (ingestionStatusInterval) clearInterval(ingestionStatusInterval);
-    if (fadeInterval) clearInterval(fadeInterval);
-    
-    // Clear heatmap data structures
-    tileRequestHeatmap = {};
-    lastServerCounts = {};
     
     // Clear preloaded layers
     clearPreloadedLayers();
@@ -3332,931 +2365,37 @@ function stopObservationTimeRefresh() {
 // Note: stopPlayback() is defined earlier in this file (around line 289)
 // with full implementation including button state updates
 
-// ============================================================================
-// Minimap with Tile Request Heatmap
-// ============================================================================
-
-let minimap = null;
-let minimapViewportRect = null;
-let tileRequestHeatmap = {};  // Map of bbox key -> tile data with timestamp (client-side only for fade mode)
-let totalTileRequests = 0;
-let heatmapLayer = null;
-let fadeEnabled = false;
-let fadeTimeoutSecs = 10;
-let fadeInterval = null;
-let lastServerCounts = {};  // Track last known count per tile to detect new requests
-
-// Memory management constants to prevent unbounded growth
-// REDUCED from 500/1000 to prevent 10GB memory usage over time
-const MAX_HEATMAP_ENTRIES = 200;  // Max entries in tileRequestHeatmap (reduced from 500)
-const MAX_SERVER_COUNTS_ENTRIES = 400;  // Max base keys in lastServerCounts (reduced from 1000)
-const PRUNE_INTERVAL_MS = 10000;  // Prune every 10 seconds (reduced from 30)
-let lastServerCountsPruneTime = 0;  // Track when we last pruned
-
-// Prune lastServerCounts to prevent unbounded memory growth
-function pruneLastServerCounts() {
-    const keys = Object.keys(lastServerCounts);
-    // Count base keys (without _l1, _l2, _miss suffixes)
-    const baseKeys = keys.filter(k => !k.includes('_l1') && !k.includes('_l2') && !k.includes('_miss'));
-
-    if (baseKeys.length > MAX_SERVER_COUNTS_ENTRIES) {
-        // Remove oldest entries (first ones added)
-        const keysToRemove = baseKeys.slice(0, baseKeys.length - MAX_SERVER_COUNTS_ENTRIES);
-        keysToRemove.forEach(key => {
-            delete lastServerCounts[key];
-            delete lastServerCounts[`${key}_l1`];
-            delete lastServerCounts[`${key}_l2`];
-            delete lastServerCounts[`${key}_miss`];
-        });
-        console.debug(`Pruned ${keysToRemove.length} old entries from lastServerCounts`);
-    }
-}
-
-// Prune tileRequestHeatmap to prevent unbounded memory growth
-function pruneHeatmapEntries() {
-    const entries = Object.entries(tileRequestHeatmap);
-    if (entries.length > MAX_HEATMAP_ENTRIES) {
-        // Sort by lastSeen (oldest first) and remove excess
-        entries.sort((a, b) => (a[1].lastSeen || 0) - (b[1].lastSeen || 0));
-        const toRemove = entries.slice(0, entries.length - MAX_HEATMAP_ENTRIES);
-        toRemove.forEach(([key]) => delete tileRequestHeatmap[key]);
-        console.debug(`Pruned ${toRemove.length} old entries from tileRequestHeatmap`);
-    }
-}
-
-// Initialize the minimap
-function initMinimap() {
-    const minimapEl = document.getElementById('minimap');
-    if (!minimapEl) return;
-    
-    // Create minimap with no controls - locked to global view
-    minimap = L.map('minimap', {
-        zoomControl: false,
-        attributionControl: false,
-        dragging: false,
-        touchZoom: false,
-        scrollWheelZoom: false,
-        doubleClickZoom: false,
-        boxZoom: false,
-        keyboard: false,
-        tap: false,
-        minZoom: 1,
-        maxZoom: 1,
-        maxBounds: [[-90, -180], [90, 180]],
-        maxBoundsViscosity: 1.0
-    }).setView([20, 0], 1);  // Global view centered
-    
-    // Add dark base layer
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
-        maxZoom: 18,
-        opacity: 0.6
-    }).addTo(minimap);
-    
-    // Create heatmap canvas layer
-    heatmapLayer = L.layerGroup().addTo(minimap);
-    
-    // Create viewport rectangle showing main map bounds
-    minimapViewportRect = L.rectangle([[0, 0], [0, 0]], {
-        color: '#f59e0b',
-        weight: 2,
-        fillColor: '#f59e0b',
-        fillOpacity: 0.15,
-        interactive: false
-    }).addTo(minimap);
-    
-    // Setup clear button
-    const clearBtn = document.getElementById('minimap-clear-btn');
-    if (clearBtn) {
-        clearBtn.addEventListener('click', clearHeatmap);
-    }
-    
-    // Setup fade controls
-    const fadeCheckbox = document.getElementById('minimap-fade-enabled');
-    const fadeSlider = document.getElementById('minimap-fade-slider');
-    const fadeValueEl = document.getElementById('minimap-fade-value');
-    
-    if (fadeCheckbox) {
-        fadeCheckbox.addEventListener('change', (e) => {
-            fadeEnabled = e.target.checked;
-            if (fadeSlider) fadeSlider.disabled = !fadeEnabled;
-            if (fadeEnabled) {
-                startFadeInterval();
-            } else {
-                stopFadeInterval();
-                // Clear fade-mode timestamped entries to free memory
-                // Non-fade mode will repopulate from server on next fetch
-                tileRequestHeatmap = {};
-            }
-        });
-        // Initialize slider state
-        if (fadeSlider) fadeSlider.disabled = !fadeCheckbox.checked;
-    }
-    
-    if (fadeSlider && fadeValueEl) {
-        fadeSlider.addEventListener('input', (e) => {
-            fadeTimeoutSecs = parseInt(e.target.value, 10);
-            fadeValueEl.textContent = `${fadeTimeoutSecs}s`;
-        });
-    }
-    
-    // Initial sync of viewport rectangle
-    syncMinimapViewport();
-    
-    console.log('Minimap initialized (global view)');
-}
-
-// Start the fade interval timer
-function startFadeInterval() {
-    if (fadeInterval) return;
-    // Update display for fade animation (reduced frequency to lower memory/CPU usage)
-    fadeInterval = setInterval(() => {
-        if (fadeEnabled) {
-            pruneAndUpdateFadingTiles();
-        }
-    }, 500); // Update 2x per second (reduced from 5x to lower memory pressure)
-}
-
-// Stop the fade interval timer
-function stopFadeInterval() {
-    if (fadeInterval) {
-        clearInterval(fadeInterval);
-        fadeInterval = null;
-    }
-}
-
-// Update fading tiles and remove fully faded ones
-function pruneAndUpdateFadingTiles() {
-    const now = Date.now();
-    const cutoff = now - (fadeTimeoutSecs * 1000);
-    
-    // Remove tiles that have completely faded
-    Object.keys(tileRequestHeatmap).forEach(key => {
-        const tile = tileRequestHeatmap[key];
-        if (tile.lastSeen && tile.lastSeen < cutoff) {
-            delete tileRequestHeatmap[key];
-        }
-    });
-    
-    // Redraw with current fade levels
-    updateHeatmapDisplay();
-    updateMinimapStats();
-}
-
-// Sync minimap viewport rectangle with main map bounds (minimap stays fixed at global view)
-function syncMinimapViewport() {
-    if (!minimap || !map || !minimapViewportRect) return;
-    
-    // Update only the viewport rectangle to show where the main map is looking
-    const bounds = map.getBounds();
-    minimapViewportRect.setBounds(bounds);
-    
-    // Minimap stays locked at global view - no zoom/pan changes
-}
-
-// Update the heatmap visualization on the minimap
-function updateHeatmapDisplay() {
-    if (!minimap || !heatmapLayer) return;
-    
-    // Clear existing markers
-    heatmapLayer.clearLayers();
-    
-    const now = Date.now();
-    
-    // Add tile box markers using actual tile bounds from server
-    Object.values(tileRequestHeatmap).forEach(tile => {
-        // Color based on cache status:
-        // - Green: mostly L1 hits (fastest)
-        // - Blue: mostly L2 hits (fast)
-        // - Red/Magenta: mostly misses (slow - had to render)
-        const total = tile.count || 1;
-        const l1Ratio = (tile.l1_hits || 0) / total;
-        const l2Ratio = (tile.l2_hits || 0) / total;
-        const missRatio = (tile.misses || 0) / total;
-        
-        let fillColor, strokeColor;
-        if (l1Ratio >= 0.5) {
-            // Mostly L1 hits - green
-            fillColor = '#22c55e';
-            strokeColor = '#4ade80';
-        } else if (l2Ratio >= 0.5) {
-            // Mostly L2 hits - blue
-            fillColor = '#3b82f6';
-            strokeColor = '#60a5fa';
-        } else if (missRatio >= 0.7) {
-            // Mostly misses - red/magenta
-            fillColor = '#ef4444';
-            strokeColor = '#f87171';
-        } else {
-            // Mixed - orange/yellow
-            fillColor = '#f59e0b';
-            strokeColor = '#fbbf24';
-        }
-        
-        // Use actual tile bounds from server
-        const bounds = [
-            [tile.min_lat, tile.min_lon],
-            [tile.max_lat, tile.max_lon]
-        ];
-        
-        // Calculate fade multiplier based on age (1.0 = fresh, 0.0 = about to disappear)
-        let fadeMult = 1.0;
-        if (fadeEnabled && tile.lastSeen) {
-            const age = now - tile.lastSeen;
-            const maxAge = fadeTimeoutSecs * 1000;
-            fadeMult = Math.max(0, 1.0 - (age / maxAge));
-        }
-        
-        // Base opacity adjusted by fade
-        const baseFillOpacity = 0.15 + (Math.min(tile.count, 20) / 20) * 0.15;  // 0.15 - 0.30
-        const baseStrokeOpacity = 0.4;
-        
-        const fillOpacity = baseFillOpacity * fadeMult;
-        const strokeOpacity = baseStrokeOpacity * fadeMult;
-        
-        // Skip completely faded tiles
-        if (fadeMult <= 0.05) return;
-        
-        const rect = L.rectangle(bounds, {
-            fillColor: fillColor,
-            fillOpacity: fillOpacity,
-            color: strokeColor,
-            weight: 1,
-            opacity: strokeOpacity
-        });
-        
-        // Tooltip with cache breakdown
-        const l1Pct = (l1Ratio * 100).toFixed(0);
-        const l2Pct = (l2Ratio * 100).toFixed(0);
-        const missPct = (missRatio * 100).toFixed(0);
-        rect.bindTooltip(
-            `${tile.count} requests<br>L1: ${l1Pct}% | L2: ${l2Pct}% | Miss: ${missPct}%`,
-            {
-                permanent: false,
-                direction: 'top',
-                className: 'heatmap-tooltip'
-            }
-        );
-        
-        heatmapLayer.addLayer(rect);
-    });
-}
-
-// Update minimap statistics display
-function updateMinimapStats() {
-    const requestCountEl = document.getElementById('minimap-request-count');
-    const hotspotCountEl = document.getElementById('minimap-hotspot-count');
-    
-    if (requestCountEl) {
-        requestCountEl.textContent = totalTileRequests.toLocaleString();
-    }
-    
-    if (hotspotCountEl) {
-        // Count hotspots (locations with >5 requests)
-        const hotspots = Object.values(tileRequestHeatmap).filter(p => p.count > 5).length;
-        hotspotCountEl.textContent = hotspots.toLocaleString();
-    }
-}
-
-// Clear the heatmap data (also clears server-side)
-async function clearHeatmap() {
-    tileRequestHeatmap = {};
-    lastServerCounts = {};
-    totalTileRequests = 0;
-    
-    if (heatmapLayer) {
-        heatmapLayer.clearLayers();
-    }
-    
-    updateMinimapStats();
-    
-    // Also clear server-side heatmap
-    try {
-        await fetch(`${API_BASE}/api/tile-heatmap/clear`, { method: 'POST' });
-        console.log('Heatmap cleared (client + server)');
-    } catch (error) {
-        console.error('Failed to clear server heatmap:', error);
-    }
-}
-
-// Fetch heatmap data from the server API
-async function fetchServerHeatmap() {
-    try {
-        const response = await fetch(`${API_BASE}/api/tile-heatmap`);
-        if (!response.ok) return;
-        
-        const data = await response.json();
-        const now = Date.now();
-        
-        // Track total requests
-        totalTileRequests = data.total_requests || 0;
-        
-        if (data.cells && Array.isArray(data.cells)) {
-            if (fadeEnabled) {
-                // FADE MODE: Only show tiles that have NEW requests since last fetch
-                // Each new request creates a fresh tile that fades out independently
-                data.cells.forEach(cell => {
-                    const key = `${cell.min_lon},${cell.min_lat},${cell.max_lon},${cell.max_lat}`;
-                    const lastCount = lastServerCounts[key] || 0;
-                    const newRequests = cell.count - lastCount;
-                    
-                    if (newRequests > 0) {
-                        // Create a unique key for this "burst" of requests so they fade independently
-                        const burstKey = `${key}_${now}`;
-                        tileRequestHeatmap[burstKey] = {
-                            min_lon: cell.min_lon,
-                            min_lat: cell.min_lat,
-                            max_lon: cell.max_lon,
-                            max_lat: cell.max_lat,
-                            count: newRequests,
-                            l1_hits: Math.max(0, (cell.l1_hits || 0) - (lastServerCounts[`${key}_l1`] || 0)),
-                            l2_hits: Math.max(0, (cell.l2_hits || 0) - (lastServerCounts[`${key}_l2`] || 0)),
-                            misses: Math.max(0, (cell.misses || 0) - (lastServerCounts[`${key}_miss`] || 0)),
-                            lastSeen: now
-                        };
-                    }
-                    
-                    // Update last known counts
-                    lastServerCounts[key] = cell.count;
-                    lastServerCounts[`${key}_l1`] = cell.l1_hits || 0;
-                    lastServerCounts[`${key}_l2`] = cell.l2_hits || 0;
-                    lastServerCounts[`${key}_miss`] = cell.misses || 0;
-                });
-            } else {
-                // NON-FADE MODE: Show cumulative server data as before
-                tileRequestHeatmap = {};
-                data.cells.forEach(cell => {
-                    const key = `${cell.min_lon},${cell.min_lat},${cell.max_lon},${cell.max_lat}`;
-                    tileRequestHeatmap[key] = {
-                        min_lon: cell.min_lon,
-                        min_lat: cell.min_lat,
-                        max_lon: cell.max_lon,
-                        max_lat: cell.max_lat,
-                        count: cell.count,
-                        l1_hits: cell.l1_hits || 0,
-                        l2_hits: cell.l2_hits || 0,
-                        misses: cell.misses || 0,
-                        lastSeen: now
-                    };
-                    
-                    // Also update last known counts for when fade is re-enabled
-                    lastServerCounts[key] = cell.count;
-                    lastServerCounts[`${key}_l1`] = cell.l1_hits || 0;
-                    lastServerCounts[`${key}_l2`] = cell.l2_hits || 0;
-                    lastServerCounts[`${key}_miss`] = cell.misses || 0;
-                });
-            }
-        }
-        
-        // Update display (only if fade is disabled - fade mode updates via interval)
-        if (!fadeEnabled) {
-            updateHeatmapDisplay();
-        }
-        updateMinimapStats();
-
-        // Periodically prune data structures to prevent memory leaks
-        // Reduced from 30s to 10s to be more aggressive about memory cleanup
-        if (now - lastServerCountsPruneTime > PRUNE_INTERVAL_MS) {
-            pruneLastServerCounts();
-            pruneHeatmapEntries();
-            lastServerCountsPruneTime = now;
-        }
-    } catch (error) {
-        // Silently fail - server might not support this endpoint yet
-        console.debug('Heatmap API not available:', error.message);
-    }
-}
-
-// Hook into tile loading to record requests (for local display before server update)
-function setupTileRequestTracking() {
-    // Periodically sync minimap viewport
-    map.on('moveend', syncMinimapViewport);
-    map.on('zoomend', syncMinimapViewport);
-    
-    // Poll server for heatmap updates every 2 seconds
-    heatmapPollingInterval = setInterval(fetchServerHeatmap, 2000);
-    
-    // Initial fetch
-    fetchServerHeatmap();
-}
-
-// Initialize minimap after main map is ready
+// Initialize the data panel (PostgreSQL + MinIO tree) once the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-    // Wait a bit for main map to initialize
-    setTimeout(() => {
-        initMinimap();
-        setupTileRequestTracking();
-    }, 500);
-    
-    // Initialize downloads widget
-    initDownloadsWidget();
-    
-    // Initialize database panel
     initDatabasePanel();
-    
-    // Initialize ingestion widget
-    initIngestionWidget();
 });
-
-// ============================================================================
-// Downloads Widget
-// ============================================================================
-
-let downloadsWidgetInterval = null;
-
-// Initialize the downloads widget
-function initDownloadsWidget() {
-    // Initial fetch
-    fetchDownloadsStatus();
-    
-    // Refresh every 5 seconds
-    downloadsWidgetInterval = setInterval(fetchDownloadsStatus, 5000);
-}
-
-// Fetch downloads status from the downloader service
-async function fetchDownloadsStatus() {
-    try {
-        // Fetch status and downloads in parallel
-        const [statusResponse, downloadsResponse, scheduleResponse] = await Promise.all([
-            fetch(`${DOWNLOADER_URL}/status`).catch((e) => { console.error('Status fetch failed:', e); return null; }),
-            fetch(`${DOWNLOADER_URL}/downloads?limit=5`).catch((e) => { console.error('Downloads fetch failed:', e); return null; }),
-            fetch(`${DOWNLOADER_URL}/schedule`).catch((e) => { console.error('Schedule fetch failed:', e); return null; })
-        ]);
-        
-        // Update service status
-        if (statusResponse && statusResponse.ok) {
-            const status = await statusResponse.json();
-            updateDownloaderServiceStatus(true, status);
-            updateDownloadsStats(status.stats);
-        } else {
-            updateDownloaderServiceStatus(false);
-        }
-        
-        // Update active downloads list
-        if (downloadsResponse && downloadsResponse.ok) {
-            const downloads = await downloadsResponse.json();
-            updateDownloadsList(downloads);
-        }
-        
-        // Update next availability - pass full schedule for better display
-        if (scheduleResponse && scheduleResponse.ok) {
-            const schedule = await scheduleResponse.json();
-            updateNextAvailability(schedule);
-        }
-        
-    } catch (error) {
-        console.error('Error fetching downloads status:', error);
-        updateDownloaderServiceStatus(false);
-    }
-}
-
-// Update downloader service status indicator
-function updateDownloaderServiceStatus(online, status = null) {
-    const dot = document.getElementById('downloader-status-dot');
-    const text = document.getElementById('downloader-status-text');
-    
-    if (dot) {
-        dot.className = 'downloads-status-dot ' + (online ? 'online' : 'offline');
-    }
-    
-    if (text) {
-        if (online && status) {
-            text.textContent = status.status || 'Online';
-        } else {
-            text.textContent = 'Offline';
-        }
-    }
-}
-
-// Update downloads statistics
-function updateDownloadsStats(stats) {
-    if (!stats) return;
-    
-    const pendingEl = document.getElementById('dl-pending');
-    const activeEl = document.getElementById('dl-active');
-    const completedEl = document.getElementById('dl-completed');
-    const failedEl = document.getElementById('dl-failed');
-    const bytesEl = document.getElementById('dl-total-bytes');
-    
-    if (pendingEl) pendingEl.textContent = stats.pending ?? 0;
-    if (activeEl) activeEl.textContent = stats.in_progress ?? 0;
-    if (completedEl) completedEl.textContent = stats.completed ?? 0;
-    if (failedEl) failedEl.textContent = stats.failed ?? 0;
-    if (bytesEl) bytesEl.textContent = formatBytes(stats.total_bytes_downloaded ?? 0);
-}
-
-// Update active downloads list
-function updateDownloadsList(downloads) {
-    const listEl = document.getElementById('downloads-list');
-    if (!listEl) return;
-    
-    // Combine active and pending, prioritize active
-    const active = downloads.active || [];
-    const pending = downloads.pending || [];
-    const items = [...active, ...pending.slice(0, 3 - active.length)];
-    
-    if (items.length === 0) {
-        listEl.innerHTML = '<div class="downloads-empty">No active downloads</div>';
-        return;
-    }
-    
-    listEl.innerHTML = items.map(d => {
-        const progressPercent = d.progress_percent ?? 0;
-        const filename = d.filename || extractFilename(d.url);
-        const model = d.model || extractModel(filename);
-        
-        return `
-            <div class="download-item">
-                <div class="download-item-header">
-                    <span class="download-item-name">${truncateFilename(filename)}</span>
-                    ${model ? `<span class="download-item-model">${model}</span>` : ''}
-                </div>
-                ${d.status === 'in_progress' ? `
-                <div class="download-item-progress">
-                    <div class="download-progress-bar">
-                        <div class="download-progress-fill" style="width: ${progressPercent}%"></div>
-                    </div>
-                    <div class="download-progress-text">
-                        <span>${formatBytes(d.downloaded_bytes ?? 0)}</span>
-                        <span>${progressPercent.toFixed(0)}%</span>
-                    </div>
-                </div>
-                ` : `
-                <div class="download-progress-text">
-                    <span style="color: #60a5fa;">Pending</span>
-                </div>
-                `}
-            </div>
-        `;
-    }).join('');
-}
-
-// Update next data availability section
-function updateNextAvailability(schedule) {
-    const listEl = document.getElementById('downloads-next-list');
-    if (!listEl) return;
-    
-    const models = schedule.models || [];
-    const nextChecks = schedule.next_checks || [];
-    
-    if (models.length === 0) {
-        listEl.innerHTML = '<div class="downloads-empty">No models configured</div>';
-        return;
-    }
-    
-    // Create display items - distinguish observation vs forecast models
-    const displayItems = models
-        .filter(m => m.enabled)
-        .map(m => {
-            const isObservation = !m.cycles || m.cycles.length === 0;
-            
-            if (isObservation) {
-                // Observation model (GOES, MRMS) - calculate next check time
-                const pollSecs = m.poll_interval_secs || 300;
-                const nextCheckInfo = calculateNextCheckTime(pollSecs);
-                return {
-                    model: m.id.toUpperCase(),
-                    info: nextCheckInfo,
-                    isObservation: true
-                };
-            } else {
-                // Forecast model (GFS, HRRR) - find next check info
-                const check = nextChecks.find(c => c.model === m.id);
-                if (check) {
-                    return {
-                        model: m.id.toUpperCase(),
-                        info: `${check.next_cycle} - ${check.expected_available}`,
-                        isObservation: false
-                    };
-                } else {
-                    return {
-                        model: m.id.toUpperCase(),
-                        info: `Cycles: ${m.cycles.map(c => c + 'Z').join(', ')}`,
-                        isObservation: false
-                    };
-                }
-            }
-        });
-    
-    // Show all items (compact widget)
-    listEl.innerHTML = displayItems.map(item => {
-        const timeClass = item.isObservation ? 'downloads-next-continuous' : '';
-        return `
-            <div class="downloads-next-item">
-                <span class="downloads-next-model">${item.model}</span>
-                <span class="downloads-next-time ${timeClass}">${item.info}</span>
-            </div>
-        `;
-    }).join('');
-}
-
-// Calculate next check time based on poll interval
-function calculateNextCheckTime(pollIntervalSecs) {
-    const now = new Date();
-    const currentMinute = now.getMinutes();
-    const currentSecond = now.getSeconds();
-    
-    // Calculate seconds into current interval
-    const pollMins = pollIntervalSecs / 60;
-    const secsIntoInterval = (currentMinute % pollMins) * 60 + currentSecond;
-    const secsUntilNext = pollIntervalSecs - secsIntoInterval;
-    
-    // Calculate next check time
-    const nextCheck = new Date(now.getTime() + secsUntilNext * 1000);
-    
-    // Format time as HH:MM (local time)
-    const timeStr = nextCheck.toLocaleTimeString('en-US', { 
-        hour: 'numeric', 
-        minute: '2-digit',
-        hour12: true 
-    }).toLowerCase();
-    
-    // Format minutes away
-    const minsAway = Math.ceil(secsUntilNext / 60);
-    const minsAwayStr = minsAway <= 1 ? '<1 min' : `${minsAway} min`;
-    
-    return `${timeStr} (${minsAwayStr})`;
-}
-
-// Helper: Extract filename from URL
-function extractFilename(url) {
-    if (!url) return 'Unknown';
-    try {
-        const parts = url.split('/');
-        return parts[parts.length - 1] || 'Unknown';
-    } catch {
-        return 'Unknown';
-    }
-}
-
-// Helper: Extract model from filename
-function extractModel(filename) {
-    if (!filename) return null;
-    const lower = filename.toLowerCase();
-    if (lower.includes('gfs')) return 'GFS';
-    if (lower.includes('hrrr')) return 'HRRR';
-    if (lower.includes('goes')) return 'GOES';
-    if (lower.includes('mrms')) return 'MRMS';
-    return null;
-}
-
-// Helper: Truncate filename for display
-function truncateFilename(filename, maxLen = 40) {
-    if (!filename || filename.length <= maxLen) return filename;
-    // Keep extension visible
-    const ext = filename.split('.').pop();
-    const name = filename.substring(0, filename.length - ext.length - 1);
-    const truncLen = maxLen - ext.length - 4; // 4 for "..." and "."
-    return name.substring(0, truncLen) + '...' + ext;
-}
-
-// Cleanup on page unload
-window.addEventListener('beforeunload', () => {
-    if (downloadsWidgetInterval) {
-        clearInterval(downloadsWidgetInterval);
-    }
-    if (dataPanelInterval) {
-        clearInterval(dataPanelInterval);
-    }
-    if (ingestionWidgetInterval) {
-        clearInterval(ingestionWidgetInterval);
-    }
-});
-
-// ============================================================================
-// Ingestion Pipeline Widget
-// ============================================================================
-
-let ingestionWidgetInterval = null;
-
-// Initialize the ingestion widget
-function initIngestionWidget() {
-    // Initial fetch
-    fetchIngestionStatus();
-    
-    // Refresh every 2 seconds for real-time updates
-    ingestionWidgetInterval = setInterval(fetchIngestionStatus, 2000);
-}
-
-// Toggle ingestion widget expanded/collapsed
-function toggleIngestionWidget() {
-    const widget = document.getElementById('ingestion-widget');
-    if (widget) {
-        widget.classList.toggle('collapsed');
-    }
-}
-
-// Fetch ingestion status from the WMS API
-async function fetchIngestionStatus() {
-    try {
-        const response = await fetch(`${API_BASE}/api/admin/ingestion/active`);
-        
-        if (response.ok) {
-            const data = await response.json();
-            updateIngestionWidget(data);
-        } else {
-            updateIngestionWidgetOffline();
-        }
-    } catch (error) {
-        console.error('Error fetching ingestion status:', error);
-        updateIngestionWidgetOffline();
-    }
-}
-
-// Update the ingestion widget with data
-function updateIngestionWidget(data) {
-    const statusDot = document.getElementById('ingestion-status-dot');
-    const statusText = document.getElementById('ingestion-status-text');
-    const activeCount = document.getElementById('ingestion-active-count');
-    const activeList = document.getElementById('ingestion-active-list');
-    const recentList = document.getElementById('ingestion-recent-list');
-    const recentStats = document.getElementById('ingestion-recent-stats');
-    
-    const isActive = data.active && data.active.length > 0;
-    
-    // Update status indicator
-    if (statusDot) {
-        statusDot.className = 'ingestion-status-dot ' + (isActive ? 'active' : 'idle');
-    }
-    if (statusText) {
-        statusText.textContent = isActive ? 'Processing' : 'Idle';
-    }
-    
-    // Update active count
-    if (activeCount) {
-        activeCount.textContent = data.active ? data.active.length : 0;
-    }
-    
-    // Update active ingestions list
-    if (activeList) {
-        if (data.active && data.active.length > 0) {
-            activeList.innerHTML = data.active.map(item => {
-                const filename = extractFilename(item.file_path);
-                const elapsed = formatElapsedTime(item.started_at);
-                const model = extractModelFromPath(item.file_path) || 'unknown';
-                return `
-                    <div class="ingestion-item">
-                        <div class="ingestion-item-header">
-                            <span class="ingestion-item-model">${model}</span>
-                            <span class="ingestion-item-status">${formatIngestionStatus(item.status)}</span>
-                        </div>
-                        <div class="ingestion-item-file" title="${item.file_path}">${filename}</div>
-                        <div class="ingestion-item-progress">
-                            <span>${elapsed}</span>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        } else {
-            activeList.innerHTML = '<div class="ingestion-empty">No active ingestions</div>';
-        }
-    }
-    
-    // Update recent stats
-    if (recentStats && data.recent) {
-        const successful = data.recent.filter(r => r.success).length;
-        const failed = data.recent.filter(r => !r.success).length;
-        if (data.recent.length > 0) {
-            const avgTime = data.recent.reduce((sum, r) => sum + r.duration_ms, 0) / data.recent.length;
-            recentStats.textContent = `${successful}/${data.recent.length} ok, avg ${formatDuration(avgTime)}`;
-        } else {
-            recentStats.textContent = '--';
-        }
-    }
-    
-    // Update recent ingestions list
-    if (recentList) {
-        if (data.recent && data.recent.length > 0) {
-            recentList.innerHTML = data.recent.slice(0, 5).map(item => {
-                const timeClass = item.success ? '' : ' failed';
-                // Extract model name from file_path (e.g., "hrrr/..." -> "hrrr")
-                const model = extractModelFromPath(item.file_path) || 'unknown';
-                // Use datasets_registered (API field) or parameters count
-                const count = item.datasets_registered ?? item.parameters?.length ?? 0;
-                return `
-                    <div class="ingestion-recent-item">
-                        <span class="ingestion-recent-model">${model}</span>
-                        <span class="ingestion-recent-params">${count} datasets</span>
-                        <span class="ingestion-recent-time${timeClass}">${formatDuration(item.duration_ms)}</span>
-                    </div>
-                `;
-            }).join('');
-        } else {
-            recentList.innerHTML = '<div class="ingestion-empty">No recent ingestions</div>';
-        }
-    }
-}
-
-// Update widget when API is offline
-function updateIngestionWidgetOffline() {
-    const statusDot = document.getElementById('ingestion-status-dot');
-    const statusText = document.getElementById('ingestion-status-text');
-    
-    if (statusDot) {
-        statusDot.className = 'ingestion-status-dot';
-    }
-    if (statusText) {
-        statusText.textContent = 'Offline';
-    }
-}
-
-// Format ingestion status for display
-function formatIngestionStatus(status) {
-    const statusMap = {
-        'parsing': 'Parsing',
-        'parsing_netcdf': 'Parsing NC',
-        'shredding': 'Shredding',
-        'storing': 'Storing',
-        'registering': 'Registering'
-    };
-    return statusMap[status] || status;
-}
-
-// Format elapsed time since start
-function formatElapsedTime(startedAt) {
-    try {
-        const start = new Date(startedAt);
-        const now = new Date();
-        const ms = now - start;
-        return formatDuration(ms);
-    } catch {
-        return '--';
-    }
-}
-
-// Format duration in ms to human readable
-function formatDuration(ms) {
-    if (ms < 1000) return `${Math.round(ms)}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    const mins = Math.floor(ms / 60000);
-    const secs = Math.round((ms % 60000) / 1000);
-    return `${mins}m ${secs}s`;
-}
-
-// Extract filename from path
-function extractFilename(path) {
-    if (!path) return 'unknown';
-    return path.split('/').pop() || path;
-}
-
-// Extract model name from ingestion file path
-// e.g., "grids/hrrr/2024/..." -> "hrrr"
-// e.g., "/data/hrrr.t00z.grib2" -> "hrrr"
-// e.g., "/data/downloads/goes18_OR_ABI-..." -> "goes18"
-// e.g., "/data/downloads/mrms_MRMS_..." -> "mrms"
-// e.g., "/data/downloads/hrrr_20251229_17z_f006.grib2" -> "hrrr"
-function extractModelFromPath(path) {
-    if (!path) return null;
-    
-    // Try to extract from grids/model/ pattern
-    const gridsMatch = path.match(/grids\/([^/]+)\//);
-    if (gridsMatch) return gridsMatch[1].toUpperCase();
-    
-    // Extract filename from path
-    const filename = path.split('/').pop() || '';
-    
-    // Try to match download filename pattern: {model}_{...}
-    // e.g., "goes18_OR_ABI...", "mrms_MRMS_...", "hrrr_20251229_..."
-    const downloadMatch = filename.match(/^(goes16|goes18|mrms|hrrr|gfs)_/i);
-    if (downloadMatch) return downloadMatch[1].toUpperCase();
-    
-    // Try to extract model name from grib2 filename pattern (e.g., hrrr.t00z.grib2)
-    const gribMatch = filename.match(/^([a-zA-Z]+)\./);
-    if (gribMatch) return gribMatch[1].toUpperCase();
-    
-    // Try to extract from common path patterns
-    const pathParts = path.split('/');
-    for (const part of pathParts) {
-        const lower = part.toLowerCase();
-        if (['hrrr', 'gfs', 'mrms', 'goes16', 'goes18'].includes(lower)) {
-            return part.toUpperCase();
-        }
-    }
-    
-    return null;
-}
 
 // ============================================================================
 // Data Panel Widget (PostgreSQL + MinIO Tree View)
 // ============================================================================
 
-let dataPanelInterval = null;
 let dbTreeData = null;  // Cached PostgreSQL data
 let minioTreeData = null;  // Cached MinIO data
+let minioFetchedAt = 0;  // When the MinIO tree was last loaded (0 = never)
 let expandedNodes = new Set();  // Track expanded nodes across refreshes
+
+// The MinIO tree and the sync check both walk the whole bucket server-side and can take over
+// a minute, so the tree loads only once its section is opened and the sync check runs rarely.
+const DATABASE_REFRESH_MS = 15 * 1000;
+const MINIO_REFRESH_MS = 60 * 1000;
+const SYNC_CHECK_MS = 5 * 60 * 1000;
 
 // Initialize the data panel
 function initDataPanel() {
-    // Initial fetch for both panels
-    fetchDatabaseTree();
-    fetchMinioTree();
-    checkSyncStatus();
-    
-    // Refresh every 15 seconds
-    dataPanelInterval = setInterval(() => {
-        fetchDatabaseTree();
-        fetchMinioTree();
-        checkSyncStatus();
-    }, 15000);
+    startPoller('databaseTree', fetchDatabaseTree, DATABASE_REFRESH_MS);
+    startPoller('syncStatus', checkSyncStatus, SYNC_CHECK_MS);
+}
+
+// Refresh everything the panel shows (after a sync run)
+function refreshDataPanel() {
+    runOnce('databaseTree', fetchDatabaseTree);
+    runOnce('syncStatus', checkSyncStatus);
+    if (minioFetchedAt) runOnce('minioTree', fetchMinioTree);
 }
 
 // Alias for backward compatibility
@@ -4267,8 +2406,15 @@ function initDatabasePanel() {
 // Toggle section collapse
 function toggleDataSection(sectionId) {
     const section = document.getElementById(sectionId);
-    if (section) {
-        section.classList.toggle('collapsed');
+    if (!section) return;
+    section.classList.toggle('collapsed');
+
+    if (sectionId === 'minio-section') {
+        if (section.classList.contains('collapsed')) {
+            stopPoller('minioTree');
+        } else {
+            startPoller('minioTree', fetchMinioTree, MINIO_REFRESH_MS, Date.now() - minioFetchedAt >= MINIO_REFRESH_MS);
+        }
     }
 }
 
@@ -4296,10 +2442,7 @@ async function fetchDatabaseTree() {
 
 function updateDbSummary(data) {
     const countEl = document.getElementById('db-total-datasets');
-    const sizeEl = document.getElementById('db-total-size');
-    
     if (countEl) countEl.textContent = (data.total_datasets || 0).toLocaleString();
-    if (sizeEl) sizeEl.textContent = formatBytes(data.total_size_bytes || 0);
 }
 
 function renderDatabaseTree(data) {
@@ -4446,6 +2589,7 @@ async function fetchMinioTree() {
         
         const data = await response.json();
         minioTreeData = data;
+        minioFetchedAt = Date.now();
         renderMinioTree(data);
         updateMinioSummary(data);
     } catch (error) {
@@ -4734,9 +2878,7 @@ async function confirmSync() {
         // Refresh data panels after a short delay
         setTimeout(() => {
             closeSyncModal();
-            checkSyncStatus();
-            fetchDatabaseTree();
-            fetchMinioTree();
+            refreshDataPanel();
         }, 2000);
         
     } catch (error) {
@@ -4771,11 +2913,7 @@ async function runSyncNow() {
         }
         
         // Refresh everything
-        setTimeout(() => {
-            checkSyncStatus();
-            fetchDatabaseTree();
-            fetchMinioTree();
-        }, 1500);
+        setTimeout(refreshDataPanel, 1500);
         
     } catch (error) {
         console.error('Error running sync:', error);
@@ -4856,482 +2994,3 @@ document.addEventListener('DOMContentLoaded', () => {
     updateClocks();
     clockInterval = setInterval(updateClocks, 1000); // Update every second
 });
-
-// ============================================================================
-// Model Configuration Widget
-// ============================================================================
-
-let configWidgetInterval = null;
-let configData = null;
-
-// Initialize configuration widget
-function initConfigWidget() {
-    fetchConfigData();
-    // Refresh every 5 minutes (config doesn't change often)
-    configWidgetInterval = setInterval(fetchConfigData, 300000);
-}
-
-// Toggle config widget expanded/collapsed
-function toggleConfigWidget() {
-    const widget = document.getElementById('config-widget');
-    if (widget) {
-        widget.classList.toggle('collapsed');
-        // When not collapsed, add expanded class to fill remaining space
-        if (widget.classList.contains('collapsed')) {
-            widget.classList.remove('expanded');
-        } else {
-            widget.classList.add('expanded');
-        }
-    }
-}
-
-// Fetch configuration data
-async function fetchConfigData() {
-    try {
-        const response = await fetch(`${API_BASE}/api/admin/config/full`);
-        if (!response.ok) {
-            console.error('Failed to fetch config:', response.status);
-            return;
-        }
-        
-        configData = await response.json();
-        renderConfigWidget(configData);
-    } catch (error) {
-        console.error('Error fetching config:', error);
-    }
-}
-
-// Render the configuration widget
-function renderConfigWidget(data) {
-    const modelCountEl = document.getElementById('config-model-count');
-    const styleCountEl = document.getElementById('config-style-count');
-    const modelsListEl = document.getElementById('config-models-list');
-    const stylesListEl = document.getElementById('config-styles-list');
-    
-    // Update counts in header
-    if (modelCountEl) {
-        const enabledCount = data.models.filter(m => m.enabled).length;
-        modelCountEl.textContent = `${enabledCount} models`;
-        modelCountEl.title = `${enabledCount} enabled models`;
-    }
-    
-    if (styleCountEl) {
-        const totalStyles = data.styles.reduce((sum, s) => sum + s.style_count, 0);
-        styleCountEl.textContent = `${totalStyles} styles`;
-        styleCountEl.title = `${totalStyles} rendering styles across ${data.styles.length} files`;
-    }
-    
-    // Render models
-    if (modelsListEl) {
-        modelsListEl.innerHTML = data.models.map(model => renderModelCard(model)).join('');
-    }
-    
-    // Render styles
-    if (stylesListEl) {
-        stylesListEl.innerHTML = data.styles.map(style => renderStyleCard(style)).join('');
-    }
-}
-
-// Render a model card
-function renderModelCard(model) {
-    const scheduleInfo = model.schedule_type === 'observation' 
-        ? 'Observation' 
-        : `${model.cycles.length} cycles/day`;
-    
-    const forecastInfo = model.forecast_hours 
-        ? `F${model.forecast_hours.start}-${model.forecast_hours.end}h` 
-        : '';
-    
-    const badges = [];
-    if (model.enabled) {
-        badges.push('<span class="config-badge enabled">ON</span>');
-    } else {
-        badges.push('<span class="config-badge disabled">OFF</span>');
-    }
-    if (model.precaching_enabled) {
-        badges.push('<span class="config-badge precache">PRE</span>');
-    }
-    
-    // Create parameter tags (show first 5, then "+X more")
-    const paramTags = model.parameters.slice(0, 5).map(p => 
-        `<span class="config-param-tag" title="${p.description} (${p.units})">${p.name}</span>`
-    ).join('');
-    const moreParams = model.parameters.length > 5 
-        ? `<span class="config-param-tag">+${model.parameters.length - 5}</span>` 
-        : '';
-    
-    return `
-        <div class="config-model-card" onclick="toggleModelCard(this)">
-            <div class="config-model-header">
-                <div class="config-model-info">
-                    <div class="config-model-name">
-                        ${model.name.split(' - ')[0]}
-                        <span class="config-model-id">${model.id}</span>
-                    </div>
-                    <div class="config-model-desc">${model.description || model.name}</div>
-                </div>
-                <div class="config-model-badges">
-                    ${badges.join('')}
-                </div>
-            </div>
-            <div class="config-model-details">
-                <div class="config-detail-row">
-                    <span class="config-detail-label">Source</span>
-                    <span class="config-detail-value">${model.source_type} / ${model.source_bucket || '-'}</span>
-                </div>
-                <div class="config-detail-row">
-                    <span class="config-detail-label">Grid</span>
-                    <span class="config-detail-value">${model.projection} @ ${model.resolution || '-'}</span>
-                </div>
-                <div class="config-detail-row">
-                    <span class="config-detail-label">Schedule</span>
-                    <span class="config-detail-value">${scheduleInfo} ${forecastInfo}</span>
-                </div>
-                <div class="config-detail-row">
-                    <span class="config-detail-label">Retention</span>
-                    <span class="config-detail-value">${model.retention_hours}h</span>
-                </div>
-                <div class="config-detail-row">
-                    <span class="config-detail-label">Parameters</span>
-                    <span class="config-detail-value">${model.parameter_count}</span>
-                </div>
-                <div class="config-params-list">
-                    ${paramTags}${moreParams}
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-// Render a style card
-function renderStyleCard(style) {
-    const variantsHtml = style.styles.map(s => {
-        const range = s.range_min !== null && s.range_max !== null 
-            ? `${s.range_min} - ${s.range_max} ${s.units}` 
-            : s.units || '-';
-        return `
-            <div class="config-style-variant">
-                <span class="config-style-variant-name">${s.id}</span>
-                <span class="config-style-variant-meta">
-                    <span>${s.style_type}</span>
-                    <span>${s.stop_count} stops</span>
-                </span>
-            </div>
-        `;
-    }).join('');
-    
-    return `
-        <div class="config-style-card" onclick="toggleStyleCard(this)">
-            <div class="config-style-header">
-                <span class="config-style-name">${style.name}</span>
-                <span class="config-style-count">${style.style_count}</span>
-            </div>
-            <div class="config-style-details">
-                <div class="config-style-desc">${style.description}</div>
-                <div class="config-style-variants">
-                    ${variantsHtml}
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-// Toggle model card expanded/collapsed
-function toggleModelCard(card) {
-    card.classList.toggle('expanded');
-}
-
-// Toggle style card expanded/collapsed
-function toggleStyleCard(card) {
-    card.classList.toggle('expanded');
-}
-
-// ============================================================================
-// Performance & Cache Widget
-// ============================================================================
-
-let perfWidgetInterval = null;
-
-// Initialize performance widget
-function initPerfWidget() {
-    fetchPerfData();
-    // Refresh every 10 seconds
-    perfWidgetInterval = setInterval(fetchPerfData, 10000);
-}
-
-// Toggle performance widget expanded/collapsed
-function togglePerfWidget() {
-    const widget = document.getElementById('perf-widget');
-    if (widget) {
-        widget.classList.toggle('collapsed');
-        if (widget.classList.contains('collapsed')) {
-            widget.classList.remove('expanded');
-        } else {
-            widget.classList.add('expanded');
-        }
-    }
-}
-
-// Fetch performance and cache data
-async function fetchPerfData() {
-    try {
-        // Fetch metrics, model config, and optimization config in parallel
-        const [metricsRes, modelsRes, optConfigRes] = await Promise.all([
-            fetch(`${API_BASE}/api/metrics`),
-            fetch(`${API_BASE}/api/admin/config/full`),
-            fetch(`${API_BASE}/api/config`)
-        ]);
-        
-        if (!metricsRes.ok || !modelsRes.ok || !optConfigRes.ok) {
-            console.error('Failed to fetch perf data');
-            return;
-        }
-        
-        const metrics = await metricsRes.json();
-        const modelsConfig = await modelsRes.json();
-        const optConfig = await optConfigRes.json();
-        
-        renderPerfWidget(metrics, modelsConfig, optConfig);
-    } catch (error) {
-        console.error('Error fetching perf data:', error);
-    }
-}
-
-// Render the performance widget
-function renderPerfWidget(metrics, modelsConfig, optConfig) {
-    // Get memory pressure config
-    const memPressure = optConfig?.optimizations?.memory_pressure || {};
-    const memLimitMB = memPressure.limit_mb || 4000;
-    const memThreshold = memPressure.threshold || 0.80;
-    const memTarget = memPressure.target || 0.60;
-    
-    // Update header memory usage (using chunk cache now)
-    const memUsageEl = document.getElementById('perf-memory-usage');
-    if (memUsageEl && metrics.chunk_cache) {
-        const memMB = metrics.chunk_cache.memory_mb || 0;
-        memUsageEl.textContent = formatMemory(memMB * 1024 * 1024);
-        
-        // Color based on usage relative to threshold
-        const thresholdMB = memLimitMB * memThreshold;
-        const targetMB = memLimitMB * memTarget;
-        if (memMB > thresholdMB) {
-            memUsageEl.style.background = '#ef4444'; // Red - above threshold
-        } else if (memMB > targetMB) {
-            memUsageEl.style.background = '#f59e0b'; // Yellow - between target and threshold
-        } else {
-            memUsageEl.style.background = '#10b981'; // Green - below target
-        }
-    }
-    
-    // Memory Pressure Stats (using chunk cache now)
-    const chunkMemMB = metrics.chunk_cache?.memory_mb || 0;
-    const usageRatio = chunkMemMB / memLimitMB;
-    
-    const pressureEl = document.getElementById('perf-mem-pressure');
-    if (pressureEl) {
-        if (usageRatio > memThreshold) {
-            pressureEl.textContent = 'HIGH';
-            pressureEl.className = 'perf-value perf-status critical';
-        } else if (usageRatio > memTarget) {
-            pressureEl.textContent = 'MODERATE';
-            pressureEl.className = 'perf-value perf-status warning';
-        } else {
-            pressureEl.textContent = 'LOW';
-            pressureEl.className = 'perf-value perf-status';
-        }
-    }
-    updateElement('perf-mem-threshold', `${Math.round(memThreshold * 100)}%`);
-    updateElement('perf-mem-target', `${Math.round(memTarget * 100)}%`);
-    
-    // Feature Flags
-    const opts = optConfig?.optimizations || {};
-    updateFeatureFlag('perf-flag-l1', opts.l1_cache?.enabled !== false);
-    updateFeatureFlag('perf-flag-l2', opts.l2_cache?.enabled !== false);
-    updateFeatureFlag('perf-flag-chunk', opts.chunk_cache?.enabled !== false);
-    updateFeatureFlag('perf-flag-prefetch', opts.prefetch?.enabled !== false);
-    updateFeatureFlag('perf-flag-warming', modelsConfig.models?.some(m => m.precaching_enabled));
-    
-    // Model Precaching List
-    renderPrecacheList(modelsConfig.models || []);
-}
-
-// Update feature flag styling
-function updateFeatureFlag(id, enabled) {
-    const el = document.getElementById(id);
-    if (el) {
-        if (enabled) {
-            el.classList.add('enabled');
-        } else {
-            el.classList.remove('enabled');
-        }
-    }
-}
-
-// Helper to update element text
-function updateElement(id, text) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = text;
-}
-
-// Render model precaching list
-function renderPrecacheList(models) {
-    const listEl = document.getElementById('perf-precache-list');
-    if (!listEl) return;
-    
-    const html = models.map(model => {
-        const enabled = model.precaching_enabled || false;
-        const keepRecent = model.precache_keep_recent || 0;
-        const warmOnIngest = model.precache_warm_on_ingest || false;
-        const params = model.precache_parameters || [];
-        const paramsText = params.length > 0 ? params.join(', ') : 'all';
-        
-        return `
-            <div class="perf-precache-item">
-                <div class="perf-precache-model">
-                    <span class="perf-precache-name">${model.id.toUpperCase()}</span>
-                    <span class="perf-precache-status ${enabled ? 'enabled' : 'disabled'}">
-                        ${enabled ? 'ON' : 'OFF'}
-                    </span>
-                </div>
-                <div class="perf-precache-config">
-                    <span class="perf-precache-detail">Keep: <span>${keepRecent}</span></span>
-                    <span class="perf-precache-detail">Warm: <span>${warmOnIngest ? 'Yes' : 'No'}</span></span>
-                    <span class="perf-precache-params" title="${paramsText}">${paramsText}</span>
-                </div>
-            </div>
-        `;
-    }).join('');
-    
-    listEl.innerHTML = html || '<div class="perf-loading">No models configured</div>';
-}
-
-// Format memory size
-function formatMemory(bytes) {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-// Initialize on DOM ready (add to existing init)
-document.addEventListener('DOMContentLoaded', () => {
-    initConfigWidget();
-    initPerfWidget();
-    initGridProcessorWidget();
-});
-
-// Cleanup on page unload
-window.addEventListener('beforeunload', () => {
-    if (configWidgetInterval) {
-        clearInterval(configWidgetInterval);
-    }
-    if (perfWidgetInterval) {
-        clearInterval(perfWidgetInterval);
-    }
-    if (gridProcessorWidgetInterval) {
-        clearInterval(gridProcessorWidgetInterval);
-    }
-});
-
-// ============================================================================
-// Grid Processor Widget (Zarr/Chunk Cache)
-// ============================================================================
-
-let gridProcessorWidgetInterval = null;
-
-// Initialize grid processor widget
-function initGridProcessorWidget() {
-    fetchGridProcessorData();
-    // Refresh every 5 seconds
-    gridProcessorWidgetInterval = setInterval(fetchGridProcessorData, 5000);
-}
-
-// Toggle grid processor widget expanded/collapsed
-function toggleGridProcessorWidget() {
-    const widget = document.getElementById('grid-processor-widget');
-    if (widget) {
-        widget.classList.toggle('collapsed');
-        if (widget.classList.contains('collapsed')) {
-            widget.classList.remove('expanded');
-        } else {
-            widget.classList.add('expanded');
-        }
-    }
-}
-
-// Fetch grid processor data from API
-async function fetchGridProcessorData() {
-    try {
-        const response = await fetch(`${API_BASE}/api/grid-processor/stats`);
-        if (!response.ok) {
-            console.error('Failed to fetch grid processor stats:', response.status);
-            return;
-        }
-        const data = await response.json();
-        renderGridProcessorWidget(data);
-    } catch (error) {
-        console.error('Error fetching grid processor data:', error);
-    }
-}
-
-// Render the grid processor widget
-function renderGridProcessorWidget(data) {
-    const chunk = data.chunk_cache || {};
-    const zarr = data.zarr || {};
-    
-    // Update summary in header
-    const summaryEl = document.getElementById('grid-proc-summary');
-    if (summaryEl) {
-        const memMB = chunk.memory_mb || 0;
-        const hitRate = chunk.hit_rate_percent || 0;
-        summaryEl.textContent = `${memMB.toFixed(1)} MB / ${hitRate.toFixed(0)}%`;
-        
-        // Color based on hit rate
-        if (hitRate >= 80) {
-            summaryEl.style.background = '#10b981'; // Green - great hit rate
-        } else if (hitRate >= 50) {
-            summaryEl.style.background = '#f59e0b'; // Yellow - moderate hit rate
-        } else if (chunk.total_requests > 0) {
-            summaryEl.style.background = '#ef4444'; // Red - poor hit rate
-        } else {
-            summaryEl.style.background = '#6b7280'; // Gray - no data yet
-        }
-    }
-    
-    // Chunk Cache Stats
-    updateElement('grid-proc-memory', formatMemory(chunk.memory_bytes || 0));
-    updateElement('grid-proc-entries', `${chunk.entries || 0}`);
-    updateElement('grid-proc-max-size', `${chunk.configured_size_mb || 0} MB`);
-    updateElement('grid-proc-hitrate', `${(chunk.hit_rate_percent || 0).toFixed(1)}%`);
-    
-    // Request Stats
-    updateElement('grid-proc-hits', formatNumber(chunk.hits || 0));
-    updateElement('grid-proc-misses', formatNumber(chunk.misses || 0));
-    updateElement('grid-proc-evictions', formatNumber(chunk.evictions || 0));
-    updateElement('grid-proc-total', formatNumber(chunk.total_requests || 0));
-    
-    // Color hits based on value
-    const hitsEl = document.getElementById('grid-proc-hits');
-    if (hitsEl) {
-        if ((chunk.hits || 0) > 0) {
-            hitsEl.classList.add('perf-value-good');
-        } else {
-            hitsEl.classList.remove('perf-value-good');
-        }
-    }
-    
-    // Feature Flags
-    updateFeatureFlag('grid-proc-flag-enabled', chunk.enabled !== false);
-    updateFeatureFlag('grid-proc-flag-zarr', zarr.supported !== false);
-    updateFeatureFlag('grid-proc-flag-storage', zarr.storage_backend === 'minio');
-}
-
-// Format large numbers with commas
-function formatNumber(num) {
-    if (num >= 1000000) {
-        return (num / 1000000).toFixed(1) + 'M';
-    } else if (num >= 1000) {
-        return (num / 1000).toFixed(1) + 'K';
-    }
-    return num.toString();
-}

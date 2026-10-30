@@ -71,6 +71,28 @@
                                 <span class="compliance-text">Coverage</span>
                             </a>
                         </div>
+                        <div class="status-item">
+                            <span class="status-label">Downloader:</span>
+                            <a href="downloads.html"
+                               class="status-badge-link"
+                               title="Downloader health check. Click to open the Downloads dashboard">
+                                <div class="status-badge" id="downloader-status">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Checking...</span>
+                                </div>
+                            </a>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Ingester:</span>
+                            <a href="admin.html"
+                               class="status-badge-link"
+                               title="Ingester reachability, checked through wms-api. Click to open the Admin dashboard">
+                                <div class="status-badge" id="ingester-status">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Checking...</span>
+                                </div>
+                            </a>
+                        </div>
                     </div>
                     <div class="external-links">
                         <a href="admin.html" class="external-link" title="Open Admin Dashboard">
@@ -93,13 +115,17 @@
                             <span class="link-icon">🗺️</span>
                             <span class="link-text">Tile Viz</span>
                         </a>
-                        <a href="/grafana/d/wms-perf/wms-performance?orgId=1&from=now-5m&to=now" target="_blank" class="external-link grafana-link" data-local="http://localhost:3000/d/wms-perf/wms-performance?orgId=1&from=now-5m&to=now" title="Open Grafana Performance Dashboard">
+                        <a href="/grafana/dashboards?tag=folkweather" target="_blank" class="external-link grafana-link" data-local="http://localhost:3000/dashboards" title="Open the FolkWeather Grafana dashboards">
                             <span class="link-icon">📊</span>
                             <span class="link-text">Grafana</span>
                         </a>
-                        <a href="/grafana/d/wms-system-stats/wms-system-stats?orgId=1&from=now-1h&to=now" target="_blank" class="external-link grafana-link" data-local="http://localhost:3000/d/wms-system-stats/wms-system-stats?orgId=1&from=now-1h&to=now" title="Open System Stats Dashboard (CPU, Memory, Leak Detection)">
+                        <a href="/grafana/d/wms-system-stats" target="_blank" class="external-link grafana-link" data-local="http://localhost:3000/d/wms-system-stats" title="Open the System dashboard (nodes, pods, CPU, memory, disk)">
                             <span class="link-icon">🖥️</span>
                             <span class="link-text">System</span>
+                        </a>
+                        <a href="/grafana/d/data-pipeline" target="_blank" class="external-link grafana-link prod-only-link" title="Open the Data Pipeline dashboard (downloads, ingestion, storage)">
+                            <span class="link-icon">📦</span>
+                            <span class="link-text">Data</span>
                         </a>
                         <a href="#" target="_blank" class="external-link local-only-link" data-local="http://localhost:9090" title="Open Prometheus (local dev only)">
                             <span class="link-icon">📈</span>
@@ -113,290 +139,6 @@
                 </div>
             </div>
         </header>
-
-        <div class="info-bar">
-            <div class="info-bar-content">
-                <!-- System Stats -->
-                <div class="info-bar-group">
-                    <span class="info-bar-title" title="System resource usage for the WMS API container/process.">System</span>
-                    <div class="info-bar-stats">
-                        <div class="info-stat" title="Number of CPU cores available to the container.">
-                            <span class="info-stat-label">CPUs</span>
-                            <span class="info-stat-value" id="info-sys-cpus">-</span>
-                        </div>
-                        <div class="info-stat" title="System load average over the last 1 minute. Values above CPU count indicate saturation.">
-                            <span class="info-stat-label">Load 1m</span>
-                            <span class="info-stat-value" id="info-sys-load1">-</span>
-                        </div>
-                        <div class="info-stat" title="System load average over the last 5 minutes.">
-                            <span class="info-stat-label">Load 5m</span>
-                            <span class="info-stat-value" id="info-sys-load5">-</span>
-                        </div>
-                    </div>
-                    <div class="info-bar-separator"></div>
-                    <div class="info-bar-stats">
-                        <div class="info-stat" title="Current memory usage of the WMS API process (RSS - Resident Set Size).">
-                            <span class="info-stat-label">RAM Used</span>
-                            <span class="info-stat-value" id="info-sys-ram-used">-</span>
-                        </div>
-                        <div class="info-stat" title="Total system memory available.">
-                            <span class="info-stat-label">RAM Total</span>
-                            <span class="info-stat-value" id="info-sys-ram-total">-</span>
-                        </div>
-                        <div class="info-stat" title="Percentage of system memory in use.">
-                            <span class="info-stat-label">RAM %</span>
-                            <span class="info-stat-value" id="info-sys-ram-pct">-</span>
-                        </div>
-                    </div>
-                    <div class="info-bar-separator"></div>
-                    <div class="info-bar-stats">
-                        <div class="info-stat" title="How long the WMS API service has been running.">
-                            <span class="info-stat-label">Uptime</span>
-                            <span class="info-stat-value" id="info-sys-uptime">-</span>
-                        </div>
-                    </div>
-                    <div class="info-bar-separator"></div>
-                    <!-- Data Stats -->
-                    <div class="info-bar-group">
-                        <span class="info-bar-title" title="Weather data storage and ingestion statistics.">Data</span>
-                        <div class="info-bar-stats">
-                            <div class="info-stat" title="Number of weather data files stored in MinIO object storage.">
-                                <span class="info-stat-label">Files</span>
-                                <span class="info-stat-value" id="info-data-files">-</span>
-                            </div>
-                            <div class="info-stat" title="Total size of weather data stored in MinIO.">
-                                <span class="info-stat-label">Size</span>
-                                <span class="info-stat-value" id="info-data-size">-</span>
-                            </div>
-                            <div class="info-stat" title="Number of ingested datasets (unique model/run/parameter combinations).">
-                                <span class="info-stat-label">Datasets</span>
-                                <span class="info-stat-value" id="info-data-datasets">-</span>
-                            </div>
-                            <div class="info-stat" title="Number of unique weather parameters available.">
-                                <span class="info-stat-label">Params</span>
-                                <span class="info-stat-value" id="info-data-params">-</span>
-                            </div>
-                        </div>
-                        <div class="info-bar-separator"></div>
-                        <!-- Per-model stats -->
-                        <div class="info-bar-group" id="info-models-stats">
-                        <span class="info-model-item" id="info-model-gfs" title="GFS (Global Forecast System)&#10;Global model, 0.25° resolution&#10;Shows: status | files | parameters">
-                            <span class="info-model-name">GFS</span>
-                            <span class="info-model-status">-</span>
-                            <span class="info-model-files">-</span>
-                            <span class="info-model-params">-</span>
-                        </span>
-                            <span class="info-model-item" id="info-model-hrrr" title="HRRR (High-Resolution Rapid Refresh)&#10;CONUS model, 3km resolution&#10;Shows: status | files | parameters">
-                            <span class="info-model-name">HRRR</span>
-                            <span class="info-model-status">-</span>
-                            <span class="info-model-files">-</span>
-                            <span class="info-model-params">-</span>
-                        </span>
-                            <span class="info-model-item" id="info-model-goes" title="GOES (Geostationary Satellite)&#10;GOES-16/18 imagery, real-time&#10;Shows: status | files | parameters">
-                            <span class="info-model-name">GOES</span>
-                            <span class="info-model-status">-</span>
-                            <span class="info-model-files">-</span>
-                            <span class="info-model-params">-</span>
-                        </span>
-                            <span class="info-model-item" id="info-model-mrms" title="MRMS (Multi-Radar Multi-Sensor)&#10;Radar composite, 1km resolution&#10;Shows: status | files | parameters">
-                            <span class="info-model-name">MRMS</span>
-                            <span class="info-model-status">-</span>
-                            <span class="info-model-files">-</span>
-                            <span class="info-model-params">-</span>
-                        </span>
-                        </div>
-                        <div class="info-bar-separator"></div>
-
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Info Bar -->
-        <div class="info-bar">
-            <div class="info-bar-content">
-                <!-- Cache Stats -->
-                <div class="info-bar-group">
-                    <span class="info-bar-title" title="Cache for fully rendered PNG tiles. L1 is in-memory (fast), L2 is Redis (persistent).">Tile Cache</span>
-                    <div class="info-bar-stats">
-                        <span class="info-cache-label" title="L1: In-memory cache. Fastest access (~0ms), but lost on restart.">L1</span>
-                        <div class="info-stat" title="Number of tile requests served from L1 in-memory cache (fastest path, ~0ms latency)">
-                            <span class="info-stat-label">Hits</span>
-                            <span class="info-stat-value" id="info-l1-hits">-</span>
-                        </div>
-                        <div class="info-stat" title="Percentage of tile requests served from L1 cache. Higher is better - reduces rendering load.">
-                            <span class="info-stat-label">Rate</span>
-                            <span class="info-stat-value" id="info-l1-rate">-</span>
-                        </div>
-                        <div class="info-stat" title="Number of tiles currently stored in L1 in-memory cache.">
-                            <span class="info-stat-label">Tiles</span>
-                            <span class="info-stat-value" id="info-l1-tiles">-</span>
-                        </div>
-                        <div class="info-stat" title="Current memory usage of L1 in-memory tile cache.">
-                            <span class="info-stat-label">Size</span>
-                            <span class="info-stat-value" id="info-l1-size">-</span>
-                        </div>
-                    </div>
-                    <div class="info-bar-separator"></div>
-                    <div class="info-bar-stats">
-                        <span class="info-cache-label" title="L2: Redis cache. Persists across restarts, shared between instances.">L2</span>
-                        <div class="info-stat" title="Number of tile requests served from L2 Redis cache (after L1 miss).">
-                            <span class="info-stat-label">Hits</span>
-                            <span class="info-stat-value" id="info-l2-hits">-</span>
-                        </div>
-                        <div class="info-stat" title="Percentage of tile requests (after L1 miss) served from L2 Redis cache.">
-                            <span class="info-stat-label">Rate</span>
-                            <span class="info-stat-value" id="info-l2-rate">-</span>
-                        </div>
-                        <div class="info-stat" title="Number of tiles stored in L2 Redis cache.">
-                            <span class="info-stat-label">Tiles</span>
-                            <span class="info-stat-value" id="info-l2-tiles">-</span>
-                        </div>
-                        <div class="info-stat" title="Memory used by L2 Redis cache for storing rendered tiles.">
-                            <span class="info-stat-label">Size</span>
-                            <span class="info-stat-value" id="info-l2-size">-</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="info-bar">
-            <div class="info-bar-content">
-                <!-- Chunk Cache Stats (Zarr) -->
-                <div class="info-bar-group">
-                    <span class="info-bar-title" title="Cache for Zarr data chunks. Enables efficient partial reads from cloud storage for tile rendering.">Chunk Cache</span>
-                    <div class="info-bar-stats">
-                        <div class="info-stat" title="Number of Zarr chunks currently stored in the cache.">
-                            <span class="info-stat-label">Entries</span>
-                            <span class="info-stat-value" id="info-chunk-entries">-</span>
-                        </div>
-                        <div class="info-stat" title="Current memory usage of the chunk cache.">
-                            <span class="info-stat-label">Memory</span>
-                            <span class="info-stat-value" id="info-chunk-memory">-</span>
-                        </div>
-                        <div class="info-stat" title="Number of chunk requests served from cache.">
-                            <span class="info-stat-label">Hits</span>
-                            <span class="info-stat-value" id="info-chunk-hits">-</span>
-                        </div>
-                        <div class="info-stat" title="Chunk cache hit rate. Higher rates reduce cloud storage reads.">
-                            <span class="info-stat-label">Rate</span>
-                            <span class="info-stat-value" id="info-chunk-rate">-</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="info-bar-separator"></div>
-                <!-- Per-source compact stats -->
-                <div class="info-bar-group" id="info-source-stats">
-                    <span class="info-source-item" id="info-src-gfs" title="GFS (Global Forecast System) - GRIB2 format&#10;Global model, 0.25° resolution, 384hr forecasts&#10;Shows: cache hit rate % | avg parse time">
-                        <span class="info-source-name">GFS</span>
-                        <span class="info-source-rate">-</span>
-                        <span class="info-source-time">-</span>
-                    </span>
-                    <span class="info-source-item" id="info-src-goes" title="GOES (Geostationary Satellite) - NetCDF format&#10;GOES-16/18 imagery, 1-2km resolution, real-time&#10;Shows: cache hit rate % | avg parse time">
-                        <span class="info-source-name">GOES</span>
-                        <span class="info-source-rate">-</span>
-                        <span class="info-source-time">-</span>
-                    </span>
-                    <span class="info-source-item" id="info-src-hrrr" title="HRRR (High-Resolution Rapid Refresh) - GRIB2 format&#10;CONUS model, 3km resolution, hourly updates, 18hr forecasts&#10;Shows: cache hit rate % | avg parse time">
-                        <span class="info-source-name">HRRR</span>
-                        <span class="info-source-rate">-</span>
-                        <span class="info-source-time">-</span>
-                    </span>
-                    <span class="info-source-item" id="info-src-mrms" title="MRMS (Multi-Radar Multi-Sensor) - GRIB2 format&#10;Radar composite, 1km resolution, 2-min updates&#10;Shows: cache hit rate % | avg parse time">
-                        <span class="info-source-name">MRMS</span>
-                        <span class="info-source-rate">-</span>
-                        <span class="info-source-time">-</span>
-                    </span>
-                </div>
-            </div>
-        </div>
-
-        <div class="info-bar">
-            <div class="info-bar-content">
-                <!-- Request Stats -->
-                <div class="info-bar-group">
-                    <span class="info-bar-title" title="Request statistics for WMS and WMTS tile services.">Requests</span>
-                    <div class="info-bar-stats">
-                        <span class="info-cache-label" title="WMS: Web Map Service - traditional image-based map requests">WMS</span>
-                        <div class="info-stat" title="Total number of WMS GetMap requests since service start.">
-                            <span class="info-stat-label">Total</span>
-                            <span class="info-stat-value" id="info-wms-total">-</span>
-                        </div>
-                        <div class="info-stat" title="WMS requests in the last 1 minute.">
-                            <span class="info-stat-label">1m</span>
-                            <span class="info-stat-value" id="info-wms-1m">-</span>
-                        </div>
-                        <div class="info-stat" title="WMS requests in the last 5 minutes.">
-                            <span class="info-stat-label">5m</span>
-                            <span class="info-stat-value" id="info-wms-5m">-</span>
-                        </div>
-                    </div>
-                    <div class="info-bar-separator"></div>
-                    <div class="info-bar-stats">
-                        <span class="info-cache-label" title="WMTS: Web Map Tile Service - tiled map requests (more efficient)">WMTS</span>
-                        <div class="info-stat" title="Total number of WMTS tile requests since service start.">
-                            <span class="info-stat-label">Total</span>
-                            <span class="info-stat-value" id="info-wmts-total">-</span>
-                        </div>
-                        <div class="info-stat" title="WMTS requests in the last 1 minute.">
-                            <span class="info-stat-label">1m</span>
-                            <span class="info-stat-value" id="info-wmts-1m">-</span>
-                        </div>
-                        <div class="info-stat" title="WMTS requests in the last 5 minutes.">
-                            <span class="info-stat-label">5m</span>
-                            <span class="info-stat-value" id="info-wmts-5m">-</span>
-                        </div>
-                    </div>
-                    <div class="info-bar-separator"></div>
-                    <div class="info-bar-stats">
-                        <span class="info-cache-label" title="Tile rendering performance statistics">Render</span>
-                        <div class="info-stat" title="Total number of tiles rendered (cache misses that required rendering).">
-                            <span class="info-stat-label">Total</span>
-                            <span class="info-stat-value" id="info-render-total">-</span>
-                        </div>
-                        <div class="info-stat" title="Tiles rendered in the last 1 minute.">
-                            <span class="info-stat-label">1m</span>
-                            <span class="info-stat-value" id="info-render-1m">-</span>
-                        </div>
-                        <div class="info-stat" title="Tiles rendered in the last 5 minutes.">
-                            <span class="info-stat-label">5m</span>
-                            <span class="info-stat-value" id="info-render-5m">-</span>
-                        </div>
-                        <div class="info-stat" title="Average tile render time in milliseconds.">
-                            <span class="info-stat-label">Avg</span>
-                            <span class="info-stat-value" id="info-render-avg">-</span>
-                        </div>
-                        <div class="info-stat" title="Fastest / Slowest tile render time recorded.">
-                            <span class="info-stat-label">Min/Max</span>
-                            <span class="info-stat-value" id="info-render-minmax">-</span>
-                        </div>
-                    </div>
-                    <div class="info-bar-separator"></div>
-                    <!-- WMS Layers per model -->
-                    <div class="info-bar-group">
-                        <span class="info-bar-title" title="Number of renderable WMS layers per model from GetCapabilities">Layers</span>
-                        <div class="info-bar-group" id="info-wms-layers">
-                                <span class="info-layer-item" id="info-layer-gfs" title="GFS WMS layers available">
-                                    <span class="info-layer-name">GFS</span>
-                                    <span class="info-layer-count">-</span>
-                                </span>
-                            <span class="info-layer-item" id="info-layer-hrrr" title="HRRR WMS layers available">
-                                    <span class="info-layer-name">HRRR</span>
-                                    <span class="info-layer-count">-</span>
-                                </span>
-                            <span class="info-layer-item" id="info-layer-goes" title="GOES WMS layers available">
-                                    <span class="info-layer-name">GOES</span>
-                                    <span class="info-layer-count">-</span>
-                                </span>
-                            <span class="info-layer-item" id="info-layer-mrms" title="MRMS WMS layers available">
-                                    <span class="info-layer-name">MRMS</span>
-                                    <span class="info-layer-count">-</span>
-                                </span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
 
         <div class="main-content">
             <!-- Data Panel (Left Sidebar) -->
@@ -438,198 +180,14 @@
                             <span>MinIO Storage</span>
                         </div>
                         <div class="data-section-meta">
-                            <span class="data-section-count" id="minio-total-objects" title="Total number of objects (files) stored in MinIO object storage buckets">--</span>
+                            <span class="data-section-count" id="minio-total-objects" title="Total number of objects (files) stored in MinIO object storage buckets. Loaded when this section is opened">--</span>
                             <span class="data-section-size" id="minio-total-size" title="Sum of actual file sizes for all objects stored in MinIO (raw weather data files)">--</span>
                             <span class="data-section-toggle">▼</span>
                         </div>
                     </div>
                     <div class="data-section-content">
                         <div class="data-tree" id="minio-tree">
-                            <div class="tree-loading">Loading...</div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Ingestion Status Widget -->
-                <div class="ingestion-widget collapsed" id="ingestion-widget">
-                    <div class="ingestion-widget-header" onclick="toggleIngestionWidget()">
-                        <span class="ingestion-widget-title">Ingestion Pipeline</span>
-                        <div class="ingestion-widget-meta">
-                            <span class="ingestion-status-dot" id="ingestion-status-dot"></span>
-                            <span class="ingestion-status-text" id="ingestion-status-text">Idle</span>
-                            <span class="ingestion-toggle-icon">▼</span>
-                        </div>
-                    </div>
-                    <div class="ingestion-widget-content" id="ingestion-widget-content">
-                        <!-- Active Ingestions -->
-                        <div class="ingestion-active-section">
-                            <div class="ingestion-section-header">
-                                <span>Active</span>
-                                <span class="ingestion-active-count" id="ingestion-active-count">0</span>
-                            </div>
-                            <div class="ingestion-active-list" id="ingestion-active-list">
-                                <div class="ingestion-empty">No active ingestions</div>
-                            </div>
-                        </div>
-                        
-                        <!-- Recent Completions -->
-                        <div class="ingestion-recent-section">
-                            <div class="ingestion-section-header">
-                                <span>Recent</span>
-                                <span class="ingestion-recent-stats" id="ingestion-recent-stats">--</span>
-                            </div>
-                            <div class="ingestion-recent-list" id="ingestion-recent-list">
-                                <div class="ingestion-empty">No recent ingestions</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Model Configuration Widget -->
-                <div class="config-widget collapsed" id="config-widget">
-                    <div class="config-widget-header" onclick="toggleConfigWidget()">
-                        <span class="config-widget-title">Model Configuration</span>
-                        <div class="config-widget-meta">
-                            <span class="config-model-count" id="config-model-count">-</span>
-                            <span class="config-style-count" id="config-style-count">-</span>
-                            <span class="config-toggle-icon">▼</span>
-                        </div>
-                    </div>
-                    <div class="config-widget-content" id="config-widget-content">
-                        <!-- Models Section -->
-                        <div class="config-section">
-                            <div class="config-section-title">Weather Models</div>
-                            <div class="config-models-list" id="config-models-list">
-                                <div class="config-loading">Loading...</div>
-                            </div>
-                        </div>
-                        
-                        <!-- Styles Section -->
-                        <div class="config-section">
-                            <div class="config-section-title">Rendering Styles</div>
-                            <div class="config-styles-list" id="config-styles-list">
-                                <div class="config-loading">Loading...</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Cache & Performance Widget -->
-                <div class="perf-widget collapsed" id="perf-widget">
-                    <div class="perf-widget-header" onclick="togglePerfWidget()">
-                        <span class="perf-widget-title">Cache & Performance</span>
-                        <div class="perf-widget-meta">
-                            <span class="perf-memory-usage" id="perf-memory-usage" title="Chunk cache memory usage">-</span>
-                            <span class="perf-toggle-icon">▼</span>
-                        </div>
-                    </div>
-                    <div class="perf-widget-content" id="perf-widget-content">
-                        <!-- Memory Pressure Section -->
-                        <div class="perf-section">
-                            <div class="perf-section-title">Memory Management</div>
-                            <div class="perf-grid">
-                                <div class="perf-item">
-                                    <span class="perf-label">Pressure</span>
-                                    <span class="perf-value perf-status" id="perf-mem-pressure">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Threshold</span>
-                                    <span class="perf-value" id="perf-mem-threshold">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Target</span>
-                                    <span class="perf-value" id="perf-mem-target">-</span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Feature Flags Section -->
-                        <div class="perf-section">
-                            <div class="perf-section-title">Feature Flags</div>
-                            <div class="perf-flags" id="perf-flags">
-                                <span class="perf-flag" id="perf-flag-l1" title="L1 In-Memory Tile Cache">L1</span>
-                                <span class="perf-flag" id="perf-flag-l2" title="L2 Redis Tile Cache">L2</span>
-                                <span class="perf-flag" id="perf-flag-chunk" title="Zarr Chunk Cache">Chunk</span>
-                                <span class="perf-flag" id="perf-flag-prefetch" title="Tile Prefetching">Prefetch</span>
-                                <span class="perf-flag" id="perf-flag-warming" title="Cache Warming">Warming</span>
-                                <span class="perf-flag" id="perf-flag-lut" title="Projection LUT">LUT</span>
-                            </div>
-                        </div>
-                        
-                        <!-- Model Precaching Section -->
-                        <div class="perf-section">
-                            <div class="perf-section-title">Model Precaching</div>
-                            <div class="perf-precache-list" id="perf-precache-list">
-                                <div class="perf-loading">Loading...</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Grid Processor Widget (Zarr/Chunk Cache) -->
-                <div class="perf-widget collapsed" id="grid-processor-widget">
-                    <div class="perf-widget-header" onclick="toggleGridProcessorWidget()">
-                        <span class="perf-widget-title">Grid Processor (Zarr)</span>
-                        <div class="perf-widget-meta">
-                            <span class="perf-memory-usage" id="grid-proc-summary" title="Chunk cache summary">-</span>
-                            <span class="perf-toggle-icon">▼</span>
-                        </div>
-                    </div>
-                    <div class="perf-widget-content" id="grid-processor-widget-content">
-                        <!-- Chunk Cache Section -->
-                        <div class="perf-section">
-                            <div class="perf-section-title">Chunk Cache</div>
-                            <div class="perf-grid">
-                                <div class="perf-item">
-                                    <span class="perf-label">Memory</span>
-                                    <span class="perf-value" id="grid-proc-memory">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Entries</span>
-                                    <span class="perf-value" id="grid-proc-entries">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Max Size</span>
-                                    <span class="perf-value" id="grid-proc-max-size">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Hit Rate</span>
-                                    <span class="perf-value" id="grid-proc-hitrate">-</span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Request Stats Section -->
-                        <div class="perf-section">
-                            <div class="perf-section-title">Request Stats</div>
-                            <div class="perf-grid">
-                                <div class="perf-item">
-                                    <span class="perf-label">Hits</span>
-                                    <span class="perf-value perf-value-good" id="grid-proc-hits">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Misses</span>
-                                    <span class="perf-value" id="grid-proc-misses">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Evictions</span>
-                                    <span class="perf-value" id="grid-proc-evictions">-</span>
-                                </div>
-                                <div class="perf-item">
-                                    <span class="perf-label">Total</span>
-                                    <span class="perf-value" id="grid-proc-total">-</span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Zarr Info Section -->
-                        <div class="perf-section">
-                            <div class="perf-section-title">Zarr Configuration</div>
-                            <div class="perf-flags" id="grid-proc-flags">
-                                <span class="perf-flag" id="grid-proc-flag-enabled" title="Chunk Cache Enabled">Cache</span>
-                                <span class="perf-flag" id="grid-proc-flag-zarr" title="Zarr V3 Format">Zarr V3</span>
-                                <span class="perf-flag" id="grid-proc-flag-storage" title="MinIO Storage Backend">MinIO</span>
-                            </div>
+                            <div class="tree-loading">Loading... listing the bucket can take a minute</div>
                         </div>
                     </div>
                 </div>
@@ -700,109 +258,6 @@
                     </div>
                 </div>
             </main>
-
-            <!-- Minimap with Tile Request Heatmap -->
-            <aside class="minimap-container">
-                <div class="minimap-wrapper">
-                    <div class="minimap-header">
-                        <span class="minimap-title">Tile Requests</span>
-                        <button class="minimap-clear-btn" id="minimap-clear-btn" title="Clear heatmap">Clear</button>
-                    </div>
-                    <div id="minimap"></div>
-                    <div class="minimap-legend">
-                        <span class="minimap-legend-item" title="L1 in-memory cache hit (fastest)">
-                            <span class="legend-color" style="background: #22c55e;"></span>
-                            <span class="legend-label">L1</span>
-                        </span>
-                        <span class="minimap-legend-item" title="L2 Redis cache hit">
-                            <span class="legend-color" style="background: #3b82f6;"></span>
-                            <span class="legend-label">L2</span>
-                        </span>
-                        <span class="minimap-legend-item" title="Mixed cache hits">
-                            <span class="legend-color" style="background: #f59e0b;"></span>
-                            <span class="legend-label">Mix</span>
-                        </span>
-                        <span class="minimap-legend-item" title="Cache miss - had to render">
-                            <span class="legend-color" style="background: #ef4444;"></span>
-                            <span class="legend-label">Miss</span>
-                        </span>
-                    </div>
-                    <div class="minimap-stats">
-                        <div class="minimap-stat">
-                            <span class="minimap-stat-label">Requests</span>
-                            <span class="minimap-stat-value" id="minimap-request-count">0</span>
-                        </div>
-                        <div class="minimap-stat">
-                            <span class="minimap-stat-label">Hotspots</span>
-                            <span class="minimap-stat-value" id="minimap-hotspot-count">0</span>
-                        </div>
-                    </div>
-                    <div class="minimap-fade-controls">
-                        <label class="fade-toggle" title="Enable tile fade-out after timeout">
-                            <input type="checkbox" id="minimap-fade-enabled">
-                            <span class="fade-toggle-label">Fade</span>
-                        </label>
-                        <input type="range" id="minimap-fade-slider" min="2" max="30" value="10" class="fade-slider" title="Fade timeout in seconds">
-                        <span class="fade-value" id="minimap-fade-value">10s</span>
-                    </div>
-                </div>
-                <!-- Downloads Widget -->
-                <div class="downloads-widget">
-                    <div class="downloads-widget-header">
-                        <span class="downloads-widget-title">Downloads</span>
-                        <div class="downloads-widget-status">
-                            <span class="downloads-status-dot" id="downloader-status-dot"></span>
-                            <span class="downloads-status-text" id="downloader-status-text">--</span>
-                        </div>
-                    </div>
-                    
-                    <!-- Quick Stats -->
-                    <div class="downloads-stats-row">
-                        <div class="downloads-stat">
-                            <span class="downloads-stat-value" id="dl-pending">--</span>
-                            <span class="downloads-stat-label">Pending</span>
-                        </div>
-                        <div class="downloads-stat">
-                            <span class="downloads-stat-value active" id="dl-active">--</span>
-                            <span class="downloads-stat-label">Active</span>
-                        </div>
-                        <div class="downloads-stat">
-                            <span class="downloads-stat-value completed" id="dl-completed">--</span>
-                            <span class="downloads-stat-label">Done</span>
-                        </div>
-                        <div class="downloads-stat">
-                            <span class="downloads-stat-value failed" id="dl-failed">--</span>
-                            <span class="downloads-stat-label">Failed</span>
-                        </div>
-                    </div>
-                    
-                    <!-- Active Downloads List -->
-                    <div class="downloads-active-section">
-                        <div class="downloads-section-header">
-                            <span>Active Downloads</span>
-                            <span class="downloads-bytes" id="dl-total-bytes">--</span>
-                        </div>
-                        <div class="downloads-list" id="downloads-list">
-                            <div class="downloads-empty">No active downloads</div>
-                        </div>
-                    </div>
-                    
-                    <!-- Next Data Availability -->
-                    <div class="downloads-next-section">
-                        <div class="downloads-section-header">
-                            <span>Data Schedule</span>
-                        </div>
-                        <div class="downloads-next-list" id="downloads-next-list">
-                            <div class="downloads-empty">--</div>
-                        </div>
-                    </div>
-                    
-                    <!-- Link to full downloads page -->
-                    <div class="downloads-widget-footer">
-                        <a href="downloads.html" class="downloads-more-link">View All Downloads</a>
-                    </div>
-                </div>
-            </aside>
         </div>
 
         <!-- Footer -->
@@ -833,6 +288,10 @@
                 // In docker-compose (port 8000), use localhost URLs from data-local attribute
                 document.querySelectorAll('a[data-local]').forEach(function(link) {
                     link.href = link.dataset.local;
+                });
+                // Hide links to things the docker-compose stack does not have (the Data Pipeline dashboard)
+                document.querySelectorAll('.prod-only-link').forEach(function(link) {
+                    link.style.display = 'none';
                 });
             } else {
                 // In production, rewrite localhost:8080 to relative, hide local-only links

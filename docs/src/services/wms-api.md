@@ -555,7 +555,7 @@ Each source tracks:
 
 ### Tile Request Heatmap
 
-Geographic distribution of tile requests is tracked in real-time for visualization in the web dashboard minimap. Useful for:
+Geographic distribution of tile requests is tracked in real-time and served by `/api/tile-heatmap` (the web dashboard no longer displays it). Useful for:
 - Monitoring load test geographic patterns
 - Identifying request hot spots
 - Debugging tile distribution issues
