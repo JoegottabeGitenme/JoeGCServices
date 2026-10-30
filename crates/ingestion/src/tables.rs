@@ -1405,4 +1405,217 @@ mod integration_tests {
         assert_eq!(d.format(0), "0 m above MSL");
         assert_eq!(d.format(500), "500 m above MSL");
     }
+
+    // ------------------------------------------------------------------
+    // Isobaric levels are pascals in every model config
+    // ------------------------------------------------------------------
+
+    /// Every isobaric (`level_code: 100`) value a model config lists, as `(parameter, value)`.
+    /// Both `value:` and `values:` are collected; the unit is whatever the file wrote.
+    fn isobaric_values(yaml: &serde_yaml::Value) -> Vec<(String, u64)> {
+        let mut out = Vec::new();
+        let params = yaml.get("parameters").and_then(|p| p.as_sequence());
+        for param in params.into_iter().flatten() {
+            let name = param.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+            let levels = param.get("levels").and_then(|l| l.as_sequence());
+            for level in levels.into_iter().flatten() {
+                if level.get("level_code").and_then(|c| c.as_u64()) != Some(100) {
+                    continue;
+                }
+                let single = level.get("value").and_then(|v| v.as_u64());
+                let list = level.get("values").and_then(|v| v.as_sequence());
+                let list = list.into_iter().flatten().filter_map(|v| v.as_u64());
+                out.extend(
+                    single
+                        .into_iter()
+                        .chain(list)
+                        .map(|v| (name.to_string(), v)),
+                );
+            }
+        }
+        out
+    }
+
+    /// The offenders in one config text: values that cannot be pascals of a pressure level.
+    /// A level is whole millibars, so its pascal value is a multiple of 100 and at least 100.
+    fn non_pascal_isobaric_values(config_text: &str) -> Vec<(String, u64)> {
+        let yaml: serde_yaml::Value = serde_yaml::from_str(config_text).unwrap();
+        isobaric_values(&yaml)
+            .into_iter()
+            .filter(|(_, v)| *v < 100 || v % 100 != 0)
+            .collect()
+    }
+
+    #[test]
+    fn the_guard_rejects_the_millibar_scale_gfs_config_that_shipped() {
+        // gfs.yaml listed `values: [1000, 975, 950, ...]` meaning millibars, but the ingester
+        // compares them with the GRIB2 level value, which is pascals: 1000 matched 10 mb and 975,
+        // 850, 70 ... matched no level at all. This is that file's shape; the guard must refuse it.
+        let old = r#"
+parameters:
+  - name: TMP
+    levels:
+      - type: isobaric
+        level_code: 100
+        values: [1000, 975, 925, 850, 500, 70, 10]
+        display_template: "{value} mb"
+"#;
+        let bad = non_pascal_isobaric_values(old);
+        let bad_values: Vec<u64> = bad.iter().map(|(_, v)| *v).collect();
+        // 1000 and 500 are multiples of 100, so alone they would pass as 10 mb and 5 mb: it is the
+        // rest of a millibar list (975, 925, 850, 70 ...) that gives it away
+        assert_eq!(bad_values, [975, 925, 850, 70, 10]);
+        // and a single `value:` in millibars is refused the same way
+        let single =
+            "parameters:\n  - name: RH\n    levels:\n      - level_code: 100\n        value: 850\n";
+        assert_eq!(
+            non_pascal_isobaric_values(single),
+            [("RH".to_string(), 850)]
+        );
+        // pascals pass
+        let ok = "parameters:\n  - name: RH\n    levels:\n      - level_code: 100\n        values: [100000, 85000, 1000]\n";
+        assert!(non_pascal_isobaric_values(ok).is_empty());
+    }
+
+    #[test]
+    fn isobaric_levels_in_every_model_config_are_pascals() {
+        // The ingester matches `value`/`values` against the GRIB2 level value (pascals) and the
+        // `{value_mb}` template divides by 100, exactly as HRRR writes `value: 85000 # 850 mb`.
+        // A millibar number is not an error anywhere: it silently selects some other (usually
+        // non-existent) level, or the wrong one labelled with the right name. Disabled models are
+        // checked too, so a model cannot be re-enabled with the unit mistake still in it.
+        let mut seen = 0;
+        let mut offenders = Vec::new();
+        for entry in fs::read_dir(real_models_dir()).unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+            let text = fs::read_to_string(&path).unwrap();
+            let yaml: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+            seen += isobaric_values(&yaml).len();
+            for (param, v) in non_pascal_isobaric_values(&text) {
+                offenders.push(format!(
+                    "{}: {param} level_code 100 value {v}",
+                    path.file_name().unwrap().to_string_lossy()
+                ));
+            }
+        }
+        assert!(
+            seen > 100,
+            "found only {seen} isobaric values: scan is broken"
+        );
+        assert!(
+            offenders.is_empty(),
+            "isobaric values must be pascals (850 mb = 85000), not millibars:\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    #[test]
+    fn every_isobaric_entry_in_the_gfs_config_carries_the_millibar_template() {
+        // One description per level code serves a whole model and the first entry that has a
+        // template wins, so each entry names `{value_mb}` itself rather than relying on order.
+        let text = fs::read_to_string(real_models_dir().join("gfs.yaml")).unwrap();
+        let yaml: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+        let mut n = 0;
+        for param in yaml["parameters"].as_sequence().unwrap() {
+            for level in param["levels"].as_sequence().unwrap() {
+                if level["level_code"].as_u64() == Some(100) {
+                    n += 1;
+                    assert_eq!(
+                        level["display_template"].as_str(),
+                        Some("{value_mb} mb"),
+                        "{} isobaric entry {:?}",
+                        param["name"].as_str().unwrap(),
+                        level
+                    );
+                }
+            }
+        }
+        assert_eq!(n, 64, "TMP 17 + HGT 14 + UGRD 12 + VGRD 12 + RH 9");
+    }
+
+    #[test]
+    fn gfs_500_mb_is_50000_pa_and_is_ingested_and_labelled_500_mb() {
+        // GFS and HRRR now write isobaric levels the same way: 50000 Pa is 500 mb.
+        let f = real_filter("gfs");
+        for p in ["TMP", "HGT", "UGRD", "VGRD", "RH"] {
+            assert!(f.should_ingest(p, 100, 50000), "{p} at 50000 Pa");
+            assert!(
+                !f.should_ingest(p, 100, 500),
+                "{p}: 500 Pa is 5 mb, not wanted"
+            );
+        }
+        let (_, levels) = real_tables("gfs");
+        let d = levels.get(&100).expect("level 100");
+        assert_eq!(d.format(50000), "500 mb");
+        assert_eq!(d.format(100000), "1000 mb");
+        assert_eq!(d.format(97500), "975 mb");
+        assert_eq!(d.format(1000), "10 mb");
+    }
+
+    #[test]
+    fn gfs_ten_millibars_is_no_longer_called_1000_mb() {
+        // Production stored 10 mb temperature and height (~226 K, ~30,800 m) as "1000 mb", the
+        // only isobaric rows GFS had. 1000 Pa is 10 mb and says so; 1000 mb is 100000 Pa.
+        let f = real_filter("gfs");
+        let (_, levels) = real_tables("gfs");
+        let d = levels.get(&100).expect("level 100");
+        assert_eq!(d.format(1000), "10 mb");
+        assert_ne!(d.format(1000), "1000 mb");
+        assert!(f.should_ingest("TMP", 100, 1000) && f.should_ingest("HGT", 100, 1000));
+        // wind and humidity were never listed down to 10 mb, so 1000 Pa still is not ingested
+        for p in ["UGRD", "VGRD", "RH"] {
+            assert!(
+                !f.should_ingest(p, 100, 1000),
+                "{p} at 10 mb is not configured"
+            );
+        }
+    }
+
+    #[test]
+    fn gfs_isobaric_levels_are_exactly_the_published_set() {
+        // (parameter, levels in mb) as listed in config/models/gfs.yaml, in pascals there.
+        let want: [(&str, &[u32]); 5] = [
+            (
+                "TMP",
+                &[
+                    1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10,
+                ],
+            ),
+            (
+                "HGT",
+                &[
+                    1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10,
+                ],
+            ),
+            (
+                "UGRD",
+                &[1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100],
+            ),
+            (
+                "VGRD",
+                &[1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100],
+            ),
+            ("RH", &[1000, 975, 950, 925, 900, 850, 700, 500, 300]),
+        ];
+        let f = real_filter("gfs");
+        let (_, levels) = real_tables("gfs");
+        let d = levels.get(&100).unwrap();
+        for (param, mbs) in want {
+            // every GRIB2 pressure GFS publishes (in pascals), 0.01 mb to 1000 mb
+            let mut accepted = Vec::new();
+            for pa in (1..=100_000u32).filter(|pa| pa % 100 == 0) {
+                if f.should_ingest(param, 100, pa) {
+                    accepted.push(pa / 100);
+                }
+            }
+            accepted.sort_unstable_by(|a, b| b.cmp(a));
+            assert_eq!(accepted, mbs, "{param}");
+            for mb in mbs {
+                assert_eq!(d.format(mb * 100), format!("{mb} mb"), "{param}");
+            }
+        }
+    }
 }
