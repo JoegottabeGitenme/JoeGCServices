@@ -180,6 +180,11 @@ struct ModelConfigRetention {
     /// If true, data never expires (for static datasets like VIIRS)
     #[serde(rename = "static")]
     is_static: Option<bool>,
+    /// If true and the model is `model.enabled: false`, everything it left in
+    /// the catalog is purged on the next cycle (see [`purge_if_disabled`]).
+    /// Opt-in: a model that is disabled for another reason (e.g. NLDAS, off
+    /// until its upstream request is fixed) keeps its normal retention.
+    purge_when_disabled: Option<bool>,
 }
 
 /// Structure matching dimensions section in model YAML files.
@@ -251,6 +256,41 @@ struct ModelConfigFile {
 #[derive(Debug, Deserialize)]
 struct ModelConfigModel {
     id: String,
+    /// `model.enabled`; absent means enabled.
+    enabled: Option<bool>,
+}
+
+/// Retention settings for a model that was switched off to be purged.
+///
+/// Only applies when the model has both `model.enabled: false` and
+/// `retention.purge_when_disabled: true`. Being disabled alone changes
+/// nothing: several models are disabled for reasons that have nothing to do
+/// with reclaiming their data (NLDAS is off until GES DISC accepts the request
+/// again, VIIRS is ingested by hand) and must keep their normal retention.
+///
+/// A purged model is not downloaded or ingested any more, so nothing will ever
+/// refresh or supersede what it left in the catalog. The usual safeguards
+/// would then pin that data forever: `keep_latest_runs` /
+/// `keep_latest_observations` always keep the newest N runs/observations, and
+/// `hours` keeps the rest until it ages out. To reclaim the space everything is
+/// expired on the next cycle (cutoff = now, nothing protected).
+///
+/// Re-enabling the model (`enabled: true`) restores the retention settings
+/// written in its YAML, which are left untouched.
+fn purge_if_disabled(
+    enabled: bool,
+    purge_when_disabled: bool,
+    config: ModelRetentionConfig,
+) -> ModelRetentionConfig {
+    if enabled || !purge_when_disabled {
+        return config;
+    }
+    ModelRetentionConfig {
+        hours: 0,
+        keep_latest_runs: 0,
+        keep_latest_observations: 0,
+        ..config
+    }
 }
 
 impl CleanupConfig {
@@ -347,21 +387,28 @@ impl CleanupConfig {
                                     .and_then(|r| r.keep_latest_observations)
                                     .unwrap_or(1); // Default: always keep at least 1 observation
 
-                                let model_config = ModelRetentionConfig {
-                                    hours,
-                                    model_type,
-                                    keep_latest_runs,
-                                    keep_latest_observations,
-                                    expected_forecast_hours,
-                                };
+                                let model_config = purge_if_disabled(
+                                    config.model.enabled.unwrap_or(true),
+                                    retention
+                                        .and_then(|r| r.purge_when_disabled)
+                                        .unwrap_or(false),
+                                    ModelRetentionConfig {
+                                        hours,
+                                        model_type,
+                                        keep_latest_runs,
+                                        keep_latest_observations,
+                                        expected_forecast_hours,
+                                    },
+                                );
 
                                 info!(
                                     model = %model_id,
-                                    retention_hours = hours,
-                                    model_type = ?model_type,
-                                    keep_latest_runs = keep_latest_runs,
-                                    keep_latest_observations = keep_latest_observations,
-                                    expected_forecast_hours = ?expected_forecast_hours,
+                                    enabled = config.model.enabled.unwrap_or(true),
+                                    retention_hours = model_config.hours,
+                                    model_type = ?model_config.model_type,
+                                    keep_latest_runs = model_config.keep_latest_runs,
+                                    keep_latest_observations = model_config.keep_latest_observations,
+                                    expected_forecast_hours = ?model_config.expected_forecast_hours,
                                     "Loaded retention config"
                                 );
 
@@ -1715,6 +1762,171 @@ retention:
 
         // Cleanup
         std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    // ------------------------------------------------------------------
+    // Disabled models: only an explicit opt-in purges the leftovers
+    // ------------------------------------------------------------------
+
+    fn protected(model_type: ModelType) -> ModelRetentionConfig {
+        ModelRetentionConfig {
+            hours: 48,
+            model_type,
+            keep_latest_runs: 2,
+            keep_latest_observations: 18,
+            expected_forecast_hours: Some(65),
+        }
+    }
+
+    #[test]
+    fn enabled_model_keeps_its_retention_settings_even_with_the_flag() {
+        let c = purge_if_disabled(true, true, protected(ModelType::Forecast));
+        assert_eq!(
+            (c.hours, c.keep_latest_runs, c.keep_latest_observations),
+            (48, 2, 18)
+        );
+        assert_eq!(c.expected_forecast_hours, Some(65));
+    }
+
+    #[test]
+    fn disabled_model_without_the_flag_keeps_its_retention_settings() {
+        for t in [
+            ModelType::Forecast,
+            ModelType::Observation,
+            ModelType::Static,
+        ] {
+            let c = purge_if_disabled(false, false, protected(t));
+            assert_eq!(
+                (c.hours, c.keep_latest_runs, c.keep_latest_observations),
+                (48, 2, 18),
+                "{t:?}: disabled alone must not purge"
+            );
+        }
+    }
+
+    #[test]
+    fn disabled_model_with_the_flag_expires_everything() {
+        for t in [ModelType::Forecast, ModelType::Observation] {
+            let c = purge_if_disabled(false, true, protected(t));
+            assert_eq!(c.hours, 0, "{t:?}: cutoff must be now");
+            assert_eq!(c.keep_latest_runs, 0, "{t:?}: no run may be protected");
+            assert_eq!(
+                c.keep_latest_observations, 0,
+                "{t:?}: no observation may be protected"
+            );
+            assert_eq!(c.model_type, t, "{t:?}: model type is unchanged");
+        }
+    }
+
+    #[test]
+    fn load_model_configs_purges_only_models_that_opt_in() {
+        use std::io::Write;
+        let temp_dir =
+            std::env::temp_dir().join(format!("cleanup_disabled_{}", std::process::id()));
+        let models_dir = temp_dir.join("models");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        let write = |name: &str, yaml: &str| {
+            std::fs::File::create(models_dir.join(name))
+                .unwrap()
+                .write_all(yaml.as_bytes())
+                .unwrap();
+        };
+        // Disabled and opted in: purged.
+        write(
+            "off-purge.yaml",
+            "model: {id: off-purge, enabled: false}\ndimensions: {type: forecast}\nretention: {hours: 48, keep_latest_runs: 2, purge_when_disabled: true}\n",
+        );
+        // Disabled without the flag (like nldas): keeps its retention.
+        write(
+            "off-keep.yaml",
+            "model: {id: off-keep, enabled: false}\ndimensions: {type: observation}\nretention: {hours: 720}\n",
+        );
+        // Disabled, no retention section at all: defaults, not a purge.
+        write(
+            "off-bare.yaml",
+            "model: {id: off-bare, enabled: false}\ndimensions: {type: observation}\n",
+        );
+        // Enabled with the flag: the flag only matters once disabled.
+        write(
+            "on-purge.yaml",
+            "model: {id: on-purge, enabled: true}\ndimensions: {type: forecast}\nretention: {hours: 48, keep_latest_runs: 2, purge_when_disabled: true}\n",
+        );
+        write(
+            "no-flag.yaml",
+            "model: {id: no-flag}\ndimensions: {type: observation}\nretention: {hours: 3, keep_latest_observations: 36}\n",
+        );
+        write(
+            "off-static.yaml",
+            "model: {id: off-static, enabled: false}\ndimensions: {type: static}\nretention: {static: true}\n",
+        );
+
+        let configs = CleanupConfig::load_model_configs(temp_dir.to_str().unwrap());
+        std::fs::remove_dir_all(&temp_dir).ok();
+
+        let purge = &configs["off-purge"];
+        assert_eq!(
+            (
+                purge.hours,
+                purge.keep_latest_runs,
+                purge.keep_latest_observations
+            ),
+            (0, 0, 0)
+        );
+        let keep = &configs["off-keep"];
+        assert_eq!((keep.hours, keep.keep_latest_observations), (720, 1));
+        assert_eq!(configs["off-bare"].hours, 24, "default retention applies");
+        let on = &configs["on-purge"];
+        assert_eq!((on.hours, on.keep_latest_runs), (48, 2));
+        let no_flag = &configs["no-flag"];
+        assert_eq!((no_flag.hours, no_flag.keep_latest_observations), (3, 36));
+        assert_eq!(configs["off-static"].model_type, ModelType::Static);
+    }
+
+    /// Every `model.enabled: false` model in the shipped config, split by
+    /// whether its data is meant to be purged. Pins the owner's decision: only
+    /// the four data-diet models purge; NLDAS (off until GES DISC accepts the
+    /// request again) keeps its 720 h and VIIRS (ingested by hand) stays static.
+    #[test]
+    fn real_configs_purge_only_the_data_diet_models() {
+        let config_path = format!("{}/../../config", env!("CARGO_MANIFEST_DIR"));
+        if !Path::new(&config_path).join("models/aigfs.yaml").exists() {
+            eprintln!("Skipping test: config/models not found at {config_path}");
+            return;
+        }
+        let configs = CleanupConfig::load_model_configs(&config_path);
+        for id in ["aigfs", "aigefs", "goes18-fulldisk", "goes19-fulldisk"] {
+            let c = configs
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} must still have a retention config"));
+            assert_eq!(
+                (c.hours, c.keep_latest_runs, c.keep_latest_observations),
+                (0, 0, 0),
+                "{id} is disabled for the data diet: its leftovers must be purged, not protected"
+            );
+        }
+        for id in ["nldas-forcing", "nldas-noah"] {
+            let c = configs
+                .get(id)
+                .unwrap_or_else(|| panic!("{id} must still have a retention config"));
+            assert_eq!(
+                c.hours, 720,
+                "{id} is disabled only until its upstream request is fixed: its data must not be purged"
+            );
+            assert_eq!(c.keep_latest_observations, 1, "{id}: safeguard untouched");
+        }
+        for id in ["goes18", "goes19"] {
+            let c = &configs[id];
+            assert_eq!(
+                (c.hours, c.keep_latest_observations),
+                (3, 36),
+                "{id} is still ingested"
+            );
+        }
+        assert_eq!(
+            configs["viirs"].model_type,
+            ModelType::Static,
+            "VIIRS must stay static"
+        );
     }
 
     // ------------------------------------------------------------------

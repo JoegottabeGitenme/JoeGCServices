@@ -182,15 +182,7 @@ impl StartupValidator {
             .filter(|r| !r.success && r.error.is_none())
             .count();
 
-        let all_known_models = [
-            "gfs",
-            "hrrr",
-            "goes18",
-            "goes19",
-            "goes18-fulldisk",
-            "goes19-fulldisk",
-            "mrms",
-        ];
+        let all_known_models = ["gfs", "hrrr", "goes18", "goes19", "mrms"];
         let models_missing: Vec<String> = all_known_models
             .iter()
             .filter(|m| !available_models.contains(&m.to_string()))

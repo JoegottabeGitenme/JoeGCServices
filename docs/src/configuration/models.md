@@ -157,6 +157,21 @@ The cleanup system includes safeguards to ensure data is never completely delete
 
 This ensures users always have data to display even if NOAA, AWS, or your ingestion pipeline experiences an outage.
 
+#### Purging a Disabled Model
+
+`model.enabled: false` only stops the downloader; the model's existing data keeps following its normal retention. To also reclaim the space, add `purge_when_disabled: true` to its `retention` section:
+
+```yaml
+model:
+  enabled: false
+retention:
+  hours: 48
+  keep_latest_runs: 2
+  purge_when_disabled: true   # expire everything it left behind on the next cleanup cycle
+```
+
+While the model is disabled and the flag is set, cleanup uses a cutoff of "now" and ignores `keep_latest_*` (nothing will refresh the model again). Setting `enabled: true` restores the settings above. Static datasets are never purged.
+
 ### `parameters` (required)
 
 List of available parameters with pyramid configuration:

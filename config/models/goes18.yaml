@@ -20,7 +20,7 @@ source:
   product: "ABI-L2-CMIPC" # CONUS Cloud and Moisture Imagery
   file_pattern: "OR_ABI-L2-CMIPC-M{mode}C{band:02}_G18_s{start}_e{end}_c{created}.nc"
   region: us-east-1
-  bands: [1, 2, 3, 8, 9, 10, 13, 14] # Visible, Water Vapor, IR bands
+  bands: [2, 13] # C02 red visible, C13 clean IR (data diet 2026-10-29; was [1, 2, 3, 8, 9, 10, 13, 14])
 
 grid:
   projection: geostationary

@@ -42,6 +42,17 @@ model:
   enabled: true                        # Enable/disable this model
 ```
 
+`enabled: false` stops the downloader fetching the model, but on its own it does **not**
+delete anything: the ingester's retention keeps applying the model's normal `retention`
+settings to whatever is already in the catalog. Several models are disabled for reasons
+unrelated to freeing space (the NLDAS models are off until their upstream request is fixed
+and keep their data, VIIRS is ingested by hand), so purging is opt-in per model with
+`retention.purge_when_disabled: true` (see [`retention`](#retention-recommended)).
+
+WMS/WMTS layers and EDR collections are only advertised while the catalog has data for
+them. When disabling a model for good, also remove its `config/layers/` and `config/edr/`
+entries so they disappear immediately instead of when the purge finishes.
+
 ### `dimensions` (recommended)
 
 Defines which WMS/WMTS dimensions are exposed for this model.
@@ -151,6 +162,14 @@ retention:
 
 These safeguards ensure data is never completely deleted during ingestion outages.
 
+**Purging a disabled model:**
+- `purge_when_disabled: true` (default `false`): once the model is also `model.enabled: false`,
+  the ingester expires everything it left in the catalog and object storage on its next
+  cycle (cutoff = now, `keep_latest_*` ignored, since nothing will refresh the model again).
+  It has no effect while the model is enabled, and leaves `hours` / `keep_latest_*` as written,
+  so setting `enabled: true` again restores normal retention. Without the flag a disabled model
+  keeps its normal retention. Static datasets (`static: true`) are never purged.
+
 ### `precaching` (optional)
 
 Grid cache warming configuration.
@@ -177,8 +196,9 @@ parameters:
         value: 2
         display: "2 m above ground"
       - type: isobaric
-        values: [1000, 850, 500, 250]
-        display_template: "{value} mb"
+        level_code: 100
+        value: 85000                  # PASCALS: 850 mb. One `value:` per level.
+        display_template: "{value_mb} mb"   # stored level name: "850 mb"
     units: K                      # Native units
     display_units: "C"           # Display units
     conversion: K_to_C            # Unit conversion
@@ -188,7 +208,11 @@ parameters:
 - `surface` - Surface level
 - `height_above_ground` - Height in meters above ground
 - `height_above_ground_layer` - Layer averaged (e.g., 0-6km)
-- `isobaric` - Pressure level (mb/hPa)
+- `isobaric` - Pressure level, written in **pascals** (850 mb = `85000`), one `value:` per level.
+  The ingester compares the number with the GRIB2 level value (Pa) and `{value_mb}` divides by
+  100 for the stored name. Do not write millibars (a millibar number selects a different level
+  without any error) and do not use a `values:` list (the downloader reads it as millibars).
+  `validate.py` and the ingestion tests reject non-pascal values.
 - `mean_sea_level` - Mean sea level
 - `entire_atmosphere` - Column-integrated
 - `low_cloud_layer` / `middle_cloud_layer` / `high_cloud_layer` - Cloud layers

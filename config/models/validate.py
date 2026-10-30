@@ -430,6 +430,8 @@ class ModelValidator:
             if not isinstance(hours, int) or hours < 0:
                 self.add_error("retention.hours", "Must be a non-negative integer")
 
+        self._optional_bool(retention, "retention.purge_when_disabled")
+
     def _validate_precaching_section(self):
         """Validate the 'precaching' section (optional)."""
         if "precaching" not in self.data:
@@ -570,6 +572,31 @@ class ModelValidator:
                     self.add_error(
                         f"{level_path}.values", "Must have at least one value"
                     )
+
+            # Isobaric levels are pascals (850 mb = 85000), like the GRIB2 level value the
+            # ingester compares them with. A millibar number is not an error anywhere else: it
+            # selects a different level (gfs.yaml once stored 10 mb data as "1000 mb").
+            if level.get("level_code") == 100 or level_type == "isobaric":
+                raw = []
+                if has_value:
+                    raw.append((f"{level_path}.value", level["value"]))
+                if has_values and isinstance(level["values"], list):
+                    raw.extend(
+                        (f"{level_path}.values[{j}]", v)
+                        for j, v in enumerate(level["values"])
+                    )
+                for vpath, v in raw:
+                    if (
+                        not isinstance(v, int)
+                        or isinstance(v, bool)
+                        or v < 100
+                        or v % 100 != 0
+                    ):
+                        self.add_error(
+                            vpath,
+                            f"Isobaric level {v!r} is not pascals: write 850 mb as 85000 "
+                            "(a whole number of millibars, multiple of 100, at least 100)",
+                        )
 
     def _validate_composites_section(self):
         """Validate the 'composites' section (optional)."""

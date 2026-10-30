@@ -12,6 +12,10 @@
 # valid_range: Used for PNG encoding to ensure consistent colormap rendering
 # across different viewport regions. Values are in the parameter's native units.
 
+# Data diet (2026-10-29): only bands 2 (red visible) and 13 (clean IR) are downloaded and
+# ingested (source.bands in config/models/goes18.yaml). Water vapor collections and
+# bands 1, 3, 8, 9, 10, 14 were removed.
+
 model: goes18
 data_type: observation
 
@@ -20,57 +24,29 @@ collections:
   # Instance-based collections (access all available observation timestamps)
   # ===========================================================================
   
-  # Visible bands (bands 1, 2, 3) - daytime only
+  # Visible band (band 2) - daytime only
   - id: goes18-visible
     title: "GOES-18 Visible Imagery"
-    description: "Visible reflectance bands (0.47-0.86µm). Best during daytime."
+    description: "Red visible reflectance, band 2 (0.64µm). Best during daytime."
     level_filter:
       level_type: top_of_atmosphere
       level_code: 8
     parameters:
-      - name: CMI_C01
-        levels: [visible_blue]
-        valid_range: { min: 0, max: 1.5 }  # reflectance factor
       - name: CMI_C02
         levels: [visible_red]
         valid_range: { min: 0, max: 1.5 }  # reflectance factor
-      - name: CMI_C03
-        levels: [visible_veggie]
-        valid_range: { min: 0, max: 1.5 }  # reflectance factor
     run_mode: instances
 
-  # Water vapor bands (bands 8, 9, 10)
-  - id: goes18-water-vapor
-    title: "GOES-18 Water Vapor"
-    description: "Water vapor channel brightness temperatures (6.2-7.3µm). Available day and night."
-    level_filter:
-      level_type: top_of_atmosphere
-      level_code: 8
-    parameters:
-      - name: CMI_C08
-        levels: [upper_vapor]
-        valid_range: { min: 180, max: 350 }  # Kelvin
-      - name: CMI_C09
-        levels: [mid_vapor]
-        valid_range: { min: 180, max: 350 }  # Kelvin
-      - name: CMI_C10
-        levels: [low_vapor]
-        valid_range: { min: 180, max: 350 }  # Kelvin
-    run_mode: instances
-
-  # Infrared bands (bands 13, 14)
+  # Infrared band (band 13)
   - id: goes18-infrared
     title: "GOES-18 Infrared"
-    description: "Longwave IR brightness temperature (10.3-11.2µm). Available day and night."
+    description: "Clean longwave IR brightness temperature, band 13 (10.3µm). Available day and night."
     level_filter:
       level_type: top_of_atmosphere
       level_code: 8
     parameters:
       - name: CMI_C13
         levels: [clean_ir]
-        valid_range: { min: 180, max: 350 }  # Kelvin
-      - name: CMI_C14
-        levels: [ir]
         valid_range: { min: 180, max: 350 }  # Kelvin
     run_mode: instances
 
@@ -82,52 +58,25 @@ collections:
   
   - id: goes18-visible-latest
     title: "GOES-18 Visible (Latest)"
-    description: "Most recent visible imagery. Daytime only."
+    description: "Most recent red visible imagery (band 2). Daytime only."
     level_filter:
       level_type: top_of_atmosphere
       level_code: 8
     parameters:
-      - name: CMI_C01
-        levels: [visible_blue]
-        valid_range: { min: 0, max: 1.5 }
       - name: CMI_C02
         levels: [visible_red]
         valid_range: { min: 0, max: 1.5 }
-      - name: CMI_C03
-        levels: [visible_veggie]
-        valid_range: { min: 0, max: 1.5 }
-    run_mode: latest
-
-  - id: goes18-water-vapor-latest
-    title: "GOES-18 Water Vapor (Latest)"
-    description: "Most recent water vapor imagery."
-    level_filter:
-      level_type: top_of_atmosphere
-      level_code: 8
-    parameters:
-      - name: CMI_C08
-        levels: [upper_vapor]
-        valid_range: { min: 180, max: 350 }
-      - name: CMI_C09
-        levels: [mid_vapor]
-        valid_range: { min: 180, max: 350 }
-      - name: CMI_C10
-        levels: [low_vapor]
-        valid_range: { min: 180, max: 350 }
     run_mode: latest
 
   - id: goes18-infrared-latest
     title: "GOES-18 Infrared (Latest)"
-    description: "Most recent IR imagery."
+    description: "Most recent clean IR imagery (band 13)."
     level_filter:
       level_type: top_of_atmosphere
       level_code: 8
     parameters:
       - name: CMI_C13
         levels: [clean_ir]
-        valid_range: { min: 180, max: 350 }
-      - name: CMI_C14
-        levels: [ir]
         valid_range: { min: 180, max: 350 }
     run_mode: latest
 
