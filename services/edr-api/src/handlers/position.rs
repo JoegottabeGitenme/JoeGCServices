@@ -14,6 +14,7 @@ use edr_protocol::{
     CoverageCollection, CoverageJson, EdrFeatureCollection, ParsedCoords,
     PositionQuery as ParsedPositionQuery,
 };
+use futures::StreamExt;
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
@@ -93,6 +94,69 @@ pub struct PositionQueryParams {
 /// the S3 fetch and chunk decode, so this is a bound on the workers one request can occupy.
 const SERIES_READ_CONCURRENCY: usize = 8;
 
+/// How many parameters of one forecast series request are resolved at the same time. Each is
+/// one catalog query plus its reads, which wait on the grid service's shared read permits; the
+/// catalog pool is small.
+const FORECAST_SERIES_PARAM_CONCURRENCY: usize = 4;
+
+/// The value of one parameter at each instant of a series, and the unit of the first grid that
+/// answered.
+type SeriesValues = (HashMap<DateTime<Utc>, Option<f32>>, String);
+
+/// Turn the results of a series read (one per element of `instants`, in order) into
+/// `SeriesValues`.
+///
+/// A failed read is a null at that instant. For observation data that is normal (an hour this
+/// parameter has no grid for) and logged quietly; for forecast data it means the parameter has no
+/// usable dataset at all, or a read failed, and is worth a warning.
+fn series_values(
+    model: &str,
+    param_name: &str,
+    (lon, lat): (f64, f64),
+    instants: &[DateTime<Utc>],
+    results: Vec<grid_processor::Result<grid_processor::PointValue>>,
+    is_observation: bool,
+) -> SeriesValues {
+    let mut values = HashMap::with_capacity(instants.len());
+    let mut units = String::new();
+    for (instant, result) in instants.iter().zip(results) {
+        let value = match result {
+            Ok(point_value) => {
+                if units.is_empty() {
+                    units = point_value.units.clone();
+                }
+                value_at_instant(&point_value, *instant, is_observation)
+            }
+            Err(e) => {
+                if is_observation {
+                    tracing::debug!(
+                        "No {}/{} value at ({}, {}) for time {}: {}",
+                        model,
+                        param_name,
+                        lon,
+                        lat,
+                        instant,
+                        e
+                    );
+                } else {
+                    tracing::warn!(
+                        "Failed to query {}/{} at ({}, {}) for time {}: {}",
+                        model,
+                        param_name,
+                        lon,
+                        lat,
+                        instant,
+                        e
+                    );
+                }
+                None
+            }
+        };
+        values.insert(*instant, value);
+    }
+    (values, units)
+}
+
 /// The value a point read found for the instant `requested`, or `None` if the grid that
 /// answered belongs to a different instant.
 ///
@@ -112,6 +176,22 @@ fn value_at_instant(
         return None;
     }
     point.value
+}
+
+/// One forecast parameter's value at every one of `instants` (see `series_values`), read with
+/// `read_forecast_point_series`.
+async fn forecast_series_values(
+    grid_data: &grid_processor::GridDataService,
+    model: &str,
+    param_name: &str,
+    level: Option<String>,
+    instants: &[DateTime<Utc>],
+    (lon, lat): (f64, f64),
+) -> SeriesValues {
+    let results = grid_data
+        .read_forecast_point_series(model, param_name, level.as_deref(), instants, lon, lat)
+        .await;
+    series_values(model, param_name, (lon, lat), instants, results, false)
 }
 
 /// GET /edr/collections/:collection_id/position
@@ -847,6 +927,71 @@ async fn position_query(
         CoverageJson::point(lon, lat, datetime_str, z_val)
     };
 
+    // Every instant a time series needs a value for (the plan's own, plus the neighbours it
+    // interpolates between), once, oldest first. The same for every parameter.
+    let mut series_instants: Vec<DateTime<Utc>> = Vec::new();
+    for (_target_time, strategy) in &query_plan {
+        match strategy {
+            QueryStrategy::Exact(t) | QueryStrategy::Nearest(t) => series_instants.push(*t),
+            QueryStrategy::Interpolate(before, after, _) => {
+                series_instants.push(*before);
+                series_instants.push(*after);
+            }
+        }
+    }
+    series_instants.sort();
+    series_instants.dedup();
+
+    // Forecast series (GFS, HRRR, ...): resolve every parameter's whole curve up front. The loop
+    // below used to ask for each step of each parameter in turn, one Postgres round trip and one
+    // blocking S3 read after another: a 16 day GFS curve of four parameters is 836 of each.
+    // `read_forecast_point_series` answers each parameter with ONE catalog query and reads its
+    // grids concurrently, returning what the per-step lookups returned (nearest valid time,
+    // newest run on ties). The parameters run at the same time, bounded; the grid service's own
+    // permits bound the reads of all requests together. Output order is the loop's, not
+    // completion order. Instance queries (`reference_time`) keep the per-step path: their "which
+    // dataset" rule is not simply "the one valid at this instant". Vertical profiles (multi-z)
+    // are answered at a single time by the loop's multi-z branch and never use a series; the
+    // `!is_multi_z` test only keeps this from reading curves nobody uses.
+    let mut forecast_series: HashMap<String, SeriesValues> = HashMap::new();
+    if is_multi_time
+        && !parsed_times.is_empty()
+        && !is_multi_z
+        && !is_observation_model
+        && reference_time.is_none()
+        && series_instants.len() > 1
+    {
+        // A repeated `parameter-name` is resolved once and answered at each of its places.
+        let mut distinct: Vec<&String> = Vec::new();
+        for param_name in &params_to_query {
+            if !distinct.contains(&param_name) {
+                distinct.push(param_name);
+            }
+        }
+        let jobs: Vec<_> = distinct
+            .iter()
+            .map(|param_name| {
+                let param_def = collection_def
+                    .parameters
+                    .iter()
+                    .find(|p| p.name == **param_name);
+                forecast_series_values(
+                    &state.grid_data_service,
+                    &model_config.model,
+                    param_name,
+                    build_level_string(&collection_def.level_filter, param_def, z_val),
+                    &series_instants,
+                    (lon, lat),
+                )
+            })
+            .collect();
+        let resolved: Vec<_> = futures::stream::iter(jobs)
+            .buffered(FORECAST_SERIES_PARAM_CONCURRENCY)
+            .collect()
+            .await;
+        forecast_series = distinct.into_iter().cloned().zip(resolved).collect();
+    }
+
     // For each parameter, query the data
     for param_name in &params_to_query {
         // Find the parameter definition in the collection to get level info
@@ -924,64 +1069,40 @@ async fn position_query(
             // Cache for queried values to avoid duplicate queries when interpolating
             let mut value_cache: HashMap<DateTime<Utc>, Option<f32>> = HashMap::new();
 
+            // Forecast series: already resolved above, for all parameters at once.
+            if let Some((values_by_instant, units)) = forecast_series.get(param_name).cloned() {
+                value_cache = values_by_instant;
+                units_str = units;
+            }
+
             // Observation series (QPE, radar, satellite): resolve every needed instant with ONE
             // catalog query and read the grids concurrently, filling the cache so the loop below
             // never touches the catalog. The loop used to ask for each step in turn: for a 72 h
             // QPE curve that was 72 sequential Postgres round trips and 72 sequential blocking
             // grid reads (0.4-0.6 s warm, 1-10 s cold, 19.8 s straight after a restart).
-            // Instance queries (`reference_time`) and forecast models keep the per-step path:
-            // their "which dataset" rule is not simply "the one valid at this instant".
-            if is_observation_model && reference_time.is_none() {
-                let mut wanted: Vec<DateTime<Utc>> = Vec::new();
-                for (_target_time, strategy) in &query_plan {
-                    match strategy {
-                        QueryStrategy::Exact(t) | QueryStrategy::Nearest(t) => wanted.push(*t),
-                        QueryStrategy::Interpolate(before, after, _) => {
-                            wanted.push(*before);
-                            wanted.push(*after);
-                        }
-                    }
-                }
-                wanted.sort();
-                wanted.dedup();
-                if wanted.len() > 1 {
-                    let results = state
-                        .grid_data_service
-                        .read_point_series(
-                            &model_config.model,
-                            param_name,
-                            level_str.as_deref(),
-                            &wanted,
-                            lon,
-                            lat,
-                            SERIES_READ_CONCURRENCY,
-                        )
-                        .await;
-                    for (instant, result) in wanted.iter().zip(results) {
-                        let value = match result {
-                            Ok(point_value) => {
-                                if units_str.is_empty() {
-                                    units_str = point_value.units.clone();
-                                }
-                                value_at_instant(&point_value, *instant, is_observation_model)
-                            }
-                            Err(e) => {
-                                // Normal for an hour this parameter has no grid for.
-                                tracing::debug!(
-                                    "No {}/{} value at ({}, {}) for time {}: {}",
-                                    model_config.model,
-                                    param_name,
-                                    lon,
-                                    lat,
-                                    instant,
-                                    e
-                                );
-                                None
-                            }
-                        };
-                        value_cache.insert(*instant, value);
-                    }
-                }
+            // Instance queries (`reference_time`) keep the per-step path: their "which dataset"
+            // rule is not simply "the one valid at this instant".
+            if is_observation_model && reference_time.is_none() && series_instants.len() > 1 {
+                let results = state
+                    .grid_data_service
+                    .read_point_series(
+                        &model_config.model,
+                        param_name,
+                        level_str.as_deref(),
+                        &series_instants,
+                        lon,
+                        lat,
+                        SERIES_READ_CONCURRENCY,
+                    )
+                    .await;
+                (value_cache, units_str) = series_values(
+                    &model_config.model,
+                    param_name,
+                    (lon, lat),
+                    &series_instants,
+                    results,
+                    true,
+                );
             }
 
             for (_target_time, strategy) in &query_plan {
