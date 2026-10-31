@@ -27,12 +27,20 @@ pub enum DownsampleMethod {
     Nearest,
 }
 
-/// Parameters whose values are category CODES, not quantities: they must be read from the nearest
-/// cell and downsampled by picking a real cell, never blended. Currently MRMS `PRECIP_FLAG`
-/// (HRRR's 0/1 `CRAIN`/`CSNOW`/... masks are deliberately not listed: they have always been
-/// blended, and clients read the fraction as "how much of this cell is rain").
+/// Parameters whose values are category CODES or on/off flags, not quantities: they must be read
+/// from the nearest cell and downsampled by picking a real cell, never blended, and an overview
+/// level of one is never used to answer a request.
+///
+/// MRMS `PRECIP_FLAG` is a code table (0 none, 7 hail, ...). HRRR's `CRAIN` / `CSNOW` / `CFRZR` /
+/// `CICEP` are 0/1 flags per precipitation type. They were once left out of this list and
+/// averaged, so the overview levels of grids ingested before they were added hold fractions (a 0.25
+/// "snow" that is not one cell's value) and every level above 0 of those grids is unusable. New
+/// ingests downsample them by nearest; readers must still skip the levels of any parameter named
+/// here, because the old grids stay in storage until they expire.
 pub fn is_categorical_parameter(parameter: &str) -> bool {
-    parameter.eq_ignore_ascii_case("PRECIP_FLAG")
+    ["PRECIP_FLAG", "CRAIN", "CSNOW", "CFRZR", "CICEP"]
+        .iter()
+        .any(|categorical| parameter.eq_ignore_ascii_case(categorical))
 }
 
 impl DownsampleMethod {
@@ -43,8 +51,9 @@ impl DownsampleMethod {
     pub fn for_parameter(parameter: &str) -> Self {
         let param_upper = parameter.to_uppercase();
 
-        // Categorical codes (MRMS precipitation type: 0 none, 7 hail, ...).
-        // Averaging or taking the max of codes invents categories; keep a real one.
+        // Categorical codes and flags (MRMS precipitation type: 0 none, 7 hail, ...; HRRR's 0/1
+        // precipitation-type masks). Averaging or taking the max of codes invents categories;
+        // keep a real one.
         if is_categorical_parameter(parameter) {
             return DownsampleMethod::Nearest;
         }
@@ -397,6 +406,29 @@ mod tests {
         let (out, w, h) = downsample_2x(&[3.0, 7.0, 0.0, 1.0], 2, 2, DownsampleMethod::Nearest);
         assert_eq!((w, h), (1, 1));
         assert!([3.0, 7.0, 0.0, 1.0].contains(&out[0]), "{out:?}");
+    }
+
+    /// The four HRRR precipitation-type flags were Mean-downsampled (and read bilinearly), so
+    /// their stored overview levels hold fractions. They are categorical now: future ingests pick a
+    /// real cell and readers skip the levels.
+    #[test]
+    fn hrrr_precipitation_type_flags_are_categorical() {
+        for flag in ["CRAIN", "CSNOW", "CFRZR", "CICEP", "csnow", "PRECIP_FLAG"] {
+            assert!(is_categorical_parameter(flag), "{flag}");
+            assert_eq!(
+                DownsampleMethod::for_parameter(flag),
+                DownsampleMethod::Nearest,
+                "{flag}"
+            );
+        }
+        // Precipitation RATE is a quantity: it stays averaged / maxed.
+        for quantity in ["PRATE", "PRECIP_RATE", "REFC", "TMP", "CRAINS", "SNOD"] {
+            assert!(!is_categorical_parameter(quantity), "{quantity}");
+        }
+        assert_eq!(
+            DownsampleMethod::for_parameter("PRATE"),
+            DownsampleMethod::Mean
+        );
     }
 
     #[test]

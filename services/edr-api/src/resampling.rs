@@ -7,8 +7,17 @@
 //! For projected grids, we use the proper projection math (geo_to_grid) to
 //! correctly transform coordinates, matching the approach used in WMS rendering.
 
-use grid_processor::{BoundingBox, GridRegion, ProjectionType};
+use grid_processor::{level_index, BoundingBox, GridRegion, ProjectionType};
 use projection::{LambertConformal, Mercator, PolarStereographic};
+
+/// Native cells per cell of the data being resampled: 1 for a native grid, 2 for pyramid level 1,
+/// 4 for level 2. Levels halve the size of the grid (rounding down), so the ratio is a power of
+/// two up to that rounding; reading it off the sizes is how a level is recognised here.
+fn pyramid_scale(data_size: usize, native_size: usize) -> f64 {
+    (native_size as f64 / data_size.max(1) as f64)
+        .round()
+        .max(1.0)
+}
 
 /// Resample a grid region from its native projection to a regular geographic grid.
 ///
@@ -112,10 +121,9 @@ fn resample_lambert_to_geographic(
         _ => LambertConformal::hrrr(), // Default to HRRR
     };
 
-    // Calculate scale factors if data dimensions differ from native projection dimensions.
-    // This handles cases where pyramid levels or partial reads are used.
-    let scale_x = data_width as f64 / proj.nx as f64;
-    let scale_y = data_height as f64 / proj.ny as f64;
+    // A pyramid level has fewer, coarser cells: `scale_x` native cells make one of its columns.
+    let scale_x = pyramid_scale(data_width, proj.nx);
+    let scale_y = pyramid_scale(data_height, proj.ny);
 
     // For each output pixel, find the corresponding point in the input data
     for out_y in 0..output_height {
@@ -129,9 +137,9 @@ fn resample_lambert_to_geographic(
             // proj.geo_to_grid returns indices for the native resolution grid
             let (native_i, native_j) = proj.geo_to_grid(lat, lon);
 
-            // Scale indices to match actual data dimensions
-            let grid_i = native_i * scale_x;
-            let grid_j = native_j * scale_y;
+            // Place the native position on the level's cells (see `level_index`)
+            let grid_i = level_index(native_i, scale_x);
+            let grid_j = level_index(native_j, scale_y);
 
             // Check if within data bounds
             if grid_i < 0.0
@@ -183,9 +191,9 @@ fn resample_polar_stereo_to_geographic(
         _ => PolarStereographic::nbm_alaska(), // Default to NBM Alaska
     };
 
-    // Calculate scale factors if data dimensions differ from native projection dimensions
-    let scale_x = data_width as f64 / proj.nx as f64;
-    let scale_y = data_height as f64 / proj.ny as f64;
+    // A pyramid level has fewer, coarser cells: `scale_x` native cells make one of its columns.
+    let scale_x = pyramid_scale(data_width, proj.nx);
+    let scale_y = pyramid_scale(data_height, proj.ny);
 
     for out_y in 0..output_height {
         for out_x in 0..output_width {
@@ -195,9 +203,9 @@ fn resample_polar_stereo_to_geographic(
             // Convert geographic to Polar Stereographic grid indices using proper projection math
             let (native_i, native_j) = proj.geo_to_grid(lat, lon);
 
-            // Scale indices to match actual data dimensions
-            let grid_i = native_i * scale_x;
-            let grid_j = native_j * scale_y;
+            // Place the native position on the level's cells (see `level_index`)
+            let grid_i = level_index(native_i, scale_x);
+            let grid_j = level_index(native_j, scale_y);
 
             if grid_i < 0.0
                 || grid_i >= data_width as f64 - 1.0
@@ -249,9 +257,9 @@ fn resample_mercator_to_geographic(
         _ => Mercator::nbm_hawaii(), // Default to NBM Hawaii
     };
 
-    // Calculate scale factors if data dimensions differ from native projection dimensions
-    let scale_x = data_width as f64 / proj.nx as f64;
-    let scale_y = data_height as f64 / proj.ny as f64;
+    // A pyramid level has fewer, coarser cells: `scale_x` native cells make one of its columns.
+    let scale_x = pyramid_scale(data_width, proj.nx);
+    let scale_y = pyramid_scale(data_height, proj.ny);
 
     for out_y in 0..output_height {
         for out_x in 0..output_width {
@@ -261,9 +269,9 @@ fn resample_mercator_to_geographic(
             // Convert geographic to Mercator grid indices using proper projection math
             let (native_i, native_j) = proj.geo_to_grid(lat, lon);
 
-            // Scale indices to match actual data dimensions
-            let grid_i = native_i * scale_x;
-            let grid_j = native_j * scale_y;
+            // Place the native position on the level's cells (see `level_index`)
+            let grid_i = level_index(native_i, scale_x);
+            let grid_j = level_index(native_j, scale_y);
 
             if grid_i < 0.0
                 || grid_i >= data_width as f64 - 1.0
@@ -537,6 +545,92 @@ mod tests {
         // Should return NaN if any corner is NaN
         let val = bilinear_interpolate(&data, 2, 2, 0.5, 0.5);
         assert!(val.is_nan());
+    }
+
+    /// HRRR-sized grid (the real dimensions) where each cell holds `3 * col + 7 * row` with the
+    /// row counted from the south, and its pyramid levels by mean (what ingest writes for a
+    /// quantity). The field is affine in the grid's own coordinates, so every level holds it
+    /// exactly at its cell centres and a correct bilinear sample is exact at any level.
+    fn hrrr_levels() -> Vec<GridRegion> {
+        use grid_processor::downsample::{downsample_2x, DownsampleMethod};
+
+        let (nx, ny) = (1799, 1059);
+        let bbox = BoundingBox::new(-134.09548, 21.138123, -60.917193, 47.842195);
+        let mut data: Vec<f32> = (0..ny)
+            .flat_map(|row| (0..nx).map(move |col| (3 * col + 7 * row) as f32))
+            .collect();
+        let (mut w, mut h) = (nx, ny);
+        let mut levels = Vec::new();
+        for _ in 0..3 {
+            levels.push(GridRegion::new(
+                data.clone(),
+                w,
+                h,
+                bbox,
+                (bbox.width() / w as f64, bbox.height() / h as f64),
+            ));
+            let (d, nw, nh) = downsample_2x(&data, w, h, DownsampleMethod::Mean);
+            (data, w, h) = (d, nw, nh);
+        }
+        levels
+    }
+
+    /// The reprojection must put a pixel on the same value whichever pyramid level it reads. A
+    /// level's cell k is centred on native coordinate k * scale + (scale - 1) / 2; indexing it at
+    /// native * (1 / scale) put every sample half a native cell per level off -- 1.5 here at
+    /// level 1, 4.5 at level 2.
+    #[test]
+    fn lambert_reprojection_from_a_pyramid_level_agrees_with_the_native_grid() {
+        let proj = LambertConformal::hrrr();
+        let levels = hrrr_levels();
+        assert_eq!(
+            levels
+                .iter()
+                .map(|l| (l.width, l.height))
+                .collect::<Vec<_>>(),
+            [(1799, 1059), (899, 529), (449, 264)]
+        );
+        for region in &levels {
+            let out =
+                resample_to_geographic(region, ProjectionType::LambertConformal, "hrrr", None);
+            let (mut checked, mut sampled_inside) = (0, 0);
+            for y in (0..out.height).step_by(7) {
+                for x in (0..out.width).step_by(7) {
+                    let lon = out.bbox.min_lon + (x as f64 + 0.5) * out.resolution.0;
+                    let lat = out.bbox.max_lat - (y as f64 + 0.5) * out.resolution.1;
+                    let (i, j) = proj.geo_to_grid(lat, lon);
+                    let got = out.data[y * out.width + x];
+                    checked += 1;
+                    if got.is_nan() {
+                        continue;
+                    }
+                    sampled_inside += 1;
+                    let want = 3.0 * i + 7.0 * j;
+                    assert!(
+                        (got as f64 - want).abs() < 0.1,
+                        "{}x{} pixel ({x},{y}): got {got}, want {want}",
+                        region.width,
+                        region.height
+                    );
+                }
+            }
+            // most of the envelope of the grid is on the grid
+            assert!(
+                sampled_inside * 2 > checked,
+                "{sampled_inside} of {checked}"
+            );
+        }
+    }
+
+    /// A native grid (data the size of the projection's own) is indexed exactly as before.
+    #[test]
+    fn native_resolution_data_is_not_rescaled() {
+        assert_eq!(pyramid_scale(1799, 1799), 1.0);
+        assert_eq!(pyramid_scale(899, 1799), 2.0);
+        assert_eq!(pyramid_scale(449, 1799), 4.0);
+        assert_eq!(pyramid_scale(529, 1059), 2.0);
+        assert_eq!(pyramid_scale(264, 1059), 4.0);
+        assert_eq!(level_index(1234.567, pyramid_scale(1799, 1799)), 1234.567);
     }
 
     #[test]
