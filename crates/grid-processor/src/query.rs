@@ -80,6 +80,20 @@ pub enum TimeSpecification {
         valid_time: DateTime<Utc>,
     },
 
+    /// A named model run (an EDR "instance") at a named valid time, or at the run's first
+    /// forecast when no time is named. Exact: a run or a time the catalog does not hold is
+    /// `NotFound`, never another run's data.
+    ///
+    /// `Forecast` cannot say this: its `reference_time` is not used to choose the dataset (the
+    /// catalog is asked for the newest run), and `at_run` after `at_valid_time` replaces the valid
+    /// time, so neither the run nor the time of the request was honoured.
+    Instance {
+        /// The run (reference time).
+        reference_time: DateTime<Utc>,
+        /// The valid time within that run. `None` means the run's first forecast.
+        valid_time: Option<DateTime<Utc>>,
+    },
+
     /// Get the latest available data regardless of type.
     /// For forecasts: latest run, earliest forecast hour.
     /// For observations: most recent observation.
@@ -203,6 +217,20 @@ impl DatasetQuery {
         self
     }
 
+    /// Select exactly the run `reference_time`, at `valid_time` (the run's first forecast when
+    /// `None`). See [`TimeSpecification::Instance`].
+    pub fn in_instance(
+        mut self,
+        reference_time: DateTime<Utc>,
+        valid_time: Option<DateTime<Utc>>,
+    ) -> Self {
+        self.time_spec = TimeSpecification::Instance {
+            reference_time,
+            valid_time,
+        };
+        self
+    }
+
     /// Request the latest available data.
     ///
     /// For forecast models: latest run, earliest forecast hour.
@@ -312,6 +340,33 @@ mod tests {
         assert!(matches!(query.time_spec, TimeSpecification::Latest));
         assert_eq!(query.forecast_hour(), None);
         assert_eq!(query.reference_time(), None);
+    }
+
+    #[test]
+    fn an_instance_keeps_both_the_run_and_the_valid_time() {
+        let run = Utc.with_ymd_and_hms(2026, 10, 31, 12, 0, 0).unwrap();
+        let valid = Utc.with_ymd_and_hms(2026, 10, 31, 15, 0, 0).unwrap();
+
+        // `at_valid_time` then `at_run` (what the area handler did) lost the valid time.
+        let lost = DatasetQuery::forecast("hrrr", "REFC")
+            .at_valid_time(valid)
+            .at_run(run);
+        assert!(matches!(
+            lost.time_spec,
+            TimeSpecification::Forecast {
+                reference_time: Some(_),
+                forecast_hour: None
+            }
+        ));
+
+        let kept = DatasetQuery::forecast("hrrr", "REFC").in_instance(run, Some(valid));
+        match kept.time_spec {
+            TimeSpecification::Instance {
+                reference_time,
+                valid_time,
+            } => assert_eq!((reference_time, valid_time), (run, Some(valid))),
+            other => panic!("not an instance: {other:?}"),
+        }
     }
 
     #[test]

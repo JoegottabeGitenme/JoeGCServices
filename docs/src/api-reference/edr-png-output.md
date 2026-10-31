@@ -32,6 +32,7 @@ f=png" -o temperature.png
 | `width` | No | Output width in pixels (max 4096) | `512` |
 | `height` | No | Output height in pixels (max 4096) | `512` |
 | `depth` | No | Bit depth: `8` or `16` (default) | `8` |
+| `crop` | No | `true` cuts a projected grid (HRRR) to the polygon's box; see [Cropping a projected grid](#cropping-a-projected-grid-croptrue) | `true` |
 | `datetime` | No | Time instant | `2024-12-29T12:00:00Z` |
 | `z` | No | Vertical level | `850` |
 
@@ -174,6 +175,32 @@ curl "...&f=png&width=512&height=512" -o resized.png
 - Both width and height must be specified together
 - Uses nearest-neighbor resampling (preserves discrete values)
 
+### Overview levels
+
+Every grid is stored with a pyramid of coarser overview levels (each half the size of the one
+before). A projected grid cut with `crop=true` (below) is read from the coarsest level that still
+has a cell per pixel across the polygon, which is a fraction of the data: a polygon 600 cells
+wide into an image 120 pixels wide comes from a level with a quarter of the cells across. HRRR
+composite reflectivity (`REFC`) is downsampled by **maximum**, so a small storm core survives;
+every other continuous parameter by mean, HRRR's precipitation rate (`PRATE`) included, so a
+convective core of it reads lower from a level than it is in the grid. (MRMS reflectivity,
+precipitation rate and hail size are downsampled by maximum too, but MRMS is a lat/lon grid and is
+never read from a level, see below.) A small `width` and `height` on a large polygon is therefore
+cheaper than the same polygon at native size.
+
+Parameters whose values are category codes or on/off flags are **never** read from an overview
+level, whatever the size asked for: MRMS `PRECIP_FLAG` and HRRR's `CRAIN`, `CSNOW`, `CFRZR` and
+`CICEP`. An overview of a code is another cell's code at best and a fraction that is no code at
+worst (HRRR flags ingested before they were marked categorical hold fractions in their overview
+levels), so those are always read at native resolution and sampled nearest-cell (see the
+[position](./edr.md) query).
+
+Nothing else is read from an overview level. A lat/lon grid (MRMS, GFS) is always read at native
+resolution, whatever `width` and `height`, so every parameter of a dataset answers a polygon on the
+same grid with the same `X-EDR-BBox`, and a client can lay one over another. A projected grid read
+without `crop` is returned whole whatever the polygon, so the polygon says nothing about how much
+of it the image needs.
+
 ## Bandwidth Comparison
 
 ### EDR PNG vs WMS Tiles
@@ -269,6 +296,20 @@ end) is capped at 60 seconds whatever the model is configured with, because a
 newer scan may replace it at any time. The area endpoint ignores `run` (it
 always renders the newest run), so `run` does not make a PNG explicit.
 
+A `datetime` is answered with the dataset **nearest** to it, so naming a time does not by itself
+make the PNG that time's. The explicit lifetime is given only when the dataset the server found is
+valid at the instant asked for (within one second). An instant the server has no dataset for (a
+scan that has expired or not arrived yet, a time in the future, a time between two model steps) is
+answered with a neighbouring one and gets the 60 second cap: it changes when the instant's own data
+arrives.
+
+`/collections/{id}/instances/{run}/area` reads that run: the dataset of the run valid at the
+`datetime` (the run's first forecast when none is given). For a `datetime` list or interval it is
+the first of those times that the run holds: an interval that starts before the run's first step
+(or is open at the start) is answered with that step, whatever other runs hold. A time the run does
+not hold, or a list or interval with none of the run's times in it, is a `404`, never another
+run's data, and the answer keeps the explicit lifetime because a run's step does not change.
+
 Configure cache policy per model:
 
 ```yaml
@@ -284,6 +325,9 @@ settings:
 |-------|-------|----------|
 | 400 Multiple parameters | PNG requires exactly one parameter | Use `parameter-name=X` |
 | 400 Invalid depth | depth must be 8 or 16 | Use `depth=8` or `depth=16` |
+| 400 Invalid crop | `crop` must be `true` or `false`, and is only for `f=png` | Use `crop=true` |
+| 400 No data available | The polygon is outside the collection's geographic bounds (with `crop=true`: outside the model domain) | Use a polygon over the data |
+| 404 Not found | An instance that does not exist, or a `datetime` with no time in it that the instance holds | Use a time listed for the instance |
 | 400 Dimensions too large | width or height > 4096 | Reduce dimensions |
 | 413 Area too large | Exceeds `max_area_sq_degrees_png` | Reduce polygon size |
 
@@ -358,6 +402,50 @@ parameter-name=TMP&f=png"
 ```
 
 The reprojection uses bilinear interpolation for smooth results.
+
+**Without `crop`, a projected grid answers with the whole model domain, whatever polygon is sent.**
+The polygon only has to be valid (and under the area limit). `X-EDR-BBox` is the extent of the
+whole domain (for HRRR about -134.1, 21.1, -60.9, 52.6) and `width`/`height` squeeze that into the
+image. Clients that want the same URL for every request, and the whole domain every time (the
+app's wind, pressure and heat layers), rely on this and keep working unchanged.
+
+### Cropping a projected grid (`crop=true`)
+
+`crop=true` asks a projected grid for **the polygon's own bounding box**:
+
+```bash
+# A 2.5 x 1.5 degree trail view of HRRR: 250 x 150 pixels instead of the whole domain
+curl ".../edr/collections/hrrr-subh-atmosphere/area?\
+coords=POLYGON((-106 39,-103.5 39,-103.5 40.5,-106 40.5,-106 39))&\
+parameter-name=REFC&f=png&width=250&height=150&crop=true"
+```
+
+- The image covers exactly the polygon's bounding box, at `width` x `height` (when they are
+  omitted, at the grid's own cell spacing: about 3 km per pixel for HRRR). For a `MULTIPOLYGON`
+  that is the box around all of its polygons, and the pixels outside every polygon are no-data
+  (alpha 0), whatever the shape of the first polygon.
+- `X-EDR-BBox` is that bounding box (the outer pixel edges, as always), so a client places the
+  image from the header and nothing else.
+- Pixels outside the model domain are no-data (alpha 0), so a box over the edge of the domain is
+  fine. A box entirely outside it is the usual `400` no-data answer.
+- Each pixel is sampled from the grid with the same bilinear interpolation as the whole-domain
+  image, so the two agree wherever they overlap, as long as the image is not much smaller than
+  the polygon. When it is, the pixels come from an overview level (see
+  [Overview levels](#overview-levels)): bilinear samples of a level whose cells are the maximum
+  (`REFC`) or the mean (everything else) of the cells they cover, so a reflectivity core can
+  read higher, and a precipitation-rate core lower, than it does in the whole-domain image.
+- Only the chunks of the grid that hold the box are read (one or two of HRRR's twelve for a trail
+  view, against all twelve), and a large box into a small image comes from an overview level
+  (see [Overview levels](#overview-levels)). A trail view is a few kilobytes and takes
+  milliseconds; the whole-domain image is hundreds of kilobytes and a reprojection of the whole
+  domain.
+- `crop` has no effect on a lat/lon grid (MRMS, GFS), which is always cut to the polygon (for a
+  `MULTIPOLYGON`, to its first polygon, as ever). It is only for `f=png`; `crop=false` is the
+  default.
+
+A client can tell a server that does not know `crop` (an older deployment ignores it) by
+`X-EDR-BBox`: if the box in the header is far larger than the polygon asked for, the answer is the
+whole domain and the client should place it by the header as it always has.
 
 ## See Also
 

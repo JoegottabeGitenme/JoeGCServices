@@ -427,6 +427,7 @@ Alternative format for GIS integration:
 ### Caching Strategy
 
 - **Chunk Cache**: Grid processor maintains a shared chunk cache for Zarr data
+- **Area PNG reads**: an area PNG looks the dataset up once and reads and reprojects it once. A lat/lon grid is read at native resolution, and a projected grid (HRRR) with `crop=true` only from the chunks that hold the polygon, from an overview level when the image is small; see [EDR PNG Output](../api-reference/edr-png-output.md)
 - **Location Cache**: In-memory cache for location queries with `X-Cache` header. Entries for the latest data live at most 60 seconds, so a HIT is never older than the `max-age` it is served with
 - **HTTP Cache Headers**: All responses include appropriate `Cache-Control` headers
 
@@ -436,6 +437,7 @@ Alternative format for GIS integration:
 |---------------|---------------|
 | Data queries with an explicit time (`datetime`, instance) | `max-age=300` (5 minutes) |
 | Data queries for the latest data (no time given, `*-latest` collections) | `max-age=60` (1 minute) |
+| Area PNG whose `datetime` the catalog had no dataset for (answered with the nearest one) | `max-age=60` (1 minute) |
 | Collections/instances | `max-age=60` (1 minute) |
 | Locations list | `max-age=3600` (1 hour) |
 | Location data | `max-age=300` (5 minutes) explicit, `max-age=60` latest |

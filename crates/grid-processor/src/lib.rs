@@ -136,6 +136,7 @@ pub mod service;
 #[cfg(test)]
 pub mod testdata;
 pub mod types;
+pub mod window;
 pub mod writer;
 
 // Re-export commonly used types at crate root
@@ -154,11 +155,12 @@ pub use projection::{
     reproject_geostationary_to_geographic, tile_to_bbox,
 };
 pub use query::{DatasetQuery, PointValue, TimeSpecification};
-pub use service::GridDataService;
+pub use service::{AreaData, AreaRead, AreaReadOptions, GridDataService};
 pub use types::{
     AxisInfo, BoundingBox, CacheStats, GridMetadata, GridRegion, InterpolationMethod,
     MultiscaleMetadata, ProjectionType, PyramidLevel, RowOrigin,
 };
+pub use window::{cell_range, level_index, Footprint, NativeWindow};
 pub use writer::{MultiscaleWriteResult, ZarrMetadata, ZarrWriteResult, ZarrWriter};
 
 // Re-export storage traits for use by consumers

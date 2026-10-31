@@ -1517,6 +1517,29 @@ impl Catalog {
         Ok(times)
     }
 
+    /// The valid times one model run holds (any parameter), unique and ascending. Empty for a run
+    /// the catalog does not hold. The run's own share of [`Self::get_model_valid_times`], for a
+    /// request that names the run and a span of time: the model's earliest instant may belong to
+    /// an older run, which says nothing about this one.
+    pub async fn get_run_valid_times(
+        &self,
+        model: &str,
+        reference_time: DateTime<Utc>,
+    ) -> WmsResult<Vec<DateTime<Utc>>> {
+        let times = sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT DISTINCT valid_time FROM datasets \
+             WHERE model = $1 AND reference_time = $2 AND status = 'available' \
+             ORDER BY valid_time ASC",
+        )
+        .bind(model)
+        .bind(reference_time)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(times)
+    }
+
     /// Get the forecast time range for a specific model run.
     /// Returns (start_time, end_time) where start_time is the run time
     /// and end_time is the latest valid_time from all forecasts in that run.
@@ -1745,6 +1768,38 @@ impl Catalog {
                 level.map(|l| format!(" level {}", l)).unwrap_or_default()
             ))
         })
+    }
+
+    /// The first dataset of one model run: its earliest forecast hour, and within that hour its
+    /// earliest minute. `None` when the run holds nothing for this parameter (and level, if given).
+    ///
+    /// Not [`Self::find_by_run_and_forecast_hour`] at hour 0: a run need not start there (every
+    /// NBM run starts at hour 1, and GFS accumulations such as APCP have no f000), so "the run's
+    /// first forecast" has to be looked up.
+    pub async fn find_run_first_forecast(
+        &self,
+        model: &str,
+        parameter: &str,
+        reference_time: DateTime<Utc>,
+        level: Option<&str>,
+    ) -> WmsResult<Option<CatalogEntry>> {
+        let row = sqlx::query_as::<_, DatasetRow>(
+            "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size, zarr_metadata FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND reference_time = $3 \
+               AND ($4::text IS NULL OR level = $4) AND status = 'available' \
+             ORDER BY forecast_hour ASC, forecast_minute ASC LIMIT 1",
+        )
+        .bind(model)
+        .bind(parameter)
+        .bind(reference_time)
+        .bind(level)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(row.map(|r| r.into()))
     }
 
     /// Get best available data for a time range, falling back across runs.
