@@ -432,14 +432,7 @@ impl Catalog {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> WmsResult<Vec<(DateTime<Utc>, CatalogEntry)>> {
-        #[derive(FromRow)]
-        struct RangeRow {
-            #[sqlx(flatten)]
-            row: DatasetRow,
-            valid_time: DateTime<Utc>,
-        }
-
-        let rows = sqlx::query_as::<_, RangeRow>(
+        self.query_valid_time_range(
             "SELECT model, parameter, level, reference_time, forecast_hour, forecast_minute, \
              bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
              storage_path, file_size, zarr_metadata, valid_time FROM datasets \
@@ -447,15 +440,74 @@ impl Catalog {
                AND ($3::text IS NULL OR level = $3) \
                AND valid_time >= $4 AND valid_time <= $5 \
              ORDER BY valid_time ASC, reference_time DESC, ingested_at DESC",
+            model,
+            parameter,
+            level,
+            from,
+            to,
         )
-        .bind(model)
-        .bind(parameter)
-        .bind(level)
-        .bind(from)
-        .bind(to)
-        .fetch_all(&self.pool)
         .await
-        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+    }
+
+    /// Like [`find_datasets_in_valid_time_range`](Self::find_datasets_in_valid_time_range), but
+    /// ONE dataset per distinct valid time: the one that function lists first for that instant
+    /// (newest run, then most recently ingested), which is also the one
+    /// `find_by_time[_and_level]` picks when that instant is its nearest. A forecast series only
+    /// ever uses that first dataset, and a model keeps many runs, so this returns a fraction of
+    /// the rows (and of their `zarr_metadata` documents) for the same answer.
+    pub async fn find_newest_datasets_in_valid_time_range(
+        &self,
+        model: &str,
+        parameter: &str,
+        level: Option<&str>,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> WmsResult<Vec<(DateTime<Utc>, CatalogEntry)>> {
+        self.query_valid_time_range(
+            "SELECT DISTINCT ON (valid_time) \
+             model, parameter, level, reference_time, forecast_hour, forecast_minute, \
+             bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, \
+             storage_path, file_size, zarr_metadata, valid_time FROM datasets \
+             WHERE model = $1 AND parameter = $2 AND status = 'available' \
+               AND ($3::text IS NULL OR level = $3) \
+               AND valid_time >= $4 AND valid_time <= $5 \
+             ORDER BY valid_time ASC, reference_time DESC, ingested_at DESC",
+            model,
+            parameter,
+            level,
+            from,
+            to,
+        )
+        .await
+    }
+
+    /// Shared body of the two range queries above: `sql` takes `$1..$5` as
+    /// `model, parameter, level, from, to` and selects `DatasetRow`'s columns plus `valid_time`.
+    async fn query_valid_time_range(
+        &self,
+        sql: &str,
+        model: &str,
+        parameter: &str,
+        level: Option<&str>,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> WmsResult<Vec<(DateTime<Utc>, CatalogEntry)>> {
+        #[derive(FromRow)]
+        struct RangeRow {
+            #[sqlx(flatten)]
+            row: DatasetRow,
+            valid_time: DateTime<Utc>,
+        }
+
+        let rows = sqlx::query_as::<_, RangeRow>(sql)
+            .bind(model)
+            .bind(parameter)
+            .bind(level)
+            .bind(from)
+            .bind(to)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
 
         Ok(rows
             .into_iter()
