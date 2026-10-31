@@ -24,6 +24,16 @@
 //! with `ignores_run`, so their `run` never pins the time. If an endpoint
 //! starts honouring `run`, drop the flag there.
 //!
+//! # A named time only pins the response if the catalog had it
+//!
+//! A `datetime` resolves to the NEAREST dataset the catalog holds, not an exact one. A scan that
+//! has expired, one that has not been ingested yet, or an instant in the future is answered with
+//! a neighbouring scan; the URL names a time but the body is another time's, and it changes once
+//! the instant's own data lands. Caching that for the explicit TTL (hours, for the model
+//! collections) serves the wrong scan from the CDN long after the right one exists. A handler
+//! that reads the dataset therefore passes what it matched to [`confirm_match`], which keeps the
+//! explicit TTL only when the dataset is valid at the instant that was asked for.
+//!
 //! Only data queries use this. Metadata (collections, conformance, instance
 //! lists) and non-temporal data (locations lists, trails, populated places)
 //! keep their own TTLs: they are not "about latest".
@@ -31,6 +41,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use grid_processor::service::MATCH_TOLERANCE;
 
 pub use wms_common::cache_control::{TimeSelection, LATEST_MAX_AGE_SECS};
 
@@ -93,6 +104,31 @@ impl RequestedTime<'_> {
     /// before the latest-time rule (it still applies to explicit queries).
     pub fn cache_control(&self, explicit_secs: u32) -> String {
         self.selection().cache_control(explicit_secs)
+    }
+}
+
+/// `selection` once the catalog has answered: still explicit only if the dataset it matched is
+/// valid at the instant the query asked for.
+///
+/// `requested` is the instant the handler asked the catalog for, `None` when the query named no
+/// instant (an instance's own first forecast: nothing to compare); `matched` is the valid time of
+/// the dataset that came back. Within [`MATCH_TOLERANCE`] (sub-second representation differences,
+/// the same allowance the position series uses) it is that instant's dataset. Further away it is a
+/// neighbour the catalog fell back to, so the response is latest-like and gets the short TTL.
+/// A latest selection stays latest.
+pub fn confirm_match(
+    selection: TimeSelection,
+    requested: Option<DateTime<Utc>>,
+    matched: DateTime<Utc>,
+) -> TimeSelection {
+    match requested {
+        Some(requested)
+            if selection == TimeSelection::Explicit
+                && (matched - requested).abs() > MATCH_TOLERANCE =>
+        {
+            TimeSelection::Latest
+        }
+        _ => selection,
     }
 }
 
@@ -554,6 +590,59 @@ mod tests {
                 format!("max-age={configured}")
             );
         }
+    }
+
+    fn at(h: u32, m: u32, s: u32) -> DateTime<Utc> {
+        use chrono::TimeZone;
+        Utc.with_ymd_and_hms(2026, 10, 31, h, m, s).unwrap()
+    }
+
+    /// The finding being fixed: any instant, even a future one, got the explicit TTL, because
+    /// the catalog answers a `datetime` with the nearest dataset and the handler never looked at
+    /// which one that was.
+    #[test]
+    fn a_named_time_the_catalog_did_not_have_is_latest_not_explicit() {
+        let asked = at(17, 58, 0);
+        let pinned = TimeSelection::Explicit;
+
+        // the scan for that instant: explicit
+        assert_eq!(confirm_match(pinned, Some(asked), at(17, 58, 0)), pinned);
+        // ...and within the allowance for sub-second representation differences, both ways
+        assert_eq!(confirm_match(pinned, Some(asked), at(17, 58, 1)), pinned);
+        assert_eq!(confirm_match(pinned, Some(asked), at(17, 57, 59)), pinned);
+
+        // a neighbour the catalog fell back to: 2 s, a scan, an hour, a day away (a future
+        // instant gets the newest scan; an expired one the oldest)
+        for matched in [at(17, 58, 2), at(17, 56, 0), at(18, 58, 0), at(16, 58, 0)] {
+            let got = confirm_match(pinned, Some(asked), matched);
+            assert_eq!(got, TimeSelection::Latest, "matched {matched}");
+            // and that is the short TTL on the wire, whatever the collection is configured for
+            assert_eq!(got.cache_control(3600), "max-age=60");
+        }
+        assert_eq!(
+            confirm_match(pinned, Some(asked), asked + chrono::Duration::days(365)),
+            TimeSelection::Latest
+        );
+    }
+
+    #[test]
+    fn confirming_never_makes_a_response_more_cacheable() {
+        let matched = at(12, 0, 0);
+        // no instant asked for: the server picked, still latest
+        assert_eq!(
+            confirm_match(TimeSelection::Latest, None, matched),
+            TimeSelection::Latest
+        );
+        // a latest response whose "requested" instant happens to equal the match stays latest
+        assert_eq!(
+            confirm_match(TimeSelection::Latest, Some(matched), matched),
+            TimeSelection::Latest
+        );
+        // an explicit selection with no instant to compare (an instance) keeps its TTL
+        assert_eq!(
+            confirm_match(TimeSelection::Explicit, None, matched),
+            TimeSelection::Explicit
+        );
     }
 
     #[test]

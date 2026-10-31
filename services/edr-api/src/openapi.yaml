@@ -186,6 +186,7 @@ paths:
         - $ref: '#/components/parameters/width'
         - $ref: '#/components/parameters/height'
         - $ref: '#/components/parameters/depth'
+        - $ref: '#/components/parameters/crop'
       responses:
         '200':
           description: Data within the specified area
@@ -209,13 +210,16 @@ paths:
                   - X-EDR-Min: Minimum value for decoding
                   - X-EDR-Max: Maximum value for decoding
                   - X-EDR-Encoding: Encoding type (uint8 or uint16)
-                  - X-EDR-BBox: Bounding box (west,south,east,north)
+                  - X-EDR-BBox: Bounding box (west,south,east,north) of the image, the outer pixel
+                    edges. For a projected grid (HRRR) without `crop=true` this is the whole
+                    model domain, whatever the polygon; with `crop=true` it is the polygon's
+                    bounding box.
                   - X-EDR-Width: Image width in pixels
                   - X-EDR-Height: Image height in pixels
         '400':
           description: Invalid request parameters
         '404':
-          description: Collection not found
+          description: Collection not found, or (instance path) a run or time the instance does not hold
 
   /collections/{collectionId}/radius:
     get:
@@ -910,6 +914,28 @@ components:
         type: integer
         enum: [8, 16]
         default: 16
+
+    crop:
+      name: crop
+      in: query
+      required: false
+      style: form
+      explode: false
+      description: |
+        Cut a projected grid (HRRR, NDFD, NBM) to the polygon's bounding box (PNG output only).
+        - `false` (default): a projected grid answers with the whole model domain whatever the
+          polygon, and `X-EDR-BBox` says so. Clients that rely on getting the whole domain from
+          a fixed polygon keep working.
+        - `true`: the image covers exactly the polygon's bounding box (all of a MULTIPOLYGON's
+          polygons) at `width` x `height` (the grid's own cell spacing when omitted) and
+          `X-EDR-BBox` is that box. Pixels outside
+          the model domain are no-data (alpha 0); a polygon entirely outside it is a 400.
+          Only the chunks of the grid under the polygon are read, from an overview level when the
+          image is small.
+        A lat/lon grid (MRMS, GFS) is always cut to the polygon, so this makes no difference there.
+      schema:
+        type: boolean
+        default: false
 
     lightningWindow:
       name: window

@@ -55,6 +55,8 @@ chrono = { workspace = true }
 sqlx = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 ingestion = { path = "../../crates/ingestion" }
+png = "0.17"
+sha2 = "0.10"
 
 [[bench]]
 name = "edr_api_benchmarks"

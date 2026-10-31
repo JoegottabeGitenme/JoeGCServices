@@ -23,6 +23,10 @@
 //! let region = service.read_region(&query, &bbox, Some((256, 256))).await?;
 //! ```
 
+mod area;
+
+pub use area::{AreaData, AreaRead, AreaReadOptions};
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -574,6 +578,14 @@ impl GridDataService {
                     *valid_time,
                 )
                 .await
+            }
+
+            TimeSpecification::Instance {
+                reference_time,
+                valid_time,
+            } => {
+                self.find_in_instance(query, *reference_time, *valid_time)
+                    .await
             }
 
             TimeSpecification::Latest => {
