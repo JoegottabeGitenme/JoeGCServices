@@ -16,6 +16,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::availability::ModelAvailability;
+use crate::cache_policy::{impl_time_selectors, TimeSelectors};
 use crate::config::build_level_string;
 use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::handlers::forecast_params::{validate_not_observation_data, ForecastParams};
@@ -218,6 +219,10 @@ pub struct AreaQueryParams {
     pub satellite: Option<String>,
 }
 
+// `run` is validated but the newest run is queried, so it does not pin the time
+// for caching (see cache_policy).
+impl_time_selectors!(AreaQueryParams, ignores_run);
+
 // Pure translations into each backend's params -- see the matching comment in
 // radius.rs for why these are functions and not inline struct literals.
 
@@ -345,6 +350,10 @@ async fn area_query(
     let timer = Timer::start();
     let client_ip = extract_client_ip(&headers);
     let user_agent = extract_user_agent(&headers);
+
+    // Whether this query named its time decides how long a CDN may keep the
+    // response. See cache_policy.
+    let time_selection = params.requested_time(instance_id.as_deref()).selection();
 
     // Negotiate output format based on Accept header and f parameter
     let output_format = match negotiate_format(&headers, params.f.as_deref()) {
@@ -1298,7 +1307,7 @@ async fn area_query(
             };
 
             // Build response with metadata headers
-            // Use per-model cache policy for PNG responses
+            // Use per-model cache policy for PNG responses (capped for the latest data)
             let png_cache_max_age = model_config.settings.cache_policy.png_max_age;
 
             // Record successful request metrics
@@ -1335,7 +1344,7 @@ async fn area_query(
                 .header(header::CONTENT_TYPE, "image/png")
                 .header(
                     header::CACHE_CONTROL,
-                    format!("max-age={}", png_cache_max_age),
+                    time_selection.cache_control(png_cache_max_age),
                 )
                 .header("X-EDR-Parameter", param_name.as_str())
                 .header("X-EDR-Units", &units_str)
@@ -1391,7 +1400,7 @@ async fn area_query(
                     Response::builder()
                         .status(StatusCode::OK)
                         .header(header::CONTENT_TYPE, output_format.content_type())
-                        .header(header::CACHE_CONTROL, "max-age=300")
+                        .header(header::CACHE_CONTROL, time_selection.cache_control(300))
                         .body(json.into())
                         .unwrap()
                 }
@@ -1438,7 +1447,7 @@ async fn area_query(
                 Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, output_format.content_type())
-                    .header(header::CACHE_CONTROL, "max-age=300")
+                    .header(header::CACHE_CONTROL, time_selection.cache_control(300))
                     .body(json.into())
                     .unwrap()
             }

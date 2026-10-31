@@ -26,6 +26,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::availability::ModelAvailability;
+use crate::cache_policy::{impl_time_selectors, TimeSelectors};
 use crate::config::build_level_string;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
 use crate::handlers::forecast_params::{validate_not_observation_data, ForecastParams};
@@ -81,6 +82,10 @@ pub struct TrajectoryQueryParams {
     #[serde(rename = "forecast-hour")]
     pub forecast_hour: Option<String>,
 }
+
+// `run` is validated but the newest run is queried, so it does not pin the time
+// for caching (see cache_policy).
+impl_time_selectors!(TrajectoryQueryParams, ignores_run);
 
 /// GET /edr/collections/:collection_id/trajectory
 pub async fn trajectory_handler(
@@ -611,10 +616,18 @@ async fn trajectory_query(
         )
         .await;
 
+    // Whether this query named its time decides how long a CDN may keep the
+    // response. A LINESTRING M query carries its times in the coordinates. See
+    // cache_policy.
+    let cache_control = params
+        .requested_time(instance_id.as_deref())
+        .with_embedded_times(line_type.has_m())
+        .cache_control(300);
+
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, "max-age=300")
+        .header(header::CACHE_CONTROL, cache_control)
         .body(json.into())
         .unwrap()
 }

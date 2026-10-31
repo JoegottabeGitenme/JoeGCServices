@@ -262,6 +262,13 @@ PNG responses include cache headers based on model update frequency:
 | GFS | 21600s (6 hours) | Updates every 6 hours |
 | MRMS | 120s (2 minutes) | Updates every 2 minutes |
 
+These values apply to a PNG for an explicit time (a `datetime` that has ended,
+or an instance). A PNG of the latest data (no time given, for example
+`mrms-single-level/area` with no `datetime`, or an interval still open at the
+end) is capped at 60 seconds whatever the model is configured with, because a
+newer scan may replace it at any time. The area endpoint ignores `run` (it
+always renders the newest run), so `run` does not make a PNG explicit.
+
 Configure cache policy per model:
 
 ```yaml
