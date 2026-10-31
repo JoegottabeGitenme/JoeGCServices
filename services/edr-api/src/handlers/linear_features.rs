@@ -31,6 +31,7 @@ use std::sync::Arc;
 use storage::linear_features::LinearFeatureItem;
 use storage::segment_conditions::SegmentCondition;
 
+use crate::cache_policy::TimeSelection;
 use crate::state::AppState;
 
 /// Maximum features returned by a single radius/area/items query. Trail
@@ -734,16 +735,18 @@ pub(crate) fn parse_bbox(coords: &str) -> Result<(f64, f64, f64, f64), String> {
 
 /// Cache lifetime for a trails GeoJSON response. Trail geometry changes
 /// weekly (OSM sync), so a geometry-only response can be cached for an
-/// hour; a response carrying `conditions` reflects model output that
-/// changes hourly, so caching it for an hour would let a browser/CDN show
-/// conditions up to an hour staler than the API itself has. 5 minutes
-/// matches `json_response` (the timeseries endpoint).
+/// hour. A response carrying `conditions` reflects the NEWEST model run, which
+/// the server picks (there is no time selector), so it is "latest" in the sense
+/// of `cache_policy`: it gets the short latest TTL, capped from
+/// `CONDITIONS_CACHE_MAX_AGE_SECS`, instead of letting a browser/CDN show
+/// conditions up to five minutes staler than the API itself has. The
+/// conditions timeseries (`json_response`) is the same kind of response.
 const GEOMETRY_CACHE_MAX_AGE_SECS: u32 = 3600;
 const CONDITIONS_CACHE_MAX_AGE_SECS: u32 = 300;
 
 fn cache_max_age_secs(with_conditions: bool) -> u32 {
     if with_conditions {
-        CONDITIONS_CACHE_MAX_AGE_SECS
+        TimeSelection::Latest.max_age_secs(CONDITIONS_CACHE_MAX_AGE_SECS)
     } else {
         GEOMETRY_CACHE_MAX_AGE_SECS
     }
@@ -767,13 +770,17 @@ fn geojson_response(value: Value, max_age_secs: u32) -> Response {
 /// Plain-JSON response (not GeoJSON -- `trail_conditions_timeseries_handler`
 /// returns a conditions array, not a geometry-bearing feature). A much
 /// shorter cache TTL than `geojson_response`'s 1h: this data changes hourly
-/// as new forecast hours land, unlike trail geometry.
+/// as new forecast hours land, unlike trail geometry. It is stitched from the
+/// newest runs and takes no time selector, so it is always "latest".
 fn json_response(value: Value) -> Response {
     match serde_json::to_string(&value) {
         Ok(json) => Response::builder()
             .status(StatusCode::OK)
             .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .header(axum::http::header::CACHE_CONTROL, "max-age=300")
+            .header(
+                axum::http::header::CACHE_CONTROL,
+                TimeSelection::Latest.cache_control(CONDITIONS_CACHE_MAX_AGE_SECS),
+            )
             .body(json.into())
             .unwrap(),
         Err(e) => internal_error(format!("Serialization failed: {}", e)),
@@ -1007,9 +1014,22 @@ mod tests {
     }
 
     #[test]
-    fn conditions_responses_get_a_short_cache_geometry_only_keeps_the_long_one() {
-        assert_eq!(cache_max_age_secs(true), 300);
+    fn conditions_responses_get_the_latest_ttl_geometry_only_keeps_the_long_one() {
+        // `conditions=latest` is the newest run by definition: the shared
+        // latest TTL, not the old 5 minutes.
+        assert_eq!(cache_max_age_secs(true), 60);
         assert_eq!(cache_max_age_secs(false), 3600);
+    }
+
+    #[test]
+    fn conditions_timeseries_json_response_uses_the_latest_ttl() {
+        let resp = json_response(json!({"conditions": []}));
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CACHE_CONTROL)
+                .unwrap(),
+            "max-age=60"
+        );
     }
 
     #[test]

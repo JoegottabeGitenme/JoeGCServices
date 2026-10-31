@@ -29,6 +29,7 @@ use std::sync::Arc;
 
 use storage::observations::{Location, Observation, ObservationQuery, TafForecastWithPeriods};
 
+use crate::cache_policy::{RequestedTime, TimeSelection};
 use crate::state::AppState;
 
 /// Query parameters for observation locations list.
@@ -407,7 +408,7 @@ pub async fn obs_location_query_handler(
             return Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                .header(header::CACHE_CONTROL, "max-age=300")
+                .header(header::CACHE_CONTROL, taf_cache_control())
                 .body(raw_text.into())
                 .unwrap();
         }
@@ -429,7 +430,7 @@ pub async fn obs_location_query_handler(
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/geo+json")
-            .header(header::CACHE_CONTROL, "max-age=300") // TAF: 5 min cache
+            .header(header::CACHE_CONTROL, taf_cache_control())
             .body(json.into())
             .unwrap();
     }
@@ -475,7 +476,10 @@ pub async fn obs_location_query_handler(
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/geo+json")
-        .header(header::CACHE_CONTROL, "max-age=60")
+        .header(
+            header::CACHE_CONTROL,
+            RequestedTime::new(params.datetime.as_deref(), None, None).cache_control(60),
+        )
         .body(json.into())
         .unwrap()
 }
@@ -559,7 +563,7 @@ pub async fn obs_radius_query_handler(
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/geo+json")
-            .header(header::CACHE_CONTROL, "max-age=300")
+            .header(header::CACHE_CONTROL, taf_cache_control())
             .body(json.into())
             .unwrap();
     }
@@ -607,7 +611,10 @@ pub async fn obs_radius_query_handler(
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/geo+json")
-        .header(header::CACHE_CONTROL, "max-age=60")
+        .header(
+            header::CACHE_CONTROL,
+            RequestedTime::new(params.datetime.as_deref(), None, None).cache_control(60),
+        )
         .body(json.into())
         .unwrap()
 }
@@ -683,7 +690,7 @@ pub async fn obs_area_query_handler(
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/geo+json")
-            .header(header::CACHE_CONTROL, "max-age=300")
+            .header(header::CACHE_CONTROL, taf_cache_control())
             .body(json.into())
             .unwrap();
     }
@@ -752,7 +759,10 @@ pub async fn obs_area_query_handler(
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/geo+json")
-        .header(header::CACHE_CONTROL, "max-age=60")
+        .header(
+            header::CACHE_CONTROL,
+            RequestedTime::new(params.datetime.as_deref(), None, None).cache_control(60),
+        )
         .body(json.into())
         .unwrap()
 }
@@ -760,6 +770,13 @@ pub async fn obs_area_query_handler(
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/// `Cache-Control` for TAF responses. A TAF query returns the newest issued TAF
+/// and has no time selector, so it is always "latest": a new or amended TAF must
+/// not be hidden behind a 5-minute CDN copy. See `cache_policy`.
+fn taf_cache_control() -> String {
+    TimeSelection::Latest.cache_control(300)
+}
 
 fn error_response(status: StatusCode, exc: ExceptionResponse) -> Response {
     let json = serde_json::to_string(&exc).unwrap_or_default();

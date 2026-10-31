@@ -18,6 +18,7 @@ use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
 use crate::availability::ModelAvailability;
+use crate::cache_policy::{impl_time_selectors, TimeSelectors};
 use crate::config::build_level_string;
 use crate::content_negotiation::{check_png_not_supported, negotiate_format, OutputFormat};
 use crate::handlers::forecast_params::{
@@ -89,6 +90,8 @@ pub struct PositionQueryParams {
     pub forecast_hour: Option<String>,
 }
 
+impl_time_selectors!(PositionQueryParams);
+
 /// How many distinct grids a point series reads at once. Each read blocks a runtime worker for
 /// the S3 fetch and chunk decode, so this is a bound on the workers one request can occupy.
 const SERIES_READ_CONCURRENCY: usize = 8;
@@ -146,6 +149,12 @@ async fn position_query(
     let timer = Timer::start();
     let client_ip = extract_client_ip(&headers);
     let user_agent = extract_user_agent(&headers);
+
+    // Whether this query named its time decides how long a CDN may keep the
+    // response. See cache_policy.
+    let cache_control = params
+        .requested_time(instance_id.as_deref())
+        .cache_control(300);
 
     // Debug: log the Accept header
     if let Some(accept) = headers.get(header::ACCEPT) {
@@ -830,7 +839,7 @@ async fn position_query(
         return Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, content_type)
-            .header(header::CACHE_CONTROL, "max-age=300")
+            .header(header::CACHE_CONTROL, cache_control)
             .body(json.into())
             .unwrap();
     }
@@ -1259,7 +1268,7 @@ async fn position_query(
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, "max-age=300")
+        .header(header::CACHE_CONTROL, cache_control)
         .body(json.into())
         .unwrap()
 }

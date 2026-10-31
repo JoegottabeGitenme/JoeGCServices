@@ -14,6 +14,7 @@ pub mod model_config;
 pub mod rendering;
 pub mod startup_validation;
 pub mod state;
+pub mod tile_version;
 pub mod validation;
 pub mod warming;
 

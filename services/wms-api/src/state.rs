@@ -10,6 +10,7 @@ use crate::capabilities_cache::CapabilitiesCache;
 use crate::layer_config::LayerConfigRegistry;
 use crate::metrics::MetricsCollector;
 use crate::model_config::ModelDimensionRegistry;
+use crate::tile_version::{LatestVersionMemo, VERSION_MEMO_TTL};
 use grid_processor::{GridProcessorFactory, MinioConfig};
 use storage::{Catalog, ObjectStorage, ObjectStorageConfig, TileCache, TileMemoryCache};
 
@@ -140,6 +141,7 @@ pub struct AppState {
     pub model_dimensions: ModelDimensionRegistry, // Model dimension configurations (from YAML)
     pub layer_configs: tokio::sync::RwLock<LayerConfigRegistry>, // Layer configurations (from YAML) - styles, units, levels
     pub capabilities_cache: CapabilitiesCache, // Cache for WMS/WMTS capabilities documents
+    pub latest_versions: LatestVersionMemo, // Which dataset is "latest" per layer (tile cache keys)
 }
 
 impl AppState {
@@ -276,6 +278,7 @@ impl AppState {
             model_dimensions,
             layer_configs,
             capabilities_cache,
+            latest_versions: LatestVersionMemo::new(VERSION_MEMO_TTL),
         })
     }
 

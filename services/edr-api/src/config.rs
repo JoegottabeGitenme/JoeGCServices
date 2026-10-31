@@ -517,7 +517,9 @@ impl Default for ModelSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachePolicy {
     /// Cache-Control max-age for PNG responses in seconds.
-    /// Default varies by typical model update frequency.
+    /// Default varies by typical model update frequency. Applies to PNGs for an
+    /// explicit time; a PNG of the latest data (no datetime / run / instance) is
+    /// capped at `LATEST_MAX_AGE_SECS` whatever this is set to (see `cache_policy`).
     #[serde(default = "default_png_max_age")]
     pub png_max_age: u32,
 }

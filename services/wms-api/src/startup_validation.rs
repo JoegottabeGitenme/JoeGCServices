@@ -3,7 +3,9 @@
 //! This module performs validation renders at startup to:
 //! 1. Verify that data has been ingested correctly for each model
 //! 2. Ensure the rendering pipeline is working end-to-end
-//! 3. Warm the caches by pre-rendering representative tiles
+//! 3. Warm the data path (catalog, Zarr chunk cache) by pre-rendering
+//!    representative tiles. The tiles themselves are not kept in the tile
+//!    caches, see `run_single_validation`.
 //! 4. Report on data availability status
 //!
 //! Unlike cache warming which renders many tiles at low zoom levels,
@@ -499,8 +501,13 @@ async fn run_single_validation(
                 && tile_data[0..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
             if is_valid_png {
-                // Store in cache for warming benefit
-                cache_tile(state, &layer, &target.style, &coord, &tile_data).await;
+                // The validated tile is deliberately NOT stored in the tile caches.
+                // It used to be seeded under the unversioned `current` key (L2: 1 h),
+                // but GetTile keys a latest tile by the dataset it was rendered from
+                // (`tile_version`), so no versioned request could ever hit the seed,
+                // while an unversioned fallback read could be served a boot-time scan
+                // for up to an hour. Real requests and cache warming fill the caches
+                // under the right keys.
 
                 info!(
                     layer = %layer,
@@ -575,48 +582,6 @@ async fn run_single_validation(
                 error: Some(error_str),
             }
         }
-    }
-}
-
-/// Store a validated tile in the cache for warming benefit.
-async fn cache_tile(
-    state: &Arc<AppState>,
-    layer: &str,
-    style: &str,
-    coord: &TileCoord,
-    data: &[u8],
-) {
-    use storage::CacheKey;
-    use wms_common::{BoundingBox, CrsCode};
-
-    // Build cache key
-    let cache_key_str = format!(
-        "{}:{}:EPSG:3857:{}_{}_{}:current",
-        layer, style, coord.z, coord.x, coord.y
-    );
-
-    // Store in L1 cache
-    let data_bytes = bytes::Bytes::from(data.to_vec());
-    state
-        .tile_memory_cache
-        .set(&cache_key_str, data_bytes, None)
-        .await;
-
-    // Store in L2 cache
-    let cache_key = CacheKey::new(
-        layer,
-        style,
-        CrsCode::Epsg3857,
-        BoundingBox::new(coord.x as f64, coord.y as f64, coord.z as f64, 0.0),
-        256,
-        256,
-        None,
-        "png",
-    );
-
-    let mut cache = state.cache.lock().await;
-    if let Err(e) = cache.set(&cache_key, data, None).await {
-        debug!(error = %e, "Failed to store validation tile in L2 cache");
     }
 }
 

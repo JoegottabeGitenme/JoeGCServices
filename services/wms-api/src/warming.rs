@@ -11,6 +11,7 @@ use wms_common::TileCoord;
 
 use crate::rendering;
 use crate::state::AppState;
+use crate::tile_version::{resolve_latest_version, TileCachePlan, TileRequestDims};
 
 /// Cache warming configuration.
 #[derive(Clone, Debug)]
@@ -181,8 +182,57 @@ async fn warm_single_tile(
     use storage::CacheKey;
     use wms_common::{BoundingBox, CrsCode};
 
-    // Build cache key with time dimension
-    let dimension_suffix = Some(format!("t{}", forecast_hour));
+    // Parse layer name (format: "model_parameter")
+    let parts: Vec<&str> = layer.split('_').collect();
+    if parts.len() < 2 {
+        return WarmResult::Failed("Invalid layer format".to_string());
+    }
+
+    let model = parts[0];
+    // Uppercase parameter for case-insensitive layer config lookup, then resolve
+    // canonical name from config to match database storage (CF NetCDF uses mixed-case)
+    let mut parameter = parts[1..].join("_").to_uppercase();
+
+    // Get default level from layer config for consistent data selection
+    let (layer_configured, default_level): (bool, Option<String>) = {
+        let configs = state.layer_configs.read().await;
+        if let Some(lc) = configs.get_layer_by_param(model, &parameter) {
+            parameter = lc.parameter.clone();
+            (true, lc.default_level().map(|s| s.to_string()))
+        } else {
+            (false, None)
+        }
+    };
+
+    // Build cache key with time dimension. A forecast hour does not pin the run
+    // (the newest run holding that hour is rendered), so the key carries the run
+    // the same way GetTile's does; otherwise warmed tiles would never be found,
+    // or would outlive the run they were rendered from. See `tile_version`.
+    let dims = TileRequestDims {
+        is_observation: state.model_dimensions.is_observation(model),
+        observation_time: None,
+        run: None,
+        forecast_hour: Some(forecast_hour),
+        elevation: None,
+    };
+    let latest_version = if layer_configured && dims.needs_latest_lookup() {
+        resolve_latest_version(
+            &state.catalog,
+            &state.latest_versions,
+            model,
+            &parameter,
+            Some(forecast_hour),
+            default_level.as_deref(),
+        )
+        .await
+    } else {
+        None
+    };
+    let TileCachePlan {
+        dimension_suffix,
+        entry_ttl,
+        ..
+    } = dims.cache_plan(latest_version.as_ref());
 
     let cache_key = CacheKey::new(
         layer,
@@ -232,28 +282,6 @@ async fn warm_single_tile(
         latlon_bbox.max_x as f32,
         latlon_bbox.max_y as f32,
     ];
-
-    // Parse layer name (format: "model_parameter")
-    let parts: Vec<&str> = layer.split('_').collect();
-    if parts.len() < 2 {
-        return WarmResult::Failed("Invalid layer format".to_string());
-    }
-
-    let model = parts[0];
-    // Uppercase parameter for case-insensitive layer config lookup, then resolve
-    // canonical name from config to match database storage (CF NetCDF uses mixed-case)
-    let mut parameter = parts[1..].join("_").to_uppercase();
-
-    // Get default level from layer config for consistent data selection
-    let default_level: Option<String> = {
-        let configs = state.layer_configs.read().await;
-        if let Some(lc) = configs.get_layer_by_param(model, &parameter) {
-            parameter = lc.parameter.clone();
-            lc.default_level().map(|s| s.to_string())
-        } else {
-            None
-        }
-    };
 
     // Render the tile based on layer type
     let result = if parameter == "WIND_BARBS" {
@@ -333,13 +361,13 @@ async fn warm_single_tile(
             let data_bytes = bytes::Bytes::from(tile_data.clone());
             state
                 .tile_memory_cache
-                .set(&cache_key_str, data_bytes, None)
+                .set(&cache_key_str, data_bytes, entry_ttl)
                 .await;
 
             // Store in L2 cache
             {
                 let mut cache = state.cache.lock().await;
-                if let Err(e) = cache.set(&cache_key, &tile_data, None).await {
+                if let Err(e) = cache.set(&cache_key, &tile_data, entry_ttl).await {
                     warn!(error = %e, layer = %layer, "Failed to store in L2 cache");
                 }
             }

@@ -427,17 +427,18 @@ Alternative format for GIS integration:
 ### Caching Strategy
 
 - **Chunk Cache**: Grid processor maintains a shared chunk cache for Zarr data
-- **Location Cache**: In-memory cache for location queries with `X-Cache` header
+- **Location Cache**: In-memory cache for location queries with `X-Cache` header. Entries for the latest data live at most 60 seconds, so a HIT is never older than the `max-age` it is served with
 - **HTTP Cache Headers**: All responses include appropriate `Cache-Control` headers
 
 ### Cache Headers
 
 | Response Type | Cache-Control |
 |---------------|---------------|
-| Data queries | `max-age=300` (5 minutes) |
+| Data queries with an explicit time (`datetime`, instance) | `max-age=300` (5 minutes) |
+| Data queries for the latest data (no time given, `*-latest` collections) | `max-age=60` (1 minute) |
 | Collections/instances | `max-age=60` (1 minute) |
 | Locations list | `max-age=3600` (1 hour) |
-| Location data | `max-age=300` (5 minutes) |
+| Location data | `max-age=300` (5 minutes) explicit, `max-age=60` latest |
 | Catalog check | `no-cache, no-store, must-revalidate` |
 
 ### Throughput

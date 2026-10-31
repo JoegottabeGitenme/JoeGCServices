@@ -5,6 +5,7 @@
 
 pub mod astro;
 pub mod availability;
+pub mod cache_policy;
 pub mod config;
 pub mod content_negotiation;
 pub mod freshness;

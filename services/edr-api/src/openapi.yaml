@@ -565,8 +565,8 @@ paths:
         
         Grouping segments into a trail is up to the client.
         
-        Only the `trails` collection supports this operation. Cached for 5 minutes
-        (`Cache-Control: max-age=300`).
+        Only the `trails` collection supports this operation. The series is built from the
+        newest model runs, so it is cached for one minute (`Cache-Control: max-age=60`).
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - name: ids
