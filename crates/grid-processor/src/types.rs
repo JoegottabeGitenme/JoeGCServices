@@ -1182,6 +1182,12 @@ impl MultiscaleMetadata {
         0
     }
 
+    /// Whether the levels were downsampled by picking a cell from each block (category codes)
+    /// rather than combining it (mean, max).
+    pub fn uses_nearest(&self) -> bool {
+        self.downsample_method.eq_ignore_ascii_case("nearest")
+    }
+
     /// Get the number of pyramid levels.
     pub fn num_levels(&self) -> usize {
         self.levels.len()
@@ -1219,7 +1225,7 @@ impl MultiscaleMetadata {
         );
 
         // Level-0 cells from level 0's first centre to this level's first, and to its last
-        let first = if self.downsample_method.eq_ignore_ascii_case("nearest") {
+        let first = if self.uses_nearest() {
             0.0
         } else {
             (level.scale - 1.0) / 2.0
