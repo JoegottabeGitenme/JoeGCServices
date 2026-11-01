@@ -24,6 +24,14 @@
 //! entry lifetime. GetTile, prefetch and cache warming all go through it, so
 //! the rule cannot drift between them.
 //!
+//! # Geometry revision
+//!
+//! The same key also has to change when a deploy changes WHERE a tile draws its data without
+//! changing the request or the dataset. Redis outlives a deploy (it is not restarted with the
+//! API, and old and new pods share it during a rollout), so tiles rendered before the change
+//! would otherwise be answered for the rest of their L2 lifetime, an hour. [`TILE_GEOMETRY`] is
+//! part of every key [`TileRequestDims::cache_plan`] returns; bump it with any such change.
+//!
 //! # Cost, and what happens when the catalog is slow or down
 //!
 //! The lookup is one indexed catalog query (the same one the renderer makes on
@@ -97,6 +105,17 @@ const VERSION_MEMO_MAX_ENTRIES: usize = 4096;
 /// with [`unresolved_ttl`], so "an unversioned latest entry never outlives its
 /// `max-age`" holds by construction.
 pub const UNRESOLVED_VERSION: &str = "unresolved";
+
+/// Revision of where tiles draw their data, the last part of every tile cache key.
+///
+/// 1 (never written into a key) drew the low-zoom tiles of lat/lon layers (MRMS, GFS, ...) from
+/// pyramid levels described with the wrong extent, so their data was off by up to half a level
+/// cell: about 1.5 km at MRMS level 2. 2 draws it where it is. A tile cached by revision 1 has a
+/// key of its own that nothing reads, and ages out through the normal TTL.
+///
+/// Bump it with any change that moves where a tile draws its data. Like the other parts of the
+/// key it contains no `:` or glob characters.
+pub const TILE_GEOMETRY: &str = "g2";
 
 /// The parameter name of the composite wind barb layers.
 pub const WIND_BARBS_PARAMETER: &str = "WIND_BARBS";
@@ -183,8 +202,9 @@ pub fn version_token(entry: &CatalogEntry) -> String {
 /// The dimension part of a tile cache key.
 ///
 /// Keys for explicit requests keep their original shape (`t6`, `obs1700000000`,
-/// `t6_2_m_above_ground`, an elevation alone, or none), so nothing already
-/// cached or written by other code is invalidated. A latest request that
+/// `t6_2_m_above_ground`, an elevation alone, or none) here. The cache plan appends the
+/// geometry revision (`.g2`) afterwards, so tiles cached under the old level geometry are
+/// never read. A latest request that
 /// resolved to a `version` gets `@<version>` appended, which is what makes new
 /// data a new key.
 pub fn tile_dimension_suffix(
@@ -295,6 +315,7 @@ impl TileRequestDims<'_> {
     /// The version token is appended to the key whenever a lookup was made,
     /// even for an explicit RUN, so a RUN-pinned request and the plain latest
     /// request share one entry only while they really are the same tile.
+    /// [`TILE_GEOMETRY`] ends every key.
     pub fn cache_plan(&self, latest: Option<&LatestVersion>) -> TileCachePlan {
         let looked_up = self.needs_latest_lookup();
 
@@ -315,14 +336,18 @@ impl TileRequestDims<'_> {
         };
         let unresolved = looked_up && latest.is_none();
 
+        let dimensions = tile_dimension_suffix(
+            self.forecast_hour,
+            self.observation_time,
+            self.elevation,
+            version,
+        );
         TileCachePlan {
             selection,
-            dimension_suffix: tile_dimension_suffix(
-                self.forecast_hour,
-                self.observation_time,
-                self.elevation,
-                version,
-            ),
+            dimension_suffix: Some(match dimensions {
+                Some(dimensions) => format!("{dimensions}.{TILE_GEOMETRY}"),
+                None => TILE_GEOMETRY.to_string(),
+            }),
             entry_ttl: unresolved.then(unresolved_ttl),
         }
     }
@@ -634,7 +659,7 @@ mod tests {
                 d.cache_plan(latest),
                 TileCachePlan {
                     selection: TimeSelection::Explicit,
-                    dimension_suffix: Some("obs1700000000".to_string()),
+                    dimension_suffix: Some(format!("obs1700000000.{TILE_GEOMETRY}")),
                     entry_ttl: None,
                 }
             );
@@ -650,7 +675,7 @@ mod tests {
             d.cache_plan(Some(&v)),
             TileCachePlan {
                 selection: TimeSelection::Latest,
-                dimension_suffix: Some(format!("@{}", v.token)),
+                dimension_suffix: Some(format!("@{}.{TILE_GEOMETRY}", v.token)),
                 // The version in the key is what keeps it from going stale,
                 // so the cache's normal lifetime is fine.
                 entry_ttl: None,
@@ -664,7 +689,7 @@ mod tests {
         assert_eq!(plan.selection, TimeSelection::Latest);
         assert_eq!(
             plan.dimension_suffix.as_deref(),
-            Some("@unresolved"),
+            Some(format!("@unresolved.{TILE_GEOMETRY}").as_str()),
             "must not be the legacy `current` key"
         );
         let ttl = plan.entry_ttl.expect("an unversioned entry needs a TTL");
@@ -685,7 +710,7 @@ mod tests {
         assert_eq!(plan.selection, TimeSelection::Latest);
         assert_eq!(
             plan.dimension_suffix,
-            Some(format!("t6_2_m_above_ground@{}", v.token))
+            Some(format!("t6_2_m_above_ground@{}.{TILE_GEOMETRY}", v.token))
         );
         assert_eq!(plan.entry_ttl, None);
     }
@@ -697,7 +722,10 @@ mod tests {
             ..dims(false)
         };
         let plan = d.cache_plan(None);
-        assert_eq!(plan.dimension_suffix.as_deref(), Some("t6@unresolved"));
+        assert_eq!(
+            plan.dimension_suffix.as_deref(),
+            Some(format!("t6@unresolved.{TILE_GEOMETRY}").as_str())
+        );
         assert_eq!(plan.entry_ttl, Some(unresolved_ttl()));
         assert_eq!(plan.selection, TimeSelection::Latest);
     }
@@ -716,7 +744,10 @@ mod tests {
         let plan = d.cache_plan(Some(&same));
         assert_eq!(plan.selection, TimeSelection::Explicit);
         // ...and it still shares the entry with the plain latest request.
-        assert_eq!(plan.dimension_suffix, Some(format!("t6@{}", same.token)));
+        assert_eq!(
+            plan.dimension_suffix,
+            Some(format!("t6@{}.{TILE_GEOMETRY}", same.token))
+        );
 
         // A newer run has landed: GetTile renders that one, so it is latest.
         let newer = version(1_700_021_600, 6);
@@ -886,6 +917,69 @@ mod tests {
         assert!(legacy.contains(":current:"));
         assert_ne!(l2(&suffix_new), legacy);
         assert_ne!(l2(&dims(true).cache_plan(None).dimension_suffix), legacy);
+    }
+
+    /// The geometry fix: tiles drawn with the old level geometry sit in Redis for up to an hour
+    /// under keys that did not say which geometry drew them. No key the plan returns may be one
+    /// of those, for any kind of request, in L1 or L2.
+    #[test]
+    fn every_key_names_the_geometry_so_tiles_drawn_before_the_fix_are_never_read() {
+        let token = version(1_700_000_000, 6).token;
+        let requests = [
+            // (the plan, the key suffix before the geometry revision existed)
+            (
+                TileRequestDims {
+                    observation_time: Some(at(1_700_000_000)),
+                    ..dims(true)
+                },
+                None,
+                Some("obs1700000000".to_string()),
+            ),
+            (
+                dims(true),
+                Some(version(1_700_000_000, 6)),
+                Some(format!("@{token}")),
+            ),
+            (dims(true), None, Some("@unresolved".to_string())),
+            (
+                TileRequestDims {
+                    forecast_hour: Some(6),
+                    elevation: Some("500 mb"),
+                    ..dims(false)
+                },
+                Some(version(1_700_000_000, 6)),
+                Some(format!("t6_500_mb@{token}")),
+            ),
+        ];
+        for (request, latest, before) in requests {
+            let suffix = request.cache_plan(latest.as_ref()).dimension_suffix;
+            let suffix_str = suffix.as_deref().unwrap();
+            assert_eq!(
+                suffix_str,
+                format!("{}.g2", before.as_deref().unwrap()),
+                "{request:?}"
+            );
+            assert!(!suffix_str.contains(':') && !suffix_str.contains('*'));
+
+            let l1 = |s: Option<&str>| {
+                l1_cache_key("WebMercatorQuad", "mrms_REFL", "default", 5, 8, 12, s)
+            };
+            assert_ne!(l1(suffix.as_deref()), l1(before.as_deref()), "{request:?}");
+            let l2 = |s: Option<String>| {
+                CacheKey::new(
+                    "mrms_REFL",
+                    "default",
+                    CrsCode::Epsg3857,
+                    BoundingBox::new(8.0, 12.0, 5.0, 0.0),
+                    256,
+                    256,
+                    s,
+                    "png",
+                )
+                .to_string()
+            };
+            assert_ne!(l2(suffix), l2(before), "{request:?}");
+        }
     }
 
     #[test]

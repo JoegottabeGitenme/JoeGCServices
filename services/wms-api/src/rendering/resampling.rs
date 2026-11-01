@@ -159,6 +159,15 @@ pub fn resample_from_geographic(
                 lon
             };
 
+            // A global grid read from a pyramid level starts east of 0: its first cell is centred
+            // on the middle of its first block (0.125° at GFS level 1), so the longitudes between
+            // 0 and that lie between the last cell and the first, round the end of the grid.
+            let norm_lon = if is_global_grid && norm_lon < data_min_lon {
+                norm_lon + 360.0
+            } else {
+                norm_lon
+            };
+
             // For global grids, handle the gap between grid end (e.g., 359.75°) and 360°
             // by treating longitudes in this gap as valid and wrapping interpolation
             let in_wrap_gap = is_global_grid && norm_lon > data_max_lon && norm_lon < 360.0;
@@ -312,6 +321,15 @@ pub fn resample_for_mercator(
                 lon + 360.0
             } else {
                 lon
+            };
+
+            // A global grid read from a pyramid level starts east of 0: its first cell is centred
+            // on the middle of its first block (0.125° at GFS level 1), so the longitudes between
+            // 0 and that lie between the last cell and the first, round the end of the grid.
+            let norm_lon = if is_global_grid && norm_lon < data_min_lon {
+                norm_lon + 360.0
+            } else {
+                norm_lon
             };
 
             // For global grids, handle the gap between grid end (e.g., 359.75°) and 360°
