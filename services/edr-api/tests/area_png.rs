@@ -1109,3 +1109,69 @@ async fn cache_control_is_explicit_only_for_the_dataset_that_was_asked_for() {
     );
     assert_eq!(cc(&get_reply(&app, &mrms("")).await), "max-age=60");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore] // Requires Docker
+async fn the_png_says_which_valid_and_run_time_it_is() {
+    let (app, _state, _infra) = setup().await;
+    let valid = |r: &Reply| r.header("x-edr-valid-time");
+    let run = |r: &Reply| r.header("x-edr-reference-time");
+
+    // hrrr-subh (a forecast): its steps are 15 minutes, which `forecast_hour` alone cannot say
+    let a = "/edr/collections/hrrr-subh-atmosphere";
+    let sub = |datetime: &str| {
+        format!(
+            "{a}/area?coords={}&parameter-name=REFC&f=png&width=40&height=30{datetime}",
+            app_polygon()
+        )
+    };
+    let exact = get_reply(&app, &sub("&datetime=2026-10-11T18:15:00Z")).await;
+    assert_eq!(exact.status, 200, "{}", exact.text());
+    assert_eq!(valid(&exact), "2026-10-11T18:15:00Z");
+    assert_eq!(run(&exact), "2026-10-11T18:00:00Z");
+
+    // a near miss is the frame it got, not the time asked for
+    let near = get_reply(&app, &sub("&datetime=2026-10-11T18:20:00Z")).await;
+    assert_eq!(valid(&near), "2026-10-11T18:15:00Z");
+    assert_eq!(run(&near), "2026-10-11T18:00:00Z");
+
+    // no datetime: the newest dataset
+    let newest = get_reply(&app, &sub("")).await;
+    assert_eq!(newest.status, 200, "{}", newest.text());
+    assert_eq!(valid(&newest), "2026-10-11T18:45:00Z");
+    assert_eq!(run(&newest), "2026-10-11T18:00:00Z");
+
+    // an instance: that run's reference time, and its own step
+    let inst = get_reply(
+        &app,
+        &format!(
+            "{a}/instances/2026-10-11T18:00:00Z/area?coords={}&parameter-name=REFC&f=png&width=40&height=30&datetime=2026-10-11T18:30:00Z",
+            app_polygon()
+        ),
+    )
+    .await;
+    assert_eq!(inst.status, 200, "{}", inst.text());
+    assert_eq!(valid(&inst), "2026-10-11T18:30:00Z");
+    assert_eq!(run(&inst), "2026-10-11T18:00:00Z");
+
+    // mrms (an observation): the scan's own second; no run time, it is the scan time
+    let mrms = |datetime: &str| {
+        format!(
+            "/edr/collections/mrms-single-level/area?coords={}&parameter-name=MESH&f=png&width=60&height=30{datetime}",
+            rect(-100.0, 35.0, -94.0, 38.0)
+        )
+    };
+    for datetime in [
+        "&datetime=2026-10-09T23:00:41Z",
+        "&datetime=2026-10-09T23:00:00Z",
+        "",
+    ] {
+        let r = get_reply(&app, &mrms(datetime)).await;
+        assert_eq!(r.status, 200, "{}", r.text());
+        assert_eq!(valid(&r), "2026-10-09T23:00:41Z", "{datetime}");
+        assert!(
+            r.headers.get("x-edr-reference-time").is_none(),
+            "{datetime}"
+        );
+    }
+}
