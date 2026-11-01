@@ -603,6 +603,170 @@ mod tests {
         assert_eq!(point_spacing(0.0, 1), 0.0);
     }
 
+    /// The pyramid of a grid with `bbox` over `shape` cells, `levels` deep, as the writer lays it
+    /// out (each level half the one before, odd cells dropped)
+    fn multiscale_of(
+        bbox: BoundingBox,
+        shape: (usize, usize),
+        levels: u32,
+        row_origin: RowOrigin,
+        method: &str,
+    ) -> MultiscaleMetadata {
+        let mut level_shape = shape;
+        let levels = (0..levels)
+            .map(|level| {
+                let scale = 2f64.powi(level as i32);
+                if level > 0 {
+                    level_shape = (level_shape.0 / 2, level_shape.1 / 2);
+                }
+                PyramidLevel::new(level, level.to_string(), level_shape, scale, (512, 512))
+            })
+            .collect();
+        MultiscaleMetadata {
+            name: "test_TEST".to_string(),
+            axes: vec![],
+            levels,
+            downsample_method: method.to_string(),
+            native_resolution: (
+                point_spacing(bbox.width(), shape.0),
+                point_spacing(bbox.height(), shape.1),
+            ),
+            bbox,
+            row_origin,
+            projection: ProjectionType::Geographic,
+        }
+    }
+
+    fn assert_bbox_close(got: BoundingBox, want: BoundingBox, what: &str) {
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        assert!(
+            close(got.min_lon, want.min_lon)
+                && close(got.min_lat, want.min_lat)
+                && close(got.max_lon, want.max_lon)
+                && close(got.max_lat, want.max_lat),
+            "{what}: got {got:?}, want {want:?}"
+        );
+    }
+
+    /// MRMS as it is ingested: 7000 x 3500 cells of 0.01 degrees, north up, pyramid to level 3.
+    /// Level 2 averages 4 x 4 cells, so its cell 0 is centred 1.5 cells (0.015 degrees) in from
+    /// the first cell of level 0 and its cells are 0.04 degrees apart. The bbox it used to get,
+    /// level 0's, made them 69.99 / 1749 degrees apart.
+    #[test]
+    fn a_mrms_level_is_placed_where_its_cells_are_and_spaced_by_its_scale() {
+        let bbox = BoundingBox::new(-129.995, 20.005, -60.005, 54.995);
+        let ms = multiscale_of(bbox, (7000, 3500), 4, RowOrigin::North, "max");
+        assert_eq!(
+            ms.levels.iter().map(|l| l.shape).collect::<Vec<_>>(),
+            [(7000, 3500), (3500, 1750), (1750, 875), (875, 437)]
+        );
+
+        // level 0 is the dataset's bbox itself, bit for bit
+        assert_eq!(ms.level_bbox(&ms.levels[0]), Some(bbox));
+
+        let at = |level: usize| ms.level_bbox(&ms.levels[level]).unwrap();
+        // level 1: cell 0 holds cells 0 and 1, centred half a cell in; 3500 cells span 3499 gaps
+        assert_bbox_close(
+            at(1),
+            BoundingBox::new(-129.99, 20.01, -60.01, 54.99),
+            "level 1",
+        );
+        // level 2: 1.5 cells in; its last cell holds cells 6996..=6999, centred on 6997.5
+        assert_bbox_close(
+            at(2),
+            BoundingBox::new(-129.98, 20.02, -60.02, 54.98),
+            "level 2",
+        );
+        // level 3: 3.5 cells in; 437 rows of 8 leave the last 4 of 3500 rows out, so the last row
+        // is centred on 3.5 + 436 * 8 cells from the first
+        assert_bbox_close(
+            at(3),
+            BoundingBox::new(-129.96, 20.08, -60.04, 54.96),
+            "level 3",
+        );
+
+        for (level, spacing) in [(1, 0.02), (2, 0.04), (3, 0.08)] {
+            let meta = GridMetadata {
+                model: "mrms".to_string(),
+                parameter: "REFL".to_string(),
+                level: "surface".to_string(),
+                units: String::new(),
+                reference_time: chrono::Utc::now(),
+                forecast_hour: 0,
+                bbox: at(level),
+                shape: ms.levels[level].shape,
+                chunk_shape: (512, 512),
+                num_chunks: (1, 1),
+                fill_value: f32::NAN,
+                row_origin: RowOrigin::North,
+                projection: ProjectionType::Geographic,
+            };
+            let (dx, dy) = meta.resolution();
+            assert!(
+                (dx - spacing).abs() < 1e-9 && (dy - spacing).abs() < 1e-9,
+                "level {level}: {dx} x {dy}, want {spacing}"
+            );
+        }
+    }
+
+    /// GFS: 1440 x 721 cells of 0.25 degrees, 0 to 359.75 east and 90 to -90 south. An odd row
+    /// count drops the last row (the south pole) from level 1.
+    #[test]
+    fn a_global_gfs_level_starts_east_of_zero_and_ends_before_the_pole() {
+        let bbox = BoundingBox::new(0.0, -90.0, 359.75, 90.0);
+        let ms = multiscale_of(bbox, (1440, 721), 3, RowOrigin::North, "mean");
+        let at = |level: usize| ms.level_bbox(&ms.levels[level]).unwrap();
+        assert_eq!(ms.levels[1].shape, (720, 360));
+        // cell 0 of level 1 holds columns 0 and 1: centred on 0.125; cell 719 on 359.625
+        assert_bbox_close(
+            at(1),
+            BoundingBox::new(0.125, -89.625, 359.625, 89.875),
+            "level 1",
+        );
+        assert_bbox_close(
+            at(2),
+            BoundingBox::new(0.375, -89.375, 359.375, 89.625),
+            "level 2",
+        );
+    }
+
+    /// A level that picks a cell per block (category codes) holds the block's first cell, so it
+    /// is not shifted by half a block
+    #[test]
+    fn a_nearest_level_is_centred_on_the_cell_it_picked() {
+        let bbox = BoundingBox::new(-129.995, 20.005, -60.005, 54.995);
+        let ms = multiscale_of(bbox, (7000, 3500), 3, RowOrigin::North, "nearest");
+        let level_2 = ms.level_bbox(&ms.levels[2]).unwrap();
+        // cell k holds cell 4k, so 1749 is 6996 cells (69.96 degrees) on; same rows
+        assert_bbox_close(
+            level_2,
+            BoundingBox::new(-129.995, 20.035, -60.035, 54.995),
+            "nearest level 2",
+        );
+    }
+
+    /// A grid whose first row is the southern one counts rows from the south
+    #[test]
+    fn a_south_up_level_is_placed_from_the_south_edge() {
+        let bbox = BoundingBox::new(10.0, 40.0, 19.0, 49.0);
+        let ms = multiscale_of(bbox, (10, 10), 2, RowOrigin::South, "mean");
+        // 10 cells of 1 degree; level 1 has 5 cells 2 degrees apart, the first centred on 0.5
+        assert_bbox_close(
+            ms.level_bbox(&ms.levels[1]).unwrap(),
+            BoundingBox::new(10.5, 40.5, 18.5, 48.5),
+            "south up level 1",
+        );
+    }
+
+    #[test]
+    fn a_level_cannot_be_placed_without_level_0() {
+        let bbox = BoundingBox::new(0.0, 0.0, 9.0, 9.0);
+        let mut ms = multiscale_of(bbox, (10, 10), 2, RowOrigin::North, "mean");
+        let level_1 = ms.levels[1].clone();
+        ms.levels.retain(|l| l.level != 0);
+        assert_eq!(ms.level_bbox(&level_1), None);
+    }
+
     #[test]
     fn test_bbox_intersects() {
         let a = BoundingBox::new(0.0, 0.0, 10.0, 10.0);
@@ -1021,5 +1185,62 @@ impl MultiscaleMetadata {
     /// Get the number of pyramid levels.
     pub fn num_levels(&self) -> usize {
         self.levels.len()
+    }
+
+    /// The extent of a pyramid level of a lat/lon grid, as the first-to-last cell-centre bbox that
+    /// level 0 has (see [`GridMetadata::resolution`]), so a level can be read with the same
+    /// arithmetic as level 0. `None` when the metadata has no level 0 to place `level` against.
+    ///
+    /// Downsampling takes blocks of `scale` x `scale` level-0 cells starting at cell 0 (see
+    /// [`crate::downsample::downsample_2x`]), so a level's cell `k` holds level-0 cells
+    /// `k * scale ..= k * scale + scale - 1` and is centred on level-0 cell
+    /// `k * scale + (scale - 1) / 2`: its spacing is `scale` times level 0's, and its first centre
+    /// lies `(scale - 1) / 2` level-0 spacings in from level 0's first (half a cell at level 1,
+    /// 1.5 at level 2). Reusing level 0's bbox with the level's smaller shape gave a spacing of
+    /// extent / (cells - 1) (MRMS level 2: 69.99 / 1749 degrees, not 0.04) and put every cell away
+    /// from where its data is. Blocks that do not fill (the last `n % scale` cells of an odd-sized
+    /// grid) are dropped, so the last centre is `(cells - 1) * scale` past the first, not at
+    /// level 0's last.
+    ///
+    /// A level downsampled by picking a cell (`nearest`, for category codes) holds the top-left
+    /// cell of each block, so it is centred on level-0 cell `k * scale` and its first centre is
+    /// level 0's.
+    ///
+    /// Level 0 is the metadata's own bbox, untouched. This is for lat/lon grids: a projected
+    /// level is placed by index instead (see [`crate::window::level_index`]).
+    pub fn level_bbox(&self, level: &PyramidLevel) -> Option<BoundingBox> {
+        let native = self.native_level()?;
+        if level.scale <= 1.0 {
+            return Some(self.bbox);
+        }
+        let (native_dx, native_dy) = (
+            point_spacing(self.bbox.width(), native.shape.0),
+            point_spacing(self.bbox.height(), native.shape.1),
+        );
+
+        // Level-0 cells from level 0's first centre to this level's first, and to its last
+        let first = if self.downsample_method.eq_ignore_ascii_case("nearest") {
+            0.0
+        } else {
+            (level.scale - 1.0) / 2.0
+        };
+        let last = |cells: usize| first + cells.saturating_sub(1) as f64 * level.scale;
+        let (first_x, last_x) = (first * native_dx, last(level.shape.0) * native_dx);
+        let (first_y, last_y) = (first * native_dy, last(level.shape.1) * native_dy);
+
+        Some(match self.row_origin {
+            RowOrigin::North => BoundingBox::new(
+                self.bbox.min_lon + first_x,
+                self.bbox.max_lat - last_y,
+                self.bbox.min_lon + last_x,
+                self.bbox.max_lat - first_y,
+            ),
+            RowOrigin::South => BoundingBox::new(
+                self.bbox.min_lon + first_x,
+                self.bbox.min_lat + first_y,
+                self.bbox.min_lon + last_x,
+                self.bbox.min_lat + last_y,
+            ),
+        })
     }
 }
