@@ -1,7 +1,8 @@
 //! NWS hazard colours, as used on the national hazards map
 //! (<https://www.weather.gov/help-map>).
 //!
-//! The table below is embedded statically: NWS publishes it as a web page, not an
+//! The table below is embedded statically (checked against the page on 2026-11-01; older
+//! event names such as "Excessive Heat Warning" are kept for alerts that still use them): NWS publishes it as a web page, not an
 //! API, and it changes a few times a decade. Events that are not listed (new
 //! products, `Test Message`, ...) fall back to a colour by significance
 //! (warning / watch / advisory / statement, taken from the event name or VTEC)
@@ -9,6 +10,7 @@
 
 /// `(event name, "#RRGGBB")`, exact match on the NWS event name.
 const EVENT_COLORS: &[(&str, &str)] = &[
+    ("911 Telephone Outage", "#C0C0C0"),
     ("911 Telephone Outage Emergency", "#C0C0C0"),
     ("Administrative Message", "#C0C0C0"),
     ("Air Quality Alert", "#808080"),
@@ -24,8 +26,9 @@ const EVENT_COLORS: &[(&str, &str)] = &[
     ("Blizzard Watch", "#ADFF2F"),
     ("Blowing Dust Advisory", "#BDB76B"),
     ("Blowing Dust Warning", "#FFE4C4"),
+    ("Blue Alert", "#FFFFFF"),
     ("Brisk Wind Advisory", "#D8BFD8"),
-    ("Child Abduction Emergency", "#FFD700"),
+    ("Child Abduction Emergency", "#FFFFFF"),
     ("Civil Danger Warning", "#FFB6C1"),
     ("Civil Emergency Message", "#FFB6C1"),
     ("Coastal Flood Advisory", "#7CFC00"),
@@ -39,11 +42,14 @@ const EVENT_COLORS: &[(&str, &str)] = &[
     ("Dust Storm Warning", "#FFE4C4"),
     ("Earthquake Warning", "#8B4513"),
     ("Evacuation - Immediate", "#7FFF00"),
+    ("Evacuation Immediate", "#7FFF00"),
     ("Excessive Heat Warning", "#C71585"),
     ("Excessive Heat Watch", "#800000"),
     ("Extreme Cold Warning", "#0000FF"),
     ("Extreme Cold Watch", "#5F9EA0"),
     ("Extreme Fire Danger", "#E9967A"),
+    ("Extreme Heat Warning", "#C71585"),
+    ("Extreme Heat Watch", "#800000"),
     ("Extreme Wind Warning", "#FF8C00"),
     ("Fire Warning", "#A0522D"),
     ("Fire Weather Watch", "#FFDEAD"),
@@ -116,8 +122,10 @@ const EVENT_COLORS: &[(&str, &str)] = &[
     ("Storm Surge Watch", "#DB7FF7"),
     ("Storm Warning", "#9400D3"),
     ("Storm Watch", "#FFE4B5"),
+    ("Test", "#F0FFFF"),
     ("Tornado Warning", "#FF0000"),
     ("Tornado Watch", "#FFFF00"),
+    ("Tropical Cyclone Local Statement", "#FFE4B5"),
     ("Tropical Depression Local Statement", "#FFE4B5"),
     ("Tropical Storm Local Statement", "#FFE4B5"),
     ("Tropical Storm Warning", "#B22222"),

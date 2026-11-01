@@ -203,7 +203,14 @@ impl NwsAlertsRunner {
     /// One poll of the active feed.
     pub async fn poll_once(&self) -> Result<()> {
         let url = format!("{}/alerts/active", self.config.base_url);
-        let mut req = self.client.get(&url).header(header::ACCEPT, ACCEPT_GEOJSON);
+        // The feed is ~2 MB of JSON and changes most minutes; gzip cuts it about tenfold. Asked for
+        // here (and decoded in `json_body`) rather than through reqwest's `gzip` feature, which
+        // would turn on compression for every client in the downloader, GRIB range requests included.
+        let mut req = self
+            .client
+            .get(&url)
+            .header(header::ACCEPT, ACCEPT_GEOJSON)
+            .header(header::ACCEPT_ENCODING, "gzip");
         if let Some(tag) = self.etag.lock().unwrap().clone() {
             req = req.header(header::IF_NONE_MATCH, tag);
         }
@@ -227,7 +234,7 @@ impl NwsAlertsRunner {
                     .get(header::ETAG)
                     .and_then(|v| v.to_str().ok())
                     .map(String::from);
-                let body: Value = match resp.json().await {
+                let body: Value = match json_body(resp).await {
                     Ok(b) => b,
                     Err(e) => return self.report_failure(format!("Bad alerts JSON: {e}")).await,
                 };
@@ -417,6 +424,24 @@ pub fn load_nws_alerts_config(
     }))
 }
 
+/// The JSON body of a response, gunzipped first when the server sent `Content-Encoding: gzip`.
+async fn json_body(resp: reqwest::Response) -> Result<Value> {
+    let gzipped = resp
+        .headers()
+        .get(header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("gzip"));
+    let bytes = resp.bytes().await.context("reading the alerts body")?;
+    if gzipped {
+        let mut out = Vec::with_capacity(bytes.len() * 8);
+        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)
+            .context("gunzipping the alerts body")?;
+        Ok(serde_json::from_slice(&out)?)
+    } else {
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,6 +532,38 @@ mod tests {
             runner.zones.pending_len(),
             2,
             "missing zones are queued (deduplicated)"
+        );
+    }
+
+    #[tokio::test]
+    async fn asks_for_gzip_and_reads_a_gzipped_feed() {
+        use std::io::Write;
+        let nws = MockServer::start().await;
+        let ing = ingester_ok(&[]).await;
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(FIXTURE.as_bytes()).unwrap();
+        Mock::given(method("GET"))
+            .and(path("/alerts/active"))
+            .and(h("accept-encoding", "gzip"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "gzip")
+                    .set_body_raw(gz.finish().unwrap(), "application/geo+json"),
+            )
+            .mount(&nws)
+            .await;
+
+        let runner = NwsAlertsRunner::new(cfg(&nws, &ing)).unwrap();
+        runner.poll_once().await.unwrap();
+
+        let posts = posted_json(
+            &ing.received_requests().await.unwrap(),
+            "/ingest/nws-alerts",
+        );
+        let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+        assert_eq!(
+            posts[0]["features"].as_array().unwrap().len(),
+            fixture["features"].as_array().unwrap().len()
         );
     }
 
