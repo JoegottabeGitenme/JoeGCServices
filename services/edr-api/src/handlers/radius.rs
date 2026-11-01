@@ -17,7 +17,10 @@ use edr_protocol::{
     responses::ExceptionResponse, CoverageJson, DistanceUnit, EdrFeatureCollection, ParsedCoords,
     PositionQuery, RadiusQuery,
 };
-use grid_processor::{BoundingBox, GridProcessorError};
+use grid_processor::{
+    AreaData, AreaReadOptions, BoundingBox, DatasetQuery, GridDataService, GridProcessorError,
+    GridRegion, NativeWindow,
+};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -666,11 +669,7 @@ async fn radius_query(
         union_bbox.north,
     );
 
-    let region = match state
-        .grid_data_service
-        .read_region(&query, &grid_bbox, None)
-        .await
-    {
+    let region = match read_circle_region(&state.grid_data_service, &query, &grid_bbox).await {
         Ok(r) => r,
         Err(e) => {
             return handle_grid_read_error(e, "read region");
@@ -741,11 +740,7 @@ async fn radius_query(
             .unwrap_or_default();
 
         // Read the region for this parameter
-        match state
-            .grid_data_service
-            .read_region(&query, &grid_bbox, None)
-            .await
-        {
+        match read_circle_region(&state.grid_data_service, &query, &grid_bbox).await {
             Ok(param_region) => {
                 // Apply radius mask - set values outside all circles to null
                 // Uses Haversine distance for accurate distance calculation
@@ -875,6 +870,64 @@ async fn radius_query(
         .header(header::CACHE_CONTROL, cache_control)
         .body(json.into())
         .unwrap()
+}
+
+/// The cells around a radius query as a regular longitude/latitude grid whose cell centres are
+/// where the cell is: what the handler masks with the circle and reports as axes.
+///
+/// A lat/lon grid is its own regular grid, read for `bbox`. A projected grid (HRRR, NBM) is not:
+/// its rows and columns are in metres on the projection, and its whole-grid read has the extent of
+/// the dataset but no regular lon/lat spacing, so computing a cell's longitude and latitude as
+/// `min + (i + 0.5) * resolution` put every cell kilometres from where it is (a 2 km circle on a
+/// cell's centre found other cells, or none). Read just the cells the box needs and sample them
+/// onto a lattice of native spacing (see [`lattice_over`]).
+async fn read_circle_region(
+    service: &GridDataService,
+    query: &DatasetQuery,
+    bbox: &BoundingBox,
+) -> Result<GridRegion, GridProcessorError> {
+    let read = service
+        .read_area(
+            query,
+            bbox,
+            AreaReadOptions {
+                output_size: None,
+                crop: Some(*bbox),
+            },
+        )
+        .await?;
+    Ok(match read.data {
+        AreaData::Region(region) => region,
+        AreaData::Window(window) => lattice_over(&window, bbox),
+    })
+}
+
+/// Sample the cells of a projected grid onto a lon/lat lattice centred on the middle of `bbox`
+/// whose spacing is that of the grid's own cells there, an odd number of them across each way, so
+/// that the middle of `bbox` -- the centre of a circle -- is a lattice point, and a circle smaller
+/// than a cell still holds one.
+///
+/// A multi-circle query is centred on the middle of the union of its circles, not on a circle.
+fn lattice_over(window: &NativeWindow, bbox: &BoundingBox) -> GridRegion {
+    let (cells_x, cells_y) = window.cells;
+    let (step_lon, step_lat) = (
+        bbox.width() / cells_x as f64,
+        bbox.height() / cells_y as f64,
+    );
+    // round up to odd
+    let (nx, ny) = (cells_x | 1, cells_y | 1);
+    let (mid_lon, mid_lat) = bbox.center();
+    let (half_lon, half_lat) = (nx as f64 * step_lon / 2.0, ny as f64 * step_lat / 2.0);
+    window.resample(
+        &BoundingBox::new(
+            mid_lon - half_lon,
+            mid_lat - half_lat,
+            mid_lon + half_lon,
+            mid_lat + half_lat,
+        ),
+        nx,
+        ny,
+    )
 }
 
 /// Compute the union bounding box for multiple radius queries.

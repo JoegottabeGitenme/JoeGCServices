@@ -230,6 +230,14 @@ async fn setup() -> (Router, Arc<AppState>, TestInfrastructure) {
             get(handlers::area::area_handler),
         )
         .route(
+            "/edr/collections/:collection_id/position",
+            get(handlers::position::position_handler),
+        )
+        .route(
+            "/edr/collections/:collection_id/radius",
+            get(handlers::radius::radius_handler),
+        )
+        .route(
             "/edr/collections/:collection_id/instances/:instance_id/area",
             get(handlers::area::instance_area_handler),
         )
@@ -1108,4 +1116,79 @@ async fn cache_control_is_explicit_only_for_the_dataset_that_was_asked_for() {
         "max-age=60"
     );
     assert_eq!(cc(&get_reply(&app, &mrms("")).await), "max-age=60");
+}
+
+// ---------------------------------------------------------------------------------------------
+// radius on a projected grid
+// ---------------------------------------------------------------------------------------------
+
+/// Non-null values of a CoverageJSON reply's parameter, with the grid's size
+fn radius_values(r: &Reply, parameter: &str) -> (Vec<f64>, usize, usize, Vec<f64>) {
+    let json: serde_json::Value = serde_json::from_slice(&r.body).expect("CoverageJSON");
+    let axis = |name: &str| -> Vec<f64> {
+        json["domain"]["axes"][name]["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect()
+    };
+    let (x, y) = (axis("x"), axis("y"));
+    let values = json["ranges"][parameter]["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap_or(f64::NAN))
+        .collect();
+    (values, x.len(), y.len(), x)
+}
+
+/// `/radius` on the Lambert grid found the wrong cells: the region of a projected grid has the
+/// dataset's extent but no regular longitude/latitude spacing, and the handler put each cell at
+/// `min + (i + 0.5) * resolution`, kilometres from where it is. A 2 km circle on a cell the
+/// `/position` query answers (26.19 dBZ) returned a neighbour far away (-10, no echo).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore] // Requires Docker
+async fn radius_on_a_projected_grid_answers_with_the_cells_that_are_there() {
+    let (app, _state, _infra) = setup().await;
+    let (lon, lat, want) = SNOW;
+    let uri = |km: f64| {
+        format!(
+            "/edr/collections/hrrr-subh-atmosphere/radius?coords=POINT({lon}%20{lat})&within={km}&within-units=km&parameter-name=REFC&datetime=2026-10-11T18:00:00Z"
+        )
+    };
+
+    // the cell /position reads at that longitude and latitude
+    let position = get_reply(
+        &app,
+        &format!(
+            "/edr/collections/hrrr-subh-atmosphere/position?coords=POINT({lon}%20{lat})&parameter-name=REFC&datetime=2026-10-11T18:00:00Z"
+        ),
+    )
+    .await;
+    assert_eq!(position.status, 200, "{}", position.text());
+    assert!(position.text().contains("26.18"), "{}", position.text());
+
+    for km in [2.0, 5.0, 20.0] {
+        let r = get_reply(&app, &uri(km)).await;
+        assert_eq!(r.status, 200, "{km} km: {}", r.text());
+        let (values, w, h, xs) = radius_values(&r, "REFC");
+        assert_eq!(values.len(), w * h, "{km} km");
+        // the middle of the lattice is the middle of the circle, and holds that cell's value
+        let middle = values[(h / 2) * w + w / 2];
+        assert!(
+            (middle - want).abs() < 0.02,
+            "{km} km: got {middle} dBZ at the circle's centre, the file has {want} ({w} x {h})"
+        );
+        // and the lattice is where the circle is, at about the grid's spacing
+        let mid_x = xs[w / 2];
+        assert!((mid_x - lon).abs() < 1e-6, "{km} km: x {mid_x} vs {lon}");
+        if km >= 20.0 {
+            assert!(w >= 11 && h >= 11, "{km} km: {w} x {h}");
+        }
+        // every value outside the circle is dropped: a 2 km circle holds the middle alone
+        if km <= 2.0 {
+            assert_eq!(values.iter().filter(|v| !v.is_nan()).count(), 1, "{km} km");
+        }
+    }
 }
