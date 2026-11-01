@@ -1870,9 +1870,9 @@
             // ---- Layers for Maps mode (WMTS REST tiles; WMS GetMap shown for the current view) ----
             const LAYERS = [
                 { id: 'mrms_REFL', style: 'enhanced', label: 'MRMS radar', title: 'MRMS radar reflectivity',
-                  note: 'Multi-Radar Multi-Sensor composite over the contiguous US, refreshed every couple of minutes.', bounds: [[-128, 22], [-64, 52]] },
+                  note: 'Multi-Radar Multi-Sensor composite over the contiguous US, refreshed every couple of minutes.', bounds: [[-130, 20], [-60, 55]] },
                 { id: 'hrrr_TMP', style: 'gradient', label: 'HRRR temperature', title: 'HRRR 2 m temperature',
-                  note: 'High-Resolution Rapid Refresh, 3 km grid over the contiguous US.', bounds: [[-123, 22], [-62, 48]] },
+                  note: 'High-Resolution Rapid Refresh, 3 km grid over the contiguous US.', bounds: [[-134.1, 21.1], [-60.9, 52.6]] },
                 { id: 'goes19_CMI_C13', style: 'enhanced', label: 'GOES-19 infrared', title: 'GOES-19 infrared (band 13)',
                   note: 'Clean longwave window channel, cloud-top and surface temperature, GOES-East.', bounds: [[-130, 12], [-55, 52]] },
                 { id: 'gfs_TMP', style: 'gradient', label: 'GFS temperature', title: 'GFS 2 m temperature',
@@ -2199,7 +2199,8 @@
                     enter() { setHint(this.hint); setReadout('<p class="sc-muted">Requesting image…</p>'); },
                     async moveend() {
                         const b = map.getBounds();
-                        const w = Math.max(b.getWest(), -123), e = Math.min(b.getEast(), -61), s = Math.max(b.getSouth(), 21.2), n = Math.min(b.getNorth(), 47.8);
+                        // HRRR's full extent (its Lambert grid's corners); cells outside the grid come back transparent
+                        const w = Math.max(b.getWest(), -134.1), e = Math.min(b.getEast(), -60.9), s = Math.max(b.getSouth(), 21.1), n = Math.min(b.getNorth(), 52.6);
                         if (w >= e || s >= n) { setReadout('<h3>Pan back over the US</h3><p>HRRR covers the contiguous US.</p>'); return; }
                         const cw = Math.min(800, Math.round(map.getCanvas().getBoundingClientRect().width));
                         const ht = Math.max(64, Math.min(800, Math.round(cw * (n - s) / (e - w))));
