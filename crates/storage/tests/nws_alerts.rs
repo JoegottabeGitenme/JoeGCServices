@@ -1,0 +1,697 @@
+//! Real-Postgres/PostGIS tests for `storage::nws_alerts`: geometry resolution
+//! from lazily fetched zones, supersede / disappearance / cancel lifecycle,
+//! failure handling, retention, and the point/bbox/id queries the EDR layer uses.
+//!
+//! `#[ignore]`d like the other integration tests (`-- --ignored`, Docker via
+//! `test_utils`). To use a local database instead:
+//!
+//! ```text
+//! docker run -d --name pg-nws -p 15435:5432 -e POSTGRES_PASSWORD=t postgis/postgis:16-3.4
+//! NWS_TEST_DATABASE_URL=postgres://postgres:t@localhost:15435/postgres \
+//!   cargo test -p storage --test nws_alerts -- --ignored --test-threads=1
+//! ```
+
+use chrono::{DateTime, Duration, TimeZone, Utc};
+use serde_json::{json, Value};
+use storage::nws_alerts::{parse_feature, ParsedAlert, ZoneRecord, ZoneStatus};
+use storage::{Catalog, NwsAlertCatalog};
+
+const FIXTURE: &str =
+    include_str!("../../../services/downloader/tests/fixtures/nws_alerts_active.json");
+
+struct Env {
+    catalog: Catalog,
+    nws: NwsAlertCatalog,
+    _infra: Option<test_utils::containers::TestInfrastructure>,
+}
+
+async fn env() -> Env {
+    let (url, infra) = match std::env::var("NWS_TEST_DATABASE_URL") {
+        Ok(url) => (url, None),
+        Err(_) => {
+            let infra = test_utils::containers::TestInfrastructure::start().await;
+            (infra.postgres_url(), Some(infra))
+        }
+    };
+    let catalog = Catalog::connect(&url).await.expect("connect");
+    catalog.migrate().await.expect("migrate");
+    catalog.migrate_observations().await.expect("PostGIS");
+    catalog
+        .migrate_nws_alerts()
+        .await
+        .expect("migrate_nws_alerts");
+    // idempotent
+    catalog.migrate_nws_alerts().await.expect("migrate twice");
+    sqlx::query("TRUNCATE nws_alerts, nws_zones, nws_alerts_status")
+        .execute(catalog.pool())
+        .await
+        .expect("truncate");
+    let nws = NwsAlertCatalog::new(catalog.pool_clone());
+    Env {
+        catalog,
+        nws,
+        _infra: infra,
+    }
+}
+
+/// 2026-11-01 23:30Z: every fixture alert that is not already terminal is in force.
+fn t0() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 11, 1, 23, 30, 0).unwrap()
+}
+
+fn features() -> Vec<Value> {
+    let v: Value = serde_json::from_str(FIXTURE).unwrap();
+    v["features"].as_array().unwrap().clone()
+}
+
+fn fixture_alerts() -> Vec<ParsedAlert> {
+    features()
+        .iter()
+        .map(|f| parse_feature(f).unwrap())
+        .collect()
+}
+
+fn id_of(alerts: &[ParsedAlert], event: &str, pick: impl Fn(&ParsedAlert) -> bool) -> String {
+    alerts
+        .iter()
+        .find(|a| a.event == event && pick(a))
+        .unwrap()
+        .id
+        .clone()
+}
+
+fn square(min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> String {
+    json!({"type": "Polygon", "coordinates": [[
+        [min_lon, min_lat], [max_lon, min_lat], [max_lon, max_lat], [min_lon, max_lat], [min_lon, min_lat]
+    ]]})
+    .to_string()
+}
+
+fn zone(key: &str, status: ZoneStatus, geom: Option<String>) -> ZoneRecord {
+    ZoneRecord {
+        zone_key: key.to_string(),
+        name: Some(format!("zone {key}")),
+        state: Some("XX".into()),
+        kind: Some("public".into()),
+        status,
+        geometry_json: geom,
+    }
+}
+
+async fn source_of(env: &Env, id: &str) -> (String, bool) {
+    let r: (String, bool) =
+        sqlx::query_as("SELECT geometry_source, geom IS NOT NULL FROM nws_alerts WHERE id = $1")
+            .bind(id)
+            .fetch_one(env.catalog.pool())
+            .await
+            .unwrap();
+    r
+}
+
+fn ids(v: &[storage::StoredAlert]) -> Vec<String> {
+    let mut x: Vec<String> = v.iter().map(|a| a.id.clone()).collect();
+    x.sort();
+    x
+}
+
+// Zone squares used below.
+const CO: [f64; 4] = [-107.5, 37.0, -106.5, 38.0]; // forecast/COZ068
+const MD: [f64; 4] = [-77.3, 39.0, -76.8, 39.4]; // county/MDC031
+const PZ_A: [f64; 4] = [-125.0, 40.0, -124.0, 41.0]; // forecast/PZZ455
+const PZ_B: [f64; 4] = [-125.0, 41.0, -124.0, 42.0]; // forecast/PZZ475
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn zone_only_alerts_get_geometry_as_zones_arrive_and_point_query_finds_them() {
+    let env = env().await;
+    let alerts = fixture_alerts();
+    let r = env.nws.apply_feed(&alerts, None, t0()).await.unwrap();
+    assert_eq!(r.received, alerts.len());
+    assert_eq!(r.ended, 0);
+
+    // Alerts are stored immediately; zone-only ones wait for geometry.
+    let winter = id_of(&alerts, "Winter Storm Warning", |_| true);
+    let svr = id_of(&alerts, "Severe Thunderstorm Warning", |_| true);
+    let test_msg = id_of(&alerts, "Test Message", |_| true);
+    let sca = id_of(&alerts, "Small Craft Advisory", |a| a.zone_keys.len() == 2);
+    assert_eq!(source_of(&env, &svr).await, ("polygon".into(), true));
+    assert_eq!(source_of(&env, &winter).await, ("pending".into(), false));
+
+    // Polygon alerts never ask for their zones; the rest are all listed once.
+    assert!(r.missing_zones.contains(&"forecast/COZ068".to_string()));
+    assert!(r.missing_zones.contains(&"county/MDC031".to_string()));
+    assert!(
+        !r.missing_zones.contains(&"county/NMC001".to_string()),
+        "svr has a polygon"
+    );
+    let mut sorted = r.missing_zones.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(sorted.len(), r.missing_zones.len(), "no duplicates");
+
+    // Before the zones arrive, the point is in nobody's geometry.
+    assert!(env
+        .nws
+        .active_at_point(-107.0, 37.5, t0(), false)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Zones arrive.
+    let n = env
+        .nws
+        .upsert_zones(
+            &[
+                zone(
+                    "forecast/COZ068",
+                    ZoneStatus::Ok,
+                    Some(square(CO[0], CO[1], CO[2], CO[3])),
+                ),
+                zone(
+                    "county/MDC031",
+                    ZoneStatus::Ok,
+                    Some(square(MD[0], MD[1], MD[2], MD[3])),
+                ),
+                // one of the marine alert's two zones
+                zone(
+                    "forecast/PZZ455",
+                    ZoneStatus::Ok,
+                    Some(square(PZ_A[0], PZ_A[1], PZ_A[2], PZ_A[3])),
+                ),
+            ],
+            t0(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        n >= 3,
+        "at least winter, test message, marine updated (got {n})"
+    );
+    assert_eq!(source_of(&env, &winter).await, ("zones".into(), true));
+    assert_eq!(source_of(&env, &test_msg).await, ("zones".into(), true));
+    // Marine alert has one of two zones: partial geometry, still pending.
+    assert_eq!(source_of(&env, &sca).await, ("pending".into(), true));
+
+    // (The fixture's Avalanche Advisory also lists COZ068 among four zones: it has partial geometry.)
+    let avalanche = id_of(&alerts, "Avalanche Advisory", |_| true);
+    let hit = env
+        .nws
+        .active_at_point(-107.0, 37.5, t0(), true)
+        .await
+        .unwrap();
+    let mut want = vec![winter.clone(), avalanche.clone()];
+    want.sort();
+    assert_eq!(ids(&hit), want);
+    let w = hit.iter().find(|a| a.id == winter).unwrap();
+    assert_eq!(w.event, "Winter Storm Warning");
+    assert_eq!(w.color, "#FF69B4");
+    assert!(w
+        .geometry_geojson
+        .as_deref()
+        .unwrap()
+        .contains("MultiPolygon"));
+    assert!(w.sections["what"].is_string());
+    assert!(w.is_active(t0()));
+    assert_eq!(source_of(&env, &avalanche).await, ("pending".into(), true));
+    let miss = env
+        .nws
+        .active_at_point(-100.0, 37.5, t0(), false)
+        .await
+        .unwrap();
+    assert!(miss.is_empty());
+    assert!(env
+        .nws
+        .active_at_point(-107.0, 37.5, t0(), false)
+        .await
+        .unwrap()
+        .iter()
+        .all(|a| a.geometry_geojson.is_none()));
+
+    // Second marine zone arrives: union of both squares, now final.
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/PZZ475",
+                ZoneStatus::Ok,
+                Some(square(PZ_B[0], PZ_B[1], PZ_B[2], PZ_B[3])),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(source_of(&env, &sca).await, ("zones".into(), true));
+    for (lon, lat) in [(-124.5, 40.5), (-124.5, 41.5)] {
+        let h = env
+            .nws
+            .active_at_point(lon, lat, t0(), false)
+            .await
+            .unwrap();
+        assert!(
+            ids(&h).contains(&sca),
+            "({lon},{lat}) should be inside the union"
+        );
+    }
+    assert!(env
+        .nws
+        .active_at_point(-124.5, 42.5, t0(), false)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Polygon alert: point inside its own polygon.
+    let (px, py): (f64, f64) = sqlx::query_as(
+        "SELECT ST_X(ST_PointOnSurface(geom)), ST_Y(ST_PointOnSurface(geom)) FROM nws_alerts WHERE id = $1",
+    )
+    .bind(&svr)
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap();
+    let h = env.nws.active_at_point(px, py, t0(), false).await.unwrap();
+    assert!(ids(&h).contains(&svr));
+
+    // A 404 zone is "resolved without geometry": an alert whose zones all 404 settles on 'none'.
+    let gale = id_of(&alerts, "Gale Warning", |_| true);
+    let gale_zones = alerts
+        .iter()
+        .find(|a| a.id == gale)
+        .unwrap()
+        .zone_keys
+        .clone();
+    let recs: Vec<ZoneRecord> = gale_zones
+        .iter()
+        .map(|k| zone(k, ZoneStatus::NotFound, None))
+        .collect();
+    env.nws.upsert_zones(&recs, t0()).await.unwrap();
+    assert_eq!(source_of(&env, &gale).await, ("none".into(), false));
+    // A 404 on a refresh never wipes a zone we already hold.
+    env.nws
+        .upsert_zones(&[zone("forecast/COZ068", ZoneStatus::NotFound, None)], t0())
+        .await
+        .unwrap();
+    assert_eq!(source_of(&env, &winter).await, ("zones".into(), true));
+    let st: String =
+        sqlx::query_scalar("SELECT fetch_status FROM nws_zones WHERE zone_key = 'forecast/COZ068'")
+            .fetch_one(env.catalog.pool())
+            .await
+            .unwrap();
+    assert_eq!(st, "ok");
+
+    // Fresh zones are not re-requested; stale ones are; failed ones after a day.
+    let all_zones: Vec<String> = alerts
+        .iter()
+        .filter(|a| a.geometry_json.is_none())
+        .flat_map(|a| a.zone_keys.clone())
+        .collect();
+    let recs: Vec<ZoneRecord> = all_zones
+        .iter()
+        .map(|k| match k.as_str() {
+            "forecast/COZ068" => zone(k, ZoneStatus::Ok, Some(square(CO[0], CO[1], CO[2], CO[3]))),
+            _ => zone(k, ZoneStatus::NotFound, None),
+        })
+        .collect();
+    env.nws.upsert_zones(&recs, t0()).await.unwrap();
+    assert!(env.nws.missing_zones(t0()).await.unwrap().is_empty());
+    let day_later = env
+        .nws
+        .missing_zones(t0() + Duration::hours(25))
+        .await
+        .unwrap();
+    assert!(
+        !day_later.is_empty() && !day_later.contains(&"forecast/COZ068".to_string()),
+        "ok zones keep for 30 d; failed retry after 24 h"
+    );
+    let month_later = env
+        .nws
+        .missing_zones(t0() + Duration::days(31))
+        .await
+        .unwrap();
+    assert!(month_later.contains(&"forecast/COZ068".to_string()));
+
+    // Re-polling the same feed keeps the resolved geometry (zones unchanged).
+    env.nws
+        .apply_feed(&alerts, None, t0() + Duration::minutes(1))
+        .await
+        .unwrap();
+    assert_eq!(source_of(&env, &winter).await, ("zones".into(), true));
+    assert_eq!(source_of(&env, &svr).await.0, "polygon");
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn lifecycle_supersede_disappear_cancel_and_failure() {
+    let env = env().await;
+    let alerts = fixture_alerts();
+    env.nws.apply_feed(&alerts, None, t0()).await.unwrap();
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/COZ068",
+                ZoneStatus::Ok,
+                Some(square(CO[0], CO[1], CO[2], CO[3])),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    let winter = id_of(&alerts, "Winter Storm Warning", |_| true);
+    let svr = id_of(&alerts, "Severe Thunderstorm Warning", |_| true);
+    let ffw = id_of(&alerts, "Flash Flood Warning", |_| true);
+
+    // A VTEC EXP message is stored but already over.
+    let ffw_row = env.nws.get(&ffw, false).await.unwrap().unwrap();
+    assert!(ffw_row.ended_at.is_some() && !ffw_row.is_active(t0()));
+
+    // 1. Update: references the winter warning -> it is superseded, the update is live.
+    let mut upd = features()
+        .into_iter()
+        .find(|f| f["properties"]["id"] == winter.as_str())
+        .unwrap();
+    upd["properties"]["id"] = json!("urn:test:winter-update");
+    upd["properties"]["messageType"] = json!("Update");
+    upd["properties"]["references"] =
+        json!([{"identifier": winter, "sent": "2026-11-01T10:27:00-07:00"}]);
+    upd["properties"]["headline"] = json!("Updated headline");
+    let upd = parse_feature(&upd).unwrap();
+    let mut feed2: Vec<ParsedAlert> = alerts.iter().filter(|a| a.id != winter).cloned().collect();
+    feed2.push(upd.clone());
+    let r = env
+        .nws
+        .apply_feed(&feed2, None, t0() + Duration::minutes(1))
+        .await
+        .unwrap();
+    assert_eq!(r.superseded, 1);
+    let old = env.nws.get(&winter, false).await.unwrap().unwrap();
+    assert_eq!(old.superseded_by.as_deref(), Some("urn:test:winter-update"));
+    assert!(!old.is_active(t0()));
+    assert_eq!(old.ended_at, None, "superseded is not 'ended'");
+    // The update shares the zone, so it picks up the cached geometry immediately.
+    let hit = env
+        .nws
+        .active_at_point(-107.0, 37.5, t0(), false)
+        .await
+        .unwrap();
+    let avalanche = id_of(&alerts, "Avalanche Advisory", |_| true); // also lists COZ068
+    let mut want = vec!["urn:test:winter-update".to_string(), avalanche.clone()];
+    want.sort();
+    assert_eq!(ids(&hit), want);
+    let u = hit
+        .iter()
+        .find(|a| a.id == "urn:test:winter-update")
+        .unwrap();
+    assert_eq!(u.headline.as_deref(), Some("Updated headline"));
+    assert_eq!(u.references_ids, vec![winter.clone()]);
+
+    // 2. Disappearance: a poll without the SVR ends it; others stay live.
+    let feed3: Vec<ParsedAlert> = feed2.iter().filter(|a| a.id != svr).cloned().collect();
+    let r = env
+        .nws
+        .apply_feed(&feed3, None, t0() + Duration::minutes(2))
+        .await
+        .unwrap();
+    assert_eq!(r.ended, 1);
+    let svr_row = env.nws.get(&svr, false).await.unwrap().unwrap();
+    assert_eq!(svr_row.ended_at, Some(t0() + Duration::minutes(2)));
+    assert!(!svr_row.is_active(t0()));
+    // ...and its polygon no longer answers point queries.
+    let (px, py): (f64, f64) = sqlx::query_as(
+        "SELECT ST_X(ST_PointOnSurface(geom)), ST_Y(ST_PointOnSurface(geom)) FROM nws_alerts WHERE id = $1",
+    )
+    .bind(&svr)
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap();
+    assert!(!ids(&env.nws.active_at_point(px, py, t0(), false).await.unwrap()).contains(&svr));
+    // ...but a bbox/time (history) query still sees it, flagged as ended.
+    let hist = env
+        .nws
+        .in_bbox(
+            [px - 0.1, py - 0.1, px + 0.1, py + 0.1],
+            t0() - Duration::hours(6),
+            t0() + Duration::hours(6),
+            false,
+            false,
+            t0(),
+            50,
+            false,
+        )
+        .await
+        .unwrap();
+    assert!(hist.iter().any(|a| a.id == svr && a.ended_at.is_some()));
+    let active_only = env
+        .nws
+        .in_bbox(
+            [px - 0.1, py - 0.1, px + 0.1, py + 0.1],
+            t0() - Duration::hours(6),
+            t0() + Duration::hours(6),
+            true,
+            false,
+            t0(),
+            50,
+            false,
+        )
+        .await
+        .unwrap();
+    assert!(!active_only.iter().any(|a| a.id == svr));
+
+    // 3. It comes back in the feed: live again.
+    env.nws
+        .apply_feed(&feed2, None, t0() + Duration::minutes(3))
+        .await
+        .unwrap();
+    assert_eq!(
+        env.nws.get(&svr, false).await.unwrap().unwrap().ended_at,
+        None
+    );
+    // ...but the EXP message stays over while NWS keeps listing it.
+    assert!(env
+        .nws
+        .get(&ffw, false)
+        .await
+        .unwrap()
+        .unwrap()
+        .ended_at
+        .is_some());
+
+    // 4. A failed poll changes nothing but the status row.
+    let before = env.nws.status().await.unwrap().unwrap();
+    env.nws
+        .record_poll_failure(
+            "GET /alerts/active returned 503",
+            t0() + Duration::minutes(4),
+        )
+        .await
+        .unwrap();
+    let after = env.nws.status().await.unwrap().unwrap();
+    assert_eq!(
+        after.last_success_at, before.last_success_at,
+        "success time is not advanced by a failure"
+    );
+    assert_eq!(
+        after.last_error.as_deref(),
+        Some("GET /alerts/active returned 503")
+    );
+    assert!(env
+        .nws
+        .get(&svr, false)
+        .await
+        .unwrap()
+        .unwrap()
+        .ended_at
+        .is_none());
+    // An empty feed must not end anything either.
+    let r = env
+        .nws
+        .apply_feed(&[], None, t0() + Duration::minutes(5))
+        .await
+        .unwrap();
+    assert_eq!(r.ended, 0);
+    assert!(env
+        .nws
+        .get(&svr, false)
+        .await
+        .unwrap()
+        .unwrap()
+        .ended_at
+        .is_none());
+    // 304: success, data age moves.
+    env.nws
+        .record_not_modified(t0() + Duration::minutes(6))
+        .await
+        .unwrap();
+    let st = env.nws.status().await.unwrap().unwrap();
+    assert_eq!(st.last_success_at, Some(t0() + Duration::minutes(6)));
+    assert_eq!(st.last_alert_count, Some(feed2.len() as i32));
+
+    // 5. A Cancel supersedes what it references and is itself over.
+    let mut cancel = features()
+        .into_iter()
+        .find(|f| f["properties"]["id"] == winter.as_str())
+        .unwrap();
+    cancel["properties"]["id"] = json!("urn:test:winter-cancel");
+    cancel["properties"]["messageType"] = json!("Cancel");
+    cancel["properties"]["references"] = json!([{"identifier": "urn:test:winter-update"}]);
+    let cancel = parse_feature(&cancel).unwrap();
+    let mut feed4: Vec<ParsedAlert> = feed2
+        .iter()
+        .filter(|a| a.id != "urn:test:winter-update")
+        .cloned()
+        .collect();
+    feed4.push(cancel);
+    env.nws
+        .apply_feed(&feed4, None, t0() + Duration::minutes(7))
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&env
+            .nws
+            .active_at_point(-107.0, 37.5, t0(), false)
+            .await
+            .unwrap()),
+        vec![avalanche.clone()]
+    );
+    let c = env
+        .nws
+        .get("urn:test:winter-cancel", false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(c.ended_at.is_some() && !c.is_active(t0()));
+    assert_eq!(
+        env.nws
+            .get("urn:test:winter-update", false)
+            .await
+            .unwrap()
+            .unwrap()
+            .superseded_by
+            .as_deref(),
+        Some("urn:test:winter-cancel")
+    );
+
+    // 6. Time alone ends an alert even if the feed is stale: past `ends`, not active.
+    let late = Utc.with_ymd_and_hms(2026, 11, 5, 0, 0, 0).unwrap();
+    let (px, py): (f64, f64) = (px, py);
+    assert!(env
+        .nws
+        .active_at_point(px, py, late, false)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn retention_deletes_week_old_ended_alerts_and_keeps_zones() {
+    let env = env().await;
+    let alerts = fixture_alerts();
+    env.nws.apply_feed(&alerts, None, t0()).await.unwrap();
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/COZ068",
+                ZoneStatus::Ok,
+                Some(square(CO[0], CO[1], CO[2], CO[3])),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    let svr = id_of(&alerts, "Severe Thunderstorm Warning", |_| true);
+
+    // Nothing is old enough yet.
+    assert_eq!(
+        env.nws
+            .delete_retired_before(t0() - Duration::days(7))
+            .await
+            .unwrap(),
+        0
+    );
+
+    // Ten days on, NWS lists only the SVR: everything else ended 10 days ago.
+    let later = t0() + Duration::days(10);
+    let only_svr: Vec<ParsedAlert> = alerts.iter().filter(|a| a.id == svr).cloned().collect();
+    let r = env.nws.apply_feed(&only_svr, None, later).await.unwrap();
+    assert_eq!(
+        r.ended as usize,
+        alerts.len() - 1 - 1,
+        "all but the SVR and the already-ended EXP message"
+    );
+
+    let deleted = env
+        .nws
+        .delete_retired_before(later - Duration::days(7))
+        .await
+        .unwrap();
+    assert_eq!(deleted as usize, alerts.len() - 1);
+    assert!(
+        env.nws.get(&svr, false).await.unwrap().is_some(),
+        "still listed: kept"
+    );
+    let zones: i64 = sqlx::query_scalar("SELECT count(*) FROM nws_zones")
+        .fetch_one(env.catalog.pool())
+        .await
+        .unwrap();
+    assert_eq!(zones, 1, "zones are never swept");
+
+    // A recently ended alert is kept: end it now, sweep with a 7-day window.
+    env.nws
+        .apply_feed(&alerts, None, later + Duration::hours(1))
+        .await
+        .unwrap();
+    env.nws
+        .apply_feed(&only_svr, None, later + Duration::hours(2))
+        .await
+        .unwrap();
+    assert_eq!(
+        env.nws
+            .delete_retired_before(later + Duration::hours(2) - Duration::days(7))
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn one_alert_by_id_carries_the_predigested_fields() {
+    let env = env().await;
+    let alerts = fixture_alerts();
+    env.nws.apply_feed(&alerts, Some(t0()), t0()).await.unwrap();
+    let svr = id_of(&alerts, "Severe Thunderstorm Warning", |_| true);
+
+    let a = env.nws.get(&svr, true).await.unwrap().unwrap();
+    assert_eq!(a.event, "Severe Thunderstorm Warning");
+    assert_eq!(a.vtec[0]["action"], "NEW");
+    assert_eq!(a.vtec[0]["office"], "KABQ");
+    assert_eq!(a.vtec_event_key.as_deref(), Some("KABQ.SV.W.0428"));
+    assert_eq!(a.sections["hazard"], "60 mph wind gusts.");
+    assert_eq!(a.color, "#FFA500");
+    assert_eq!(a.geometry_source, "polygon");
+    assert!(a
+        .geometry_geojson
+        .unwrap()
+        .starts_with("{\"type\":\"MultiPolygon\""));
+    assert!(a.ugc.is_empty() || a.ugc.iter().all(|u| u.len() == 6));
+    assert!(a.end_time.is_some());
+    assert!(env.nws.get("urn:nope", false).await.unwrap().is_none());
+
+    let st = env.nws.status().await.unwrap().unwrap();
+    assert_eq!(st.last_success_at, Some(t0()));
+    assert_eq!(st.feed_updated_at, Some(t0()));
+    assert_eq!(st.last_alert_count, Some(alerts.len() as i32));
+
+    // The point query uses the GIST index (plan check on a table big enough to prefer it).
+    sqlx::query("SET enable_seqscan = off")
+        .execute(env.catalog.pool())
+        .await
+        .unwrap();
+    let plan: Vec<(String,)> = sqlx::query_as(
+        "EXPLAIN SELECT id FROM nws_alerts a WHERE a.superseded_by IS NULL AND a.ended_at IS NULL \
+         AND a.geom && ST_SetSRID(ST_MakePoint(-107, 37.5), 4326) \
+         AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint(-107, 37.5), 4326))",
+    )
+    .fetch_all(env.catalog.pool())
+    .await
+    .unwrap();
+    let plan = plan.into_iter().map(|r| r.0).collect::<Vec<_>>().join("\n");
+    assert!(plan.contains("idx_nws_alerts_geom"), "{plan}");
+}

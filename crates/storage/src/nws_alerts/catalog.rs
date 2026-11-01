@@ -1,0 +1,613 @@
+//! PostGIS side of NWS alerts. See the module docs in `mod.rs`, and
+//! `NWS_ALERTS_SCHEMA_SQL` in `catalog.rs` (the crate-level one) for the tables.
+//!
+//! ## Geometry
+//!
+//! `nws_alerts.geom` is the alert's *effective* geometry, stored, not computed
+//! per query: its own polygon when NWS sent one, otherwise the union of its
+//! zones from `nws_zones`. Point-in-polygon ("alerts at my location") is the hot
+//! read, and unioning a dozen county/marine polygons per request would cost far
+//! more than keeping one row's geometry up to date: the union is recomputed only
+//! when an alert's zone list changes or one of its zones arrives/refreshes.
+//!
+//! Zones load lazily. [`NwsAlertCatalog::apply_feed`] stores alerts immediately
+//! and returns the zone keys it has no (fresh) geometry for; the caller fetches
+//! those and hands them to [`NwsAlertCatalog::upsert_zones`], which fills in the
+//! alerts' geometry. Until then `geometry_source = 'pending'` (and `geom` holds
+//! the union of whatever zones are known, possibly NULL).
+
+use chrono::{DateTime, Duration, Utc};
+use serde::Serialize;
+use serde_json::Value;
+use sqlx::PgPool;
+
+use wms_common::{WmsError, WmsResult};
+
+use super::lifecycle::{self, AlertTimes};
+use super::ParsedAlert;
+
+/// A fetched zone is re-fetched after this long.
+pub const ZONE_REFRESH_DAYS: i64 = 30;
+/// A zone that 404'd / had no geometry is retried after this long.
+pub const ZONE_RETRY_HOURS: i64 = 24;
+
+fn db(what: &'static str) -> impl Fn(sqlx::Error) -> WmsError {
+    move |e| WmsError::DatabaseError(format!("NWS alerts {what} failed: {e}"))
+}
+
+/// Outcome of fetching one zone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZoneStatus {
+    Ok,
+    /// The zone URL returned 404 (retired/unknown zone id).
+    NotFound,
+    /// Fetched, but the zone has no usable polygon.
+    NoGeometry,
+}
+
+impl ZoneStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::NotFound => "not_found",
+            Self::NoGeometry => "no_geometry",
+        }
+    }
+}
+
+/// A zone as fetched from `/zones/<type>/<id>`.
+#[derive(Debug, Clone)]
+pub struct ZoneRecord {
+    /// `forecast/KSZ001`.
+    pub zone_key: String,
+    pub name: Option<String>,
+    pub state: Option<String>,
+    /// NWS' own `properties.type` (public, coastal, offshore, county, fire ...).
+    pub kind: Option<String>,
+    pub status: ZoneStatus,
+    /// GeoJSON geometry string (Polygon or MultiPolygon).
+    pub geometry_json: Option<String>,
+}
+
+/// What [`NwsAlertCatalog::apply_feed`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ApplyResult {
+    pub received: usize,
+    /// Rows inserted or refreshed.
+    pub upserted: usize,
+    /// Older messages marked superseded by this feed's Updates/Cancels.
+    pub superseded: u64,
+    /// Rows no longer in the feed, now marked ended.
+    pub ended: u64,
+    /// Zone keys that need fetching (never fetched, or stale/failed past retry).
+    pub missing_zones: Vec<String>,
+}
+
+/// Poll health, for a data-age indicator.
+#[derive(Debug, Clone, Default, Serialize, sqlx::FromRow)]
+pub struct FeedStatus {
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    /// Last poll that returned a usable answer (200 applied, or 304).
+    pub last_success_at: Option<DateTime<Utc>>,
+    /// Last time the feed content actually changed (a 200, not a 304).
+    pub last_change_at: Option<DateTime<Utc>>,
+    /// NWS' own `updated` stamp from the last 200.
+    pub feed_updated_at: Option<DateTime<Utc>>,
+    pub last_alert_count: Option<i32>,
+    pub last_error: Option<String>,
+    pub last_error_at: Option<DateTime<Utc>>,
+}
+
+/// An alert as stored, plus its derived `active` flag.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct StoredAlert {
+    pub id: String,
+    pub event: String,
+    pub severity: Option<String>,
+    pub urgency: Option<String>,
+    pub certainty: Option<String>,
+    pub category: Option<String>,
+    pub status: Option<String>,
+    pub message_type: String,
+    pub response: Option<String>,
+    pub headline: Option<String>,
+    pub nws_headline: Option<String>,
+    pub description: Option<String>,
+    pub instruction: Option<String>,
+    pub description_text: Option<String>,
+    pub instruction_text: Option<String>,
+    pub area_desc: Option<String>,
+    pub sender_name: Option<String>,
+    pub web: Option<String>,
+    pub sent: Option<DateTime<Utc>>,
+    pub effective: Option<DateTime<Utc>>,
+    pub onset: Option<DateTime<Utc>>,
+    pub expires: Option<DateTime<Utc>>,
+    pub ends: Option<DateTime<Utc>>,
+    /// `COALESCE(ends, expires)`.
+    pub end_time: Option<DateTime<Utc>>,
+    pub ugc: Vec<String>,
+    pub zone_keys: Vec<String>,
+    pub is_marine: bool,
+    pub vtec: Value,
+    pub vtec_event_key: Option<String>,
+    pub sections: Value,
+    pub parameters: Value,
+    pub color: String,
+    pub references_ids: Vec<String>,
+    pub superseded_by: Option<String>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub geometry_source: String,
+    pub first_seen_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    /// GeoJSON of the effective geometry, when requested.
+    pub geometry_geojson: Option<String>,
+}
+
+impl StoredAlert {
+    /// Active at `now` (the SQL predicate in `ACTIVE_PREDICATE` agrees).
+    pub fn is_active(&self, now: DateTime<Utc>) -> bool {
+        lifecycle::is_active(
+            &AlertTimes {
+                superseded: self.superseded_by.is_some(),
+                ended: self.ended_at.is_some(),
+                ends: self.ends,
+                expires: self.expires,
+            },
+            now,
+        )
+    }
+}
+
+const COLS: &str = "a.id, a.event, a.severity, a.urgency, a.certainty, a.category, a.status, \
+    a.message_type, a.response, a.headline, a.nws_headline, a.description, a.instruction, \
+    a.description_text, a.instruction_text, a.area_desc, a.sender_name, a.web, a.sent, \
+    a.effective, a.onset, a.expires, a.ends, a.end_time, a.ugc, a.zone_keys, a.is_marine, \
+    a.vtec, a.vtec_event_key, a.sections, a.parameters, a.color, a.references_ids, \
+    a.superseded_by, a.ended_at, a.geometry_source, a.first_seen_at, a.updated_at";
+
+/// Not superseded, not ended, end time (if any) in the future. `$now` is bound by the caller.
+fn active_predicate(now_param: &str) -> String {
+    format!(
+        "a.superseded_by IS NULL AND a.ended_at IS NULL AND (a.end_time IS NULL OR a.end_time > {now_param})"
+    )
+}
+
+fn geom_col(with_geometry: bool) -> &'static str {
+    if with_geometry {
+        "ST_AsGeoJSON(a.geom, 5)"
+    } else {
+        "NULL::text"
+    }
+}
+
+/// `ORDER BY` that puts the worst, most recent alerts first.
+const SEVERITY_ORDER: &str = "CASE a.severity WHEN 'Extreme' THEN 0 WHEN 'Severe' THEN 1 \
+    WHEN 'Moderate' THEN 2 WHEN 'Minor' THEN 3 ELSE 4 END, a.effective DESC NULLS LAST, a.id";
+
+#[derive(Clone)]
+pub struct NwsAlertCatalog {
+    pool: PgPool,
+}
+
+impl NwsAlertCatalog {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    // --- writes ---------------------------------------------------------------
+
+    /// Apply one successful poll of the active feed (every alert NWS lists now).
+    ///
+    /// In one transaction: upsert each alert; mark the older messages each Update
+    /// or Cancel references as superseded; mark every stored, still-live alert
+    /// that this feed no longer lists as ended; fill in geometry from the zones
+    /// already known; record poll success. An **empty** feed ends nothing (NWS
+    /// always has alerts; an empty answer is a fault, not "all clear").
+    pub async fn apply_feed(
+        &self,
+        alerts: &[ParsedAlert],
+        feed_updated: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> WmsResult<ApplyResult> {
+        let mut tx = self.pool.begin().await.map_err(db("begin"))?;
+        let mut res = ApplyResult {
+            received: alerts.len(),
+            ..Default::default()
+        };
+
+        for a in alerts {
+            sqlx::query(UPSERT_ALERT_SQL)
+                .bind(&a.id)
+                .bind(&a.event)
+                .bind(&a.severity)
+                .bind(&a.urgency)
+                .bind(&a.certainty)
+                .bind(&a.category)
+                .bind(&a.status)
+                .bind(&a.message_type)
+                .bind(&a.response)
+                .bind(&a.headline)
+                .bind(&a.nws_headline)
+                .bind(&a.description)
+                .bind(&a.instruction)
+                .bind(&a.description_text)
+                .bind(&a.instruction_text)
+                .bind(&a.area_desc)
+                .bind(&a.sender)
+                .bind(&a.sender_name)
+                .bind(&a.web)
+                .bind(a.sent)
+                .bind(a.effective)
+                .bind(a.onset)
+                .bind(a.expires)
+                .bind(a.ends)
+                .bind(&a.ugc)
+                .bind(&a.same)
+                .bind(&a.zone_keys)
+                .bind(a.is_marine)
+                .bind(serde_json::to_value(&a.vtec).unwrap_or(Value::Null))
+                .bind(a.vtec.first().map(|v| v.event_key()))
+                .bind(a.vtec.first().map(|v| v.office.clone()))
+                .bind(a.vtec.first().map(|v| v.phenomenon.clone()))
+                .bind(a.vtec.first().map(|v| v.significance.to_string()))
+                .bind(a.vtec.first().map(|v| v.action.clone()))
+                .bind(a.vtec.first().map(|v| v.etn as i32))
+                .bind(&a.sections)
+                .bind(&a.parameters)
+                .bind(&a.color)
+                .bind(&a.references)
+                .bind(&a.geometry_json)
+                .bind(a.ended_on_arrival)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(db("upsert"))?;
+            res.upserted += 1;
+
+            let targets = lifecycle::supersede_targets(&a.id, &a.references);
+            if !targets.is_empty() {
+                let r = sqlx::query(
+                    "UPDATE nws_alerts SET superseded_by = $1, superseded_at = $3 \
+                     WHERE id = ANY($2) AND superseded_by IS NULL",
+                )
+                .bind(&a.id)
+                .bind(&targets)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(db("supersede"))?;
+                res.superseded += r.rows_affected();
+            }
+        }
+
+        if !alerts.is_empty() {
+            let ids: Vec<&str> = alerts.iter().map(|a| a.id.as_str()).collect();
+            let r = sqlx::query(
+                "UPDATE nws_alerts SET ended_at = $2 \
+                 WHERE ended_at IS NULL AND superseded_by IS NULL AND id <> ALL($1)",
+            )
+            .bind(&ids)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(db("end disappeared"))?;
+            res.ended = r.rows_affected();
+
+            // A polygon that cleaned to nothing falls back to its zones.
+            sqlx::query(
+                "UPDATE nws_alerts SET geometry_source = 'pending' \
+                 WHERE id = ANY($1) AND geometry_source = 'polygon' AND geom IS NULL",
+            )
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(db("polygon fallback"))?;
+            sqlx::query(&recompute_geometry_sql(
+                "a2.id = ANY($1) AND a2.geometry_source = 'pending' AND a2.geom IS NULL",
+            ))
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(db("geometry"))?;
+
+            sqlx::query(
+                "INSERT INTO nws_alerts_status (id, last_attempt_at, last_success_at, last_change_at, \
+                    feed_updated_at, last_alert_count) VALUES (1, $1, $1, $1, $2, $3) \
+                 ON CONFLICT (id) DO UPDATE SET last_attempt_at = $1, last_success_at = $1, \
+                    last_change_at = $1, feed_updated_at = COALESCE($2, nws_alerts_status.feed_updated_at), \
+                    last_alert_count = $3",
+            )
+            .bind(now)
+            .bind(feed_updated)
+            .bind(alerts.len() as i32)
+            .execute(&mut *tx)
+            .await
+            .map_err(db("status"))?;
+        }
+
+        tx.commit().await.map_err(db("commit"))?;
+        res.missing_zones = self.missing_zones(now).await?;
+        Ok(res)
+    }
+
+    /// The feed was unchanged (HTTP 304): still a success. Returns the zones still to fetch.
+    pub async fn record_not_modified(&self, now: DateTime<Utc>) -> WmsResult<Vec<String>> {
+        sqlx::query(
+            "INSERT INTO nws_alerts_status (id, last_attempt_at, last_success_at) VALUES (1, $1, $1) \
+             ON CONFLICT (id) DO UPDATE SET last_attempt_at = $1, last_success_at = $1",
+        )
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(db("status"))?;
+        self.missing_zones(now).await
+    }
+
+    /// A poll failed (timeout, 5xx, garbage). Stored alerts are left exactly as
+    /// they were; only the status row changes.
+    pub async fn record_poll_failure(&self, error: &str, now: DateTime<Utc>) -> WmsResult<()> {
+        sqlx::query(
+            "INSERT INTO nws_alerts_status (id, last_attempt_at, last_error, last_error_at) \
+             VALUES (1, $1, $2, $1) \
+             ON CONFLICT (id) DO UPDATE SET last_attempt_at = $1, last_error = $2, last_error_at = $1",
+        )
+        .bind(now)
+        .bind(error)
+        .execute(&self.pool)
+        .await
+        .map_err(db("status"))?;
+        Ok(())
+    }
+
+    /// Zones that live alerts (not carrying their own polygon) reference but that
+    /// have no fresh row: never fetched, `ok` older than [`ZONE_REFRESH_DAYS`], or
+    /// failed more than [`ZONE_RETRY_HOURS`] ago.
+    pub async fn missing_zones(&self, now: DateTime<Utc>) -> WmsResult<Vec<String>> {
+        sqlx::query_scalar(
+            "SELECT DISTINCT k FROM nws_alerts a \
+               CROSS JOIN LATERAL unnest(a.zone_keys) AS k \
+               LEFT JOIN nws_zones z ON z.zone_key = k \
+             WHERE a.ended_at IS NULL AND a.superseded_by IS NULL AND a.geometry_source <> 'polygon' \
+               AND (z.zone_key IS NULL \
+                    OR (z.fetch_status = 'ok' AND z.fetched_at < $1) \
+                    OR (z.fetch_status <> 'ok' AND z.fetched_at < $2)) \
+             ORDER BY k",
+        )
+        .bind(now - Duration::days(ZONE_REFRESH_DAYS))
+        .bind(now - Duration::hours(ZONE_RETRY_HOURS))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db("missing zones"))
+    }
+
+    /// Store fetched zones and recompute the geometry of every alert that uses them.
+    /// Returns the number of alerts whose geometry was recomputed.
+    pub async fn upsert_zones(&self, zones: &[ZoneRecord], now: DateTime<Utc>) -> WmsResult<u64> {
+        if zones.is_empty() {
+            return Ok(0);
+        }
+        let mut tx = self.pool.begin().await.map_err(db("begin"))?;
+        for z in zones {
+            let (ty, id) = z.zone_key.split_once('/').unwrap_or(("", &z.zone_key));
+            sqlx::query(
+                "INSERT INTO nws_zones (zone_key, zone_type, zone_id, name, state, kind, geom, fetch_status, fetched_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, \
+                    nws_clean_geom(ST_SetSRID(ST_GeomFromGeoJSON($7::text), 4326)), $8, $9) \
+                 ON CONFLICT (zone_key) DO UPDATE SET \
+                    name = COALESCE(EXCLUDED.name, nws_zones.name), \
+                    state = COALESCE(EXCLUDED.state, nws_zones.state), \
+                    kind = COALESCE(EXCLUDED.kind, nws_zones.kind), \
+                    geom = COALESCE(EXCLUDED.geom, nws_zones.geom), \
+                    fetch_status = CASE WHEN EXCLUDED.geom IS NULL AND nws_zones.geom IS NOT NULL \
+                                        THEN nws_zones.fetch_status ELSE EXCLUDED.fetch_status END, \
+                    fetched_at = EXCLUDED.fetched_at",
+            )
+            .bind(&z.zone_key)
+            .bind(ty)
+            .bind(id)
+            .bind(&z.name)
+            .bind(&z.state)
+            .bind(&z.kind)
+            .bind(&z.geometry_json)
+            .bind(z.status.as_str())
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(db("zone upsert"))?;
+        }
+        let keys: Vec<&str> = zones.iter().map(|z| z.zone_key.as_str()).collect();
+        let r = sqlx::query(&recompute_geometry_sql(
+            "a2.zone_keys && $1 AND a2.geometry_source IN ('pending', 'zones')",
+        ))
+        .bind(&keys)
+        .execute(&mut *tx)
+        .await
+        .map_err(db("geometry"))?;
+        tx.commit().await.map_err(db("commit"))?;
+        Ok(r.rows_affected())
+    }
+
+    /// Delete alerts that ended (or expired, or were superseded) before `cutoff` and
+    /// have not been listed by NWS since. Zones are kept.
+    pub async fn delete_retired_before(&self, cutoff: DateTime<Utc>) -> WmsResult<u64> {
+        let r = sqlx::query(
+            "DELETE FROM nws_alerts WHERE last_seen_at < $1 \
+               AND COALESCE(LEAST(end_time, ended_at, superseded_at), last_seen_at) < $1",
+        )
+        .bind(cutoff)
+        .execute(&self.pool)
+        .await
+        .map_err(db("retention"))?;
+        Ok(r.rows_affected())
+    }
+
+    // --- reads (what the EDR layer will use) ----------------------------------
+
+    pub async fn status(&self) -> WmsResult<Option<FeedStatus>> {
+        sqlx::query_as::<_, FeedStatus>(
+            "SELECT last_attempt_at, last_success_at, last_change_at, feed_updated_at, \
+                    last_alert_count, last_error, last_error_at FROM nws_alerts_status WHERE id = 1",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db("status read"))
+    }
+
+    /// Alerts in force at a point, worst first.
+    pub async fn active_at_point(
+        &self,
+        lon: f64,
+        lat: f64,
+        now: DateTime<Utc>,
+        with_geometry: bool,
+    ) -> WmsResult<Vec<StoredAlert>> {
+        let sql = format!(
+            "SELECT {COLS}, {geom} AS geometry_geojson FROM nws_alerts a \
+             WHERE {active} \
+               AND a.geom && ST_SetSRID(ST_MakePoint($1, $2), 4326) \
+               AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)) \
+             ORDER BY {SEVERITY_ORDER}",
+            geom = geom_col(with_geometry),
+            active = active_predicate("$3"),
+        );
+        sqlx::query_as(&sql)
+            .bind(lon)
+            .bind(lat)
+            .bind(now)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db("point query"))
+    }
+
+    /// Alerts intersecting a lon/lat box whose life overlaps `[from, to]`.
+    /// `active_only` restricts to those in force at `now`; otherwise ended
+    /// alerts are included, and superseded messages only if `include_superseded`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn in_bbox(
+        &self,
+        bbox: [f64; 4],
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        active_only: bool,
+        include_superseded: bool,
+        now: DateTime<Utc>,
+        limit: i64,
+        with_geometry: bool,
+    ) -> WmsResult<Vec<StoredAlert>> {
+        let filter = if active_only {
+            active_predicate("$7")
+        } else if include_superseded {
+            "TRUE".to_string()
+        } else {
+            "a.superseded_by IS NULL".to_string()
+        };
+        let sql = format!(
+            "SELECT {COLS}, {geom} AS geometry_geojson FROM nws_alerts a \
+             WHERE {filter} \
+               AND a.geom && ST_MakeEnvelope($1, $2, $3, $4, 4326) \
+               AND ST_Intersects(a.geom, ST_MakeEnvelope($1, $2, $3, $4, 4326)) \
+               AND COALESCE(a.effective, a.sent) <= $6 \
+               AND COALESCE(LEAST(a.end_time, a.ended_at, a.superseded_at), 'infinity'::timestamptz) >= $5 \
+             ORDER BY {SEVERITY_ORDER} LIMIT $8",
+            geom = geom_col(with_geometry),
+        );
+        sqlx::query_as(&sql)
+            .bind(bbox[0])
+            .bind(bbox[1])
+            .bind(bbox[2])
+            .bind(bbox[3])
+            .bind(from)
+            .bind(to)
+            .bind(now)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db("bbox query"))
+    }
+
+    /// One alert by NWS id (any state).
+    pub async fn get(&self, id: &str, with_geometry: bool) -> WmsResult<Option<StoredAlert>> {
+        let sql = format!(
+            "SELECT {COLS}, {geom} AS geometry_geojson FROM nws_alerts a WHERE a.id = $1",
+            geom = geom_col(with_geometry),
+        );
+        sqlx::query_as(&sql)
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db("get"))
+    }
+}
+
+/// Recompute `geom`/`geometry_source` for the zone-based alerts selected by `cond`
+/// (a predicate over alias `a2`; its only parameter is `$1`).
+fn recompute_geometry_sql(cond: &str) -> String {
+    format!(
+        "UPDATE nws_alerts a SET geom = r.g, geometry_source = r.src FROM ( \
+           SELECT x.id, x.g, \
+                  CASE WHEN x.unresolved > 0 THEN 'pending' WHEN x.g IS NULL THEN 'none' ELSE 'zones' END AS src \
+           FROM ( \
+             SELECT a2.id, \
+                    nws_clean_geom((SELECT ST_UnaryUnion(ST_Collect(z.geom)) FROM nws_zones z \
+                                    WHERE z.zone_key = ANY(a2.zone_keys))) AS g, \
+                    (SELECT count(*) FROM unnest(a2.zone_keys) AS k \
+                      WHERE NOT EXISTS (SELECT 1 FROM nws_zones z WHERE z.zone_key = k)) AS unresolved \
+             FROM nws_alerts a2 WHERE {cond} \
+           ) x \
+         ) r WHERE a.id = r.id"
+    )
+}
+
+const UPSERT_ALERT_SQL: &str = r#"
+INSERT INTO nws_alerts (
+    id, event, severity, urgency, certainty, category, status, message_type, response,
+    headline, nws_headline, description, instruction, description_text, instruction_text,
+    area_desc, sender, sender_name, web, sent, effective, onset, expires, ends,
+    ugc, same, zone_keys, is_marine, vtec, vtec_event_key, vtec_office, vtec_phenomenon,
+    vtec_significance, vtec_action, vtec_etn, sections, parameters, color, references_ids,
+    geom, geometry_source, ended_at, first_seen_at, last_seen_at, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+    $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36,
+    $37, $38, $39,
+    nws_clean_geom(ST_SetSRID(ST_GeomFromGeoJSON($40::text), 4326)),
+    CASE WHEN $40::text IS NULL THEN 'pending' ELSE 'polygon' END,
+    CASE WHEN $41 THEN $42 ELSE NULL END,
+    $42, $42, $42
+)
+ON CONFLICT (id) DO UPDATE SET
+    event = EXCLUDED.event, severity = EXCLUDED.severity, urgency = EXCLUDED.urgency,
+    certainty = EXCLUDED.certainty, category = EXCLUDED.category, status = EXCLUDED.status,
+    message_type = EXCLUDED.message_type, response = EXCLUDED.response,
+    headline = EXCLUDED.headline, nws_headline = EXCLUDED.nws_headline,
+    description = EXCLUDED.description, instruction = EXCLUDED.instruction,
+    description_text = EXCLUDED.description_text, instruction_text = EXCLUDED.instruction_text,
+    area_desc = EXCLUDED.area_desc, sender = EXCLUDED.sender, sender_name = EXCLUDED.sender_name,
+    web = EXCLUDED.web, sent = EXCLUDED.sent, effective = EXCLUDED.effective,
+    onset = EXCLUDED.onset, expires = EXCLUDED.expires, ends = EXCLUDED.ends,
+    ugc = EXCLUDED.ugc, same = EXCLUDED.same, is_marine = EXCLUDED.is_marine,
+    vtec = EXCLUDED.vtec, vtec_event_key = EXCLUDED.vtec_event_key,
+    vtec_office = EXCLUDED.vtec_office, vtec_phenomenon = EXCLUDED.vtec_phenomenon,
+    vtec_significance = EXCLUDED.vtec_significance, vtec_action = EXCLUDED.vtec_action,
+    vtec_etn = EXCLUDED.vtec_etn, sections = EXCLUDED.sections, parameters = EXCLUDED.parameters,
+    color = EXCLUDED.color, references_ids = EXCLUDED.references_ids,
+    geom = CASE
+        WHEN EXCLUDED.geometry_source = 'polygon' THEN EXCLUDED.geom
+        WHEN nws_alerts.geometry_source = 'polygon' OR nws_alerts.zone_keys IS DISTINCT FROM EXCLUDED.zone_keys THEN NULL
+        ELSE nws_alerts.geom END,
+    geometry_source = CASE
+        WHEN EXCLUDED.geometry_source = 'polygon' THEN 'polygon'
+        WHEN nws_alerts.geometry_source = 'polygon' OR nws_alerts.zone_keys IS DISTINCT FROM EXCLUDED.zone_keys THEN 'pending'
+        ELSE nws_alerts.geometry_source END,
+    zone_keys = EXCLUDED.zone_keys,
+    -- the feed lists it again: it is live unless the message itself is a cancel/expiry
+    ended_at = CASE WHEN $41 THEN COALESCE(nws_alerts.ended_at, $42) ELSE NULL END,
+    last_seen_at = $42,
+    updated_at = CASE WHEN (nws_alerts.description, nws_alerts.headline, nws_alerts.severity,
+                            nws_alerts.expires, nws_alerts.ends, nws_alerts.message_type)
+                           IS DISTINCT FROM
+                          (EXCLUDED.description, EXCLUDED.headline, EXCLUDED.severity,
+                           EXCLUDED.expires, EXCLUDED.ends, EXCLUDED.message_type)
+                      THEN $42 ELSE nws_alerts.updated_at END
+"#;

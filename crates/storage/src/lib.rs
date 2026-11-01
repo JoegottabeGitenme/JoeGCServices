@@ -10,6 +10,7 @@ pub mod cache;
 pub mod catalog;
 pub mod lightning;
 pub mod linear_features;
+pub mod nws_alerts;
 pub mod object_store;
 pub mod observations;
 pub mod segment_conditions;
@@ -28,6 +29,7 @@ pub use catalog::{
 };
 pub use lightning::{FlashArea, FlashQuery, LightningCatalog, NewFlash, StoredFlash};
 pub use linear_features::{LinearFeature, LinearFeatureCatalog, LinearFeatureItem};
+pub use nws_alerts::{NwsAlertCatalog, ParsedAlert, StoredAlert, ZoneRecord, ZoneStatus};
 pub use observations::{
     Location, Observation, ObservationCatalog, ObservationInsertResult, ObservationQuery,
 };
