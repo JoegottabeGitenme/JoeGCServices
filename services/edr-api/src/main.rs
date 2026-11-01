@@ -330,6 +330,8 @@ async fn run_server(args: Args) {
                     HeaderName::from_static("x-edr-bbox"),
                     HeaderName::from_static("x-edr-width"),
                     HeaderName::from_static("x-edr-height"),
+                    HeaderName::from_static("x-edr-valid-time"),
+                    HeaderName::from_static("x-edr-reference-time"),
                 ]),
         );
 
