@@ -349,3 +349,61 @@ async fn test_chunk_cache_efficiency() {
 
     println!("Cache efficiency test passed!");
 }
+
+/// Wraps a store and sleeps on every chunk read, standing in for S3 latency.
+struct SlowStore {
+    inner: FilesystemStore,
+    delay: std::time::Duration,
+}
+
+impl zarrs::storage::ReadableStorageTraits for SlowStore {
+    fn get_partial_values_key(
+        &self,
+        key: &zarrs::storage::StoreKey,
+        byte_ranges: &[zarrs::storage::byte_range::ByteRange],
+    ) -> Result<Option<Vec<bytes::Bytes>>, zarrs::storage::StorageError> {
+        if !key.as_str().ends_with("zarr.json") {
+            std::thread::sleep(self.delay);
+        }
+        self.inner.get_partial_values_key(key, byte_ranges)
+    }
+
+    fn size_key(
+        &self,
+        key: &zarrs::storage::StoreKey,
+    ) -> Result<Option<u64>, zarrs::storage::StorageError> {
+        self.inner.size_key(key)
+    }
+}
+
+/// A region spanning several cold chunks must fetch them concurrently, not one after another.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_cold_chunks_are_fetched_concurrently() {
+    let (width, height, chunk_size) = (64, 64, 32); // 2 x 2 = 4 chunks
+    let bbox = BoundingBox::new(0.0, 0.0, 64.0, 64.0);
+    let delay = std::time::Duration::from_millis(200);
+
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let zarr_path = temp_dir.path().join("slow.zarr");
+    let data = create_test_data(width, height);
+    write_zarr_array_simple(&zarr_path, &data, width, height, chunk_size, &bbox)
+        .expect("Failed to write Zarr");
+
+    let store = SlowStore {
+        inner: FilesystemStore::new(&zarr_path).expect("Failed to open store"),
+        delay,
+    };
+    let processor = ZarrGridProcessor::open(store, "/", GridProcessorConfig::default())
+        .expect("Failed to open ZarrGridProcessor");
+
+    let start = std::time::Instant::now();
+    let region = processor.read_region(&bbox).await.expect("read_region");
+    let elapsed = start.elapsed();
+
+    assert_eq!(region.data.len(), width * height);
+    // Serial would take >= 4 x 200 ms = 800 ms; concurrent is about one delay.
+    assert!(
+        elapsed < delay * 2,
+        "4 cold chunks took {elapsed:?}; they were fetched serially"
+    );
+}
