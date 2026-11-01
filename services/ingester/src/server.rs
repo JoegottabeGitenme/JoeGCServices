@@ -29,7 +29,7 @@ use ingestion::{IngestOptions, Ingester, IngestionResult};
 use storage::observations::{Location, Observation, ObservationCatalog, TafForecast, TafPeriod};
 use storage::storm_events::{StormEvent, StormEventCatalog};
 use storage::trail_reports::{TrailReport, TrailReportCatalog};
-use storage::LightningCatalog;
+use storage::{LightningCatalog, NwsAlertCatalog};
 
 /// Shared state for the HTTP server.
 pub struct ServerState {
@@ -43,6 +43,8 @@ pub struct ServerState {
     pub trail_report_catalog: Option<TrailReportCatalog>,
     /// GLM lightning flashes (EDR `glm-lightning`)
     pub lightning_catalog: Option<LightningCatalog>,
+    /// NWS alerts (EDR alerts collection; phase B)
+    pub nws_alert_catalog: Option<NwsAlertCatalog>,
     /// Tracking for active/completed ingestions
     pub tracker: IngestionTracker,
 }
@@ -1340,6 +1342,17 @@ pub fn build_router(state: Arc<ServerState>) -> Router {
             "/ingest/storm-events/refresh-counties",
             post(refresh_counties_handler),
         )
+        .route(
+            "/ingest/nws-alerts",
+            // A full active feed is ~2 MB and can pass 8 MB in a big outbreak.
+            post(crate::nws_alerts::ingest_nws_alerts_handler)
+                .layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
+        .route(
+            "/ingest/nws-zones",
+            post(crate::nws_alerts::ingest_nws_zones_handler)
+                .layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
         .route("/ingest/trail-reports", post(ingest_trail_reports_handler))
         .route(
             "/ingest/lightning",
@@ -1706,6 +1719,7 @@ mod cancel_tests {
             storm_event_catalog: None,
             trail_report_catalog: None,
             lightning_catalog: None,
+            nws_alert_catalog: None,
             tracker: IngestionTracker::new(),
         });
         let router = build_router(state.clone());
@@ -1798,6 +1812,7 @@ mod storm_events_http_tests {
             storm_event_catalog: Some(StormEventCatalog::new(catalog.pool_clone())),
             trail_report_catalog: None,
             lightning_catalog: None,
+            nws_alert_catalog: None,
             tracker: IngestionTracker::new(),
         });
 

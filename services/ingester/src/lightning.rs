@@ -334,6 +334,7 @@ mod http_tests {
             storm_event_catalog: None,
             trail_report_catalog: None,
             lightning_catalog: Some(lightning.clone()),
+            nws_alert_catalog: None,
             tracker: IngestionTracker::new(),
         });
         Harness {
