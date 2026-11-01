@@ -650,13 +650,7 @@ async fn radius_query(
         query = query.at_level(level);
     }
 
-    if let Some(valid_time) = query_time {
-        query = query.at_valid_time(valid_time);
-    }
-
-    if let Some(ref_time) = reference_time {
-        query = query.at_run(ref_time);
-    }
+    query = query.in_run_at(reference_time, query_time);
 
     // Read the region using the union bounding box
     let grid_bbox = BoundingBox::new(
@@ -725,13 +719,7 @@ async fn radius_query(
             query = query.at_level(level);
         }
 
-        if let Some(valid_time) = query_time {
-            query = query.at_valid_time(valid_time);
-        }
-
-        if let Some(ref_time) = reference_time {
-            query = query.at_run(ref_time);
-        }
+        query = query.in_run_at(reference_time, query_time);
 
         // Get metadata for units
         let metadata = state.grid_data_service.get_metadata(&query).await.ok();

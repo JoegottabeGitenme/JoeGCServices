@@ -811,12 +811,7 @@ async fn corridor_query(
         if let Some(level) = &level_str {
             query = query.at_level(level);
         }
-        if let Some(valid_time) = query_time {
-            query = query.at_valid_time(valid_time);
-        }
-        if let Some(ref_time) = reference_time {
-            query = query.at_run(ref_time);
-        }
+        query = query.in_run_at(reference_time, query_time);
 
         let metadata = state.grid_data_service.get_metadata(&query).await.ok();
         let units_str = metadata
@@ -866,13 +861,7 @@ async fn corridor_query(
                 query = query.at_level(level);
             }
 
-            if let Some(valid_time) = query_time {
-                query = query.at_valid_time(valid_time);
-            }
-
-            if let Some(ref_time) = reference_time {
-                query = query.at_run(ref_time);
-            }
+            query = query.in_run_at(reference_time, query_time);
 
             let mut values: Vec<Option<f32>> = Vec::with_capacity(traj_coords.len());
 
@@ -881,7 +870,7 @@ async fn corridor_query(
                 let wp_query = if line_type.has_m() && i < waypoints.len() {
                     if let Some(epoch) = waypoints[i].m {
                         if let Some(dt) = Utc.timestamp_opt(epoch, 0).single() {
-                            query.clone().at_valid_time(dt)
+                            query.clone().in_run_at(reference_time, Some(dt))
                         } else {
                             query.clone()
                         }

@@ -868,11 +868,7 @@ async fn area_query(
             query = query.at_level(level);
         }
 
-        match (reference_time, query_time) {
-            (Some(run), valid_time) => query.in_instance(run, valid_time),
-            (None, Some(valid_time)) => query.at_valid_time(valid_time),
-            (None, None) => query,
-        }
+        query.in_run_at(reference_time, query_time)
     };
 
     // Read the region

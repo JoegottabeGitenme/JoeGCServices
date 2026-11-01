@@ -827,13 +827,7 @@ async fn position_query(
                     query = query.at_level(level);
                 }
 
-                if let Some(valid_time) = parsed_times.first() {
-                    query = query.at_valid_time(*valid_time);
-                }
-
-                if let Some(ref_time) = reference_time {
-                    query = query.at_run(ref_time);
-                }
+                query = query.in_run_at(reference_time, parsed_times.first().copied());
 
                 match state
                     .grid_data_service
@@ -1027,15 +1021,7 @@ async fn position_query(
                     query = query.at_level(level);
                 }
 
-                // Use the first parsed time if available
-                if let Some(valid_time) = parsed_times.first() {
-                    query = query.at_valid_time(*valid_time);
-                }
-
-                // Use the reference time if provided (instance query)
-                if let Some(ref_time) = reference_time {
-                    query = query.at_run(ref_time);
-                }
+                query = query.in_run_at(reference_time, parsed_times.first().copied());
 
                 // Query the data for this z level
                 match state.grid_data_service.read_point(&query, lon, lat).await {
@@ -1122,17 +1108,13 @@ async fn position_query(
                             *cached_val
                         } else {
                             // Build the DatasetQuery
-                            let mut query = model_config
-                                .create_query(param_name)
-                                .at_valid_time(*query_time);
+                            let mut query = model_config.create_query(param_name);
 
                             if let Some(level) = &level_str {
                                 query = query.at_level(level);
                             }
 
-                            if let Some(ref_time) = reference_time {
-                                query = query.at_run(ref_time);
-                            }
+                            query = query.in_run_at(reference_time, Some(*query_time));
 
                             // Query the data
                             let result =
@@ -1171,17 +1153,13 @@ async fn position_query(
                         let before_val = if let Some(cached) = value_cache.get(before_time) {
                             *cached
                         } else {
-                            let mut query = model_config
-                                .create_query(param_name)
-                                .at_valid_time(*before_time);
+                            let mut query = model_config.create_query(param_name);
 
                             if let Some(level) = &level_str {
                                 query = query.at_level(level);
                             }
 
-                            if let Some(ref_time) = reference_time {
-                                query = query.at_run(ref_time);
-                            }
+                            query = query.in_run_at(reference_time, Some(*before_time));
 
                             let result =
                                 match state.grid_data_service.read_point(&query, lon, lat).await {
@@ -1216,17 +1194,13 @@ async fn position_query(
                         let after_val = if let Some(cached) = value_cache.get(after_time) {
                             *cached
                         } else {
-                            let mut query = model_config
-                                .create_query(param_name)
-                                .at_valid_time(*after_time);
+                            let mut query = model_config.create_query(param_name);
 
                             if let Some(level) = &level_str {
                                 query = query.at_level(level);
                             }
 
-                            if let Some(ref_time) = reference_time {
-                                query = query.at_run(ref_time);
-                            }
+                            query = query.in_run_at(reference_time, Some(*after_time));
 
                             let result =
                                 match state.grid_data_service.read_point(&query, lon, lat).await {
@@ -1284,15 +1258,7 @@ async fn position_query(
                 query = query.at_level(level);
             }
 
-            // If we have a single parsed time, use it
-            if let Some(valid_time) = parsed_times.first() {
-                query = query.at_valid_time(*valid_time);
-            }
-
-            // Use the reference time if provided
-            if let Some(ref_time) = reference_time {
-                query = query.at_run(ref_time);
-            }
+            query = query.in_run_at(reference_time, parsed_times.first().copied());
 
             // Query the actual data
             match state.grid_data_service.read_point(&query, lon, lat).await {
