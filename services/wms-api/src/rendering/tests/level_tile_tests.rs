@@ -28,7 +28,9 @@ use tokio::sync::RwLock;
 use zarrs_filesystem::FilesystemStore;
 
 use crate::rendering::loaders::load_grid_data_from_zarr;
-use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+use crate::rendering::resampling::{
+    resample_grid_for_bbox_at_level, resample_grid_for_bbox_with_proj,
+};
 
 const GROUP: &str = "/grid.zarr";
 
@@ -631,6 +633,397 @@ async fn a_loader_tile_from_a_level_matches_the_tile_from_level_0() {
                 (from_level_0.0 - at.0).abs() < 0.05 && (from_level_0.1 - at.1).abs() < 0.05,
                 "{} feature at {at:?}: level 0 draws it at {from_level_0:?}",
                 layout.model
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Projected (Lambert, HRRR-like) pyramids
+// ============================================================================
+
+/// The HRRR grid: 1799 x 1059 cells of 3 km, row 0 south. Pyramid levels 0, 1, 2 (factors 1, 2,
+/// 4; 1799 x 1059 -> 899 x 529 -> 449 x 264, a column and a row dropped at each odd size).
+const HRRR_SHAPE: (usize, usize) = (1799, 1059);
+
+fn hrrr_bbox() -> BoundingBox {
+    BoundingBox::new(-134.09548, 21.138123, -60.917193, 47.842195)
+}
+
+/// A zero HRRR-sized grid with a round feature of height 100 and width `sigma` cells at each
+/// fractional native cell `(col, row)` of `peaks`
+fn hrrr_with_peaks(peaks: &[(f64, f64)], sigma: f64) -> Vec<f32> {
+    let (width, height) = HRRR_SHAPE;
+    let mut data = vec![0.0f32; width * height];
+    for &(peak_col, peak_row) in peaks {
+        let reach = (4.0 * sigma).ceil() as i64;
+        for row in (peak_row as i64 - reach).max(0)..(peak_row as i64 + reach).min(height as i64) {
+            for col in (peak_col as i64 - reach).max(0)..(peak_col as i64 + reach).min(width as i64)
+            {
+                let (dx, dy) = (col as f64 - peak_col, row as f64 - peak_row);
+                data[row as usize * width + col as usize] +=
+                    100.0 * (-(dx * dx + dy * dy) / (2.0 * sigma * sigma)).exp() as f32;
+            }
+        }
+    }
+    data
+}
+
+/// The Lambert tile of one level of an HRRR-like pyramid: what `load_grid_data_from_zarr` and
+/// `render_weather_data_with_time` do with the whole-grid region of a projected dataset
+async fn hrrr_tile(
+    factory: &MultiscaleGridProcessorFactory<Arc<FilesystemStore>>,
+    level: u32,
+    bbox: [f32; 4],
+    size: (usize, usize),
+    use_mercator: bool,
+) -> Vec<f32> {
+    let region = factory
+        .read_region_at_level(level, &hrrr_bbox())
+        .await
+        .unwrap();
+    let placement = grid_processor::LevelPlacement::of(
+        factory.metadata(),
+        factory.metadata().get_level(level).unwrap(),
+    );
+    resample_grid_for_bbox_at_level(
+        &region.data,
+        region.width,
+        region.height,
+        size.0,
+        size.1,
+        bbox,
+        [
+            region.bbox.min_lon as f32,
+            region.bbox.min_lat as f32,
+            region.bbox.max_lon as f32,
+            region.bbox.max_lat as f32,
+        ],
+        use_mercator,
+        "hrrr",
+        None,
+        false,
+        placement,
+    )
+}
+
+fn write_hrrr_pyramid(
+    data: &[f32],
+    method: DownsampleMethod,
+) -> (
+    tempfile::TempDir,
+    MultiscaleGridProcessorFactory<Arc<FilesystemStore>>,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(FilesystemStore::new(dir.path()).unwrap());
+    let MultiscaleWriteResult {
+        multiscale_metadata,
+        ..
+    } = ZarrWriter::new(GridProcessorConfig::default())
+        .write_multiscale(
+            store.clone(),
+            GROUP,
+            data,
+            HRRR_SHAPE.0,
+            HRRR_SHAPE.1,
+            &hrrr_bbox(),
+            "hrrr",
+            "FIELD",
+            "surface",
+            "units",
+            chrono::Utc
+                .with_ymd_and_hms(2026, 10, 31, 12, 0, 0)
+                .unwrap(),
+            0,
+            &PyramidConfig {
+                min_dimension: 256,
+                ..PyramidConfig::default()
+            },
+            method,
+            RowOrigin::South,
+            ProjectionType::LambertConformal,
+        )
+        .unwrap();
+    assert_eq!(
+        multiscale_metadata
+            .levels
+            .iter()
+            .map(|l| l.shape)
+            .collect::<Vec<_>>(),
+        [(1799, 1059), (899, 529), (449, 264)]
+    );
+    let factory = MultiscaleGridProcessorFactory::new(
+        store,
+        GROUP,
+        multiscale_metadata,
+        Arc::new(RwLock::new(ChunkCache::new(256 << 20))),
+        GridProcessorConfig::default(),
+    );
+    (dir, factory)
+}
+
+/// A tile around the middle of the grid and the features in it: native cell of each peak, its
+/// longitude and latitude, and (below) where that lands in the tile.
+fn hrrr_tile_case(
+    offsets: &[(f64, f64)],
+    base: (f64, f64),
+) -> ([f32; 4], Vec<(f64, f64)>, Vec<(f64, f64)>) {
+    let proj = projection::LambertConformal::hrrr();
+    let (clat, clon) = proj.grid_to_geo(base.0, base.1);
+    let bbox = [
+        (clon - 4.5) as f32,
+        (clat - 4.0) as f32,
+        (clon + 4.5) as f32,
+        (clat + 4.0) as f32,
+    ];
+    let peaks: Vec<(f64, f64)> = offsets
+        .iter()
+        .map(|&(dc, dr)| (base.0 + dc, base.1 + dr))
+        .collect();
+    let lonlats = peaks
+        .iter()
+        .map(|&(c, r)| {
+            let (lat, lon) = proj.grid_to_geo(c, r);
+            (lon, lat)
+        })
+        .collect();
+    (bbox, peaks, lonlats)
+}
+
+/// A projected pyramid cell is centred on the block it averages, so a feature is drawn where it
+/// is whichever level the tile comes from. The index scaling used to be `native * width_n /
+/// nx`, which put level 2 (factor 4) 1.5 native cells (4.5 km, over half a pixel here) and
+/// level 1 half a cell from the data, growing with the odd remainder.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lambert_tile_from_a_level_matches_the_tile_from_level_0() {
+    // Peaks on the middle of an 8 x 8 block of cells, so that a block-aligned level holds each as
+    // the same shape sampled symmetrically about it, as the lat/lon test does
+    let base = (899.5, 531.5);
+    let offsets = [
+        (0.0, 0.0),
+        (-96.0, -48.0),
+        (96.0, 48.0),
+        (-88.0, 56.0),
+        (80.0, -72.0),
+    ];
+    let sigma = 8.0;
+    let (bbox, peaks, lonlats) = hrrr_tile_case(&offsets, base);
+    let size = (256usize, 256usize);
+    for method in [DownsampleMethod::Max, DownsampleMethod::Mean] {
+        let (_dir, factory) = write_hrrr_pyramid(&hrrr_with_peaks(&peaks, sigma), method);
+        for mercator in [false, true] {
+            let reference = hrrr_tile(&factory, 0, bbox, size, mercator).await;
+            for level in [1u32, 2] {
+                let tile = hrrr_tile(&factory, level, bbox, size, mercator).await;
+                for (peak, &lonlat) in peaks.iter().zip(&lonlats) {
+                    let at = pixel_of(bbox, size, lonlat, mercator);
+                    // Reach: 3.5 sigma in pixels (about 1 cell per pixel)
+                    let reach = 3.5 * sigma / 1.1;
+                    assert!(
+                        at.0 > reach && at.1 > reach && at.0 < 256.0 - reach,
+                        "{at:?}"
+                    );
+                    let from_level_0 = centroid(&reference, size.0, at, reach).unwrap();
+                    let from_level = centroid(&tile, size.0, at, reach).unwrap();
+                    let what = format!(
+                        "{method:?} level {level} mercator {mercator} peak {peak:?} at {at:?}"
+                    );
+                    assert!(
+                        (from_level.0 - from_level_0.0).abs() < 0.1
+                            && (from_level.1 - from_level_0.1).abs() < 0.1,
+                        "{what}: level 0 draws it at {from_level_0:?}, the level at {from_level:?}"
+                    );
+                    if !mercator {
+                        // and level 0 draws it where the projection puts it (the tile's own
+                        // warp moves the centre of mass a little)
+                        assert!(
+                            (from_level_0.0 - at.0).abs() < 0.3
+                                && (from_level_0.1 - at.1).abs() < 0.3,
+                            "{what}: level 0 draws it at {from_level_0:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A nearest level (category codes) holds the top-left cell of each block, so level cell `k` is
+/// native cell `k * factor`; peaks on cells that are a multiple of 8 stay where they are.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lambert_tile_from_a_nearest_level_matches_the_tile_from_level_0() {
+    let base = (896.0, 528.0);
+    let offsets = [(0.0, 0.0), (-96.0, -48.0), (96.0, 48.0), (-88.0, 56.0)];
+    let sigma = 8.0;
+    let (bbox, peaks, lonlats) = hrrr_tile_case(&offsets, base);
+    let size = (256usize, 256usize);
+    let (_dir, factory) =
+        write_hrrr_pyramid(&hrrr_with_peaks(&peaks, sigma), DownsampleMethod::Nearest);
+    let reference = hrrr_tile(&factory, 0, bbox, size, false).await;
+    for level in [1u32, 2] {
+        let tile = hrrr_tile(&factory, level, bbox, size, false).await;
+        for (peak, &lonlat) in peaks.iter().zip(&lonlats) {
+            let at = pixel_of(bbox, size, lonlat, false);
+            let reach = 3.5 * sigma / 1.1;
+            let from_level_0 = centroid(&reference, size.0, at, reach).unwrap();
+            let from_level = centroid(&tile, size.0, at, reach).unwrap();
+            assert!(
+                (from_level.0 - from_level_0.0).abs() < 0.1
+                    && (from_level.1 - from_level_0.1).abs() < 0.1,
+                "nearest level {level} peak {peak:?}: level 0 draws it at {from_level_0:?}, the \
+                 level at {from_level:?}"
+            );
+        }
+    }
+}
+
+/// The Lambert test again through the real loader: the pyramid is in MinIO, the grid comes from
+/// `load_grid_data_from_zarr` (a projected dataset reads its whole level, chosen by the tile
+/// size) and carries the level's placement to the resampler. Needs Docker:
+///
+/// ```text
+/// cargo test -p wms-api --lib level_tile_tests -- --ignored --nocapture
+/// ```
+#[tokio::test(flavor = "multi_thread")]
+#[ignore] // Requires Docker
+async fn a_loader_lambert_tile_from_a_level_matches_the_tile_from_level_0() {
+    let infra = TestInfrastructure::start().await;
+    infra
+        .create_minio_bucket("test-bucket")
+        .await
+        .expect("bucket");
+    let minio = MinioConfig {
+        endpoint: infra.minio_url(),
+        bucket: "test-bucket".to_string(),
+        access_key_id: "minioadmin".to_string(),
+        secret_access_key: "minioadmin".to_string(),
+        region: "us-east-1".to_string(),
+        allow_http: true,
+    };
+    let object_storage = ObjectStorage::new(&ObjectStorageConfig {
+        endpoint: minio.endpoint.clone(),
+        bucket: minio.bucket.clone(),
+        access_key_id: minio.access_key_id.clone(),
+        secret_access_key: minio.secret_access_key.clone(),
+        region: minio.region.clone(),
+        allow_http: true,
+    })
+    .unwrap();
+    let factory = GridProcessorFactory::new(minio, 64).unwrap();
+
+    let base = (899.5, 531.5);
+    let offsets = [(0.0, 0.0), (-96.0, -48.0), (96.0, 48.0), (-88.0, 56.0)];
+    let sigma = 8.0;
+    let (bbox, peaks, lonlats) = hrrr_tile_case(&offsets, base);
+    let size = (256usize, 256usize);
+
+    let dir = tempfile::tempdir().unwrap();
+    let local = dir.path().join("grid.zarr");
+    std::fs::create_dir_all(&local).unwrap();
+    let MultiscaleWriteResult {
+        zarr_metadata,
+        multiscale_metadata,
+        ..
+    } = ZarrWriter::new(GridProcessorConfig::default())
+        .write_multiscale(
+            FilesystemStore::new(&local).unwrap(),
+            "/",
+            &hrrr_with_peaks(&peaks, sigma),
+            HRRR_SHAPE.0,
+            HRRR_SHAPE.1,
+            &hrrr_bbox(),
+            "hrrr",
+            "FIELD",
+            "surface",
+            "units",
+            chrono::Utc
+                .with_ymd_and_hms(2026, 10, 31, 12, 0, 0)
+                .unwrap(),
+            0,
+            &PyramidConfig {
+                min_dimension: 256,
+                ..PyramidConfig::default()
+            },
+            DownsampleMethod::Mean,
+            RowOrigin::South,
+            ProjectionType::LambertConformal,
+        )
+        .unwrap();
+    let storage_path = "grids/hrrr/level-geometry/FIELD.zarr".to_string();
+    for file in walkdir::WalkDir::new(&local)
+        .into_iter()
+        .map(Result::unwrap)
+        .filter(|f| f.file_type().is_file())
+    {
+        let relative = file.path().strip_prefix(&local).unwrap();
+        object_storage
+            .put(
+                &format!("{storage_path}/{}", relative.display()),
+                std::fs::read(file.path()).unwrap().into(),
+            )
+            .await
+            .unwrap();
+    }
+    let mut zarr_json = zarr_metadata.to_json();
+    zarr_json["multiscale"] = serde_json::to_value(&multiscale_metadata).unwrap();
+    let hrrr = hrrr_bbox();
+    let entry = CatalogEntry {
+        model: "hrrr".to_string(),
+        parameter: "FIELD".to_string(),
+        level: "surface".to_string(),
+        reference_time: chrono::Utc
+            .with_ymd_and_hms(2026, 10, 31, 12, 0, 0)
+            .unwrap(),
+        forecast_hour: 0,
+        forecast_minute: 0,
+        bbox: wms_common::BoundingBox::new(hrrr.min_lon, hrrr.min_lat, hrrr.max_lon, hrrr.max_lat),
+        storage_path,
+        file_size: 0,
+        zarr_metadata: Some(zarr_json),
+    };
+
+    // A projected dataset reads its whole grid, so the level follows the tile size alone: a size no
+    // level fills gives level 0, 500 pixels level 1 (899 x 529 cells), 256 level 2 (449 x 264).
+    // The loader says which in `GridData::level`.
+    let tile = |output_size: (usize, usize)| {
+        let (factory, entry) = (&factory, &entry);
+        async move {
+            let grid =
+                load_grid_data_from_zarr(factory, entry, Some(bbox), Some(output_size), true)
+                    .await
+                    .unwrap();
+            let tile = resample_grid_for_bbox_at_level(
+                &grid.data,
+                grid.width,
+                grid.height,
+                size.0,
+                size.1,
+                bbox,
+                grid.bbox.unwrap(),
+                false,
+                "hrrr",
+                None,
+                grid.grid_uses_360,
+                grid.level,
+            );
+            (tile, grid.level.scale)
+        }
+    };
+    let (reference, scale_0) = tile((1 << 20, 1 << 20)).await;
+    assert_eq!(scale_0, 1.0);
+    for (output_size, want_scale) in [((500, 500), 2.0), ((256, 256), 4.0)] {
+        let (from_level, scale) = tile(output_size).await;
+        assert_eq!(scale, want_scale, "{output_size:?}");
+        for (peak, &lonlat) in peaks.iter().zip(&lonlats) {
+            let at = pixel_of(bbox, size, lonlat, false);
+            let reach = 3.5 * sigma / 1.1;
+            let from_level_0 = centroid(&reference, size.0, at, reach).unwrap();
+            let from_level = centroid(&from_level, size.0, at, reach).unwrap();
+            assert!(
+                (from_level.0 - from_level_0.0).abs() < 0.1
+                    && (from_level.1 - from_level_0.1).abs() < 0.1,
+                "peak {peak:?} at {at:?}: level 0 draws it at {from_level_0:?}, factor \
+                 {scale} at {from_level:?}"
             );
         }
     }

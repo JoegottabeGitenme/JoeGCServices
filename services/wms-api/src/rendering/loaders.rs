@@ -81,8 +81,8 @@ pub async fn load_grid_data_from_zarr(
     requires_full_grid: bool,
 ) -> Result<GridData, String> {
     use grid_processor::{
-        parse_multiscale_metadata, BoundingBox as GpBoundingBox, MultiscaleGridProcessorFactory,
-        ZarrMetadata,
+        parse_multiscale_metadata, BoundingBox as GpBoundingBox, LevelPlacement,
+        MultiscaleGridProcessorFactory, ZarrMetadata,
     };
 
     // Parse zarr_metadata from catalog entry
@@ -149,6 +149,7 @@ pub async fn load_grid_data_from_zarr(
     // If so, use resolution-aware loading to fetch from the optimal pyramid level
     let multiscale_metadata = parse_multiscale_metadata(zarr_json);
 
+    let mut level_placement = LevelPlacement::NATIVE;
     let (region, pyramid_level_used) = if let (Some(ms_meta), Some(out_size)) =
         (multiscale_metadata, output_size)
     {
@@ -188,6 +189,12 @@ pub async fn load_grid_data_from_zarr(
                 level, out_size
             );
 
+            level_placement = ms_factory
+                .metadata()
+                .get_level(level)
+                .map_or(LevelPlacement::NATIVE, |info| {
+                    LevelPlacement::of(ms_factory.metadata(), info)
+                });
             (region, Some(level))
         } else {
             // Only native level available, use standard loading
@@ -248,6 +255,7 @@ pub async fn load_grid_data_from_zarr(
         bbox: Some(actual_bbox),
         goes_projection,
         grid_uses_360,
+        level: level_placement,
     })
 }
 

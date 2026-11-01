@@ -10,6 +10,7 @@
 //!
 //! All resampling uses bilinear interpolation for smooth results.
 
+use grid_processor::LevelPlacement;
 use projection::{Geostationary, LambertConformal, Mercator, PolarStereographic};
 use tracing::debug;
 
@@ -455,6 +456,44 @@ pub fn resample_grid_for_bbox_with_proj(
     goes_projection: Option<&GoesProjectionParams>,
     grid_uses_360: bool,
 ) -> Vec<f32> {
+    resample_grid_for_bbox_at_level(
+        data,
+        data_width,
+        data_height,
+        output_width,
+        output_height,
+        output_bbox,
+        data_bounds,
+        use_mercator,
+        model,
+        goes_projection,
+        grid_uses_360,
+        LevelPlacement::NATIVE,
+    )
+}
+
+/// [`resample_grid_for_bbox_with_proj`] for `data` read from a pyramid level, which `level`
+/// describes (`LevelPlacement::NATIVE` for level 0).
+///
+/// A projected grid (Lambert, Mercator, polar stereographic) is placed by the projection in
+/// level-0 cells, and `level` moves that to the level's own cells: a mean/max cell `k` is
+/// centred on level-0 cell `k * scale + (scale - 1) / 2`, a nearest cell on `k * scale`. Lat/lon
+/// grids are placed by `data_bounds` instead (their level's own extent), and GOES from Zarr is
+/// one of those; raw geostationary data has no pyramid.
+pub fn resample_grid_for_bbox_at_level(
+    data: &[f32],
+    data_width: usize,
+    data_height: usize,
+    output_width: usize,
+    output_height: usize,
+    output_bbox: [f32; 4],
+    data_bounds: [f32; 4],
+    use_mercator: bool,
+    model: &str,
+    goes_projection: Option<&GoesProjectionParams>,
+    grid_uses_360: bool,
+    level: LevelPlacement,
+) -> Vec<f32> {
     // Use Lambert Conformal resampling for HRRR and NDFD (native projection)
     if model == "hrrr" || model == "ndfd" {
         debug!(
@@ -483,6 +522,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         } else {
             resample_lambert_to_geographic_with_proj(
@@ -493,6 +533,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         }
     } else if model == "goes18"
@@ -593,6 +634,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         } else {
             resample_lambert_to_geographic_with_proj(
@@ -603,6 +645,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         }
     } else if model == "nbm-alaska" {
@@ -626,6 +669,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         } else {
             resample_polar_stereo_to_geographic_with_proj(
@@ -636,6 +680,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         }
     } else if model == "nbm-hawaii" {
@@ -659,6 +704,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         } else {
             resample_mercator_to_geographic_with_proj(
@@ -669,6 +715,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         }
     } else if model == "nbm-puertorico" {
@@ -692,6 +739,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         } else {
             resample_mercator_to_geographic_with_proj(
@@ -702,6 +750,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         }
     } else if model == "nbm-guam" {
@@ -725,6 +774,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         } else {
             resample_mercator_to_geographic_with_proj(
@@ -735,6 +785,7 @@ pub fn resample_grid_for_bbox_with_proj(
                 output_height,
                 output_bbox,
                 &proj,
+                level,
             )
         }
     } else {
@@ -857,14 +908,12 @@ fn resample_lambert_to_geographic(
 
             // Convert geographic to Lambert grid indices
             // proj.geo_to_grid returns indices for the native resolution grid (e.g., 1799x1059 for HRRR)
-            // If we're reading from a pyramid level, we need to scale the indices to match the actual data dimensions
             let (native_i, native_j) = proj.geo_to_grid(lat as f64, lon as f64);
 
-            // Scale indices if data dimensions differ from native projection dimensions
-            let scale_x = data_width as f64 / proj.nx as f64;
-            let scale_y = data_height as f64 / proj.ny as f64;
-            let grid_i = native_i * scale_x;
-            let grid_j = native_j * scale_y;
+            // The projection gives level-0 positions; a pyramid level's cells sit on level 0's as
+            // `LevelPlacement` says (block centres for mean/max, block corners for nearest).
+            let grid_i = LevelPlacement::NATIVE.index(native_i);
+            let grid_j = LevelPlacement::NATIVE.index(native_j);
 
             // Check if within grid bounds
             if grid_i < 0.0
@@ -922,6 +971,7 @@ fn resample_lambert_to_geographic_with_proj(
     output_height: usize,
     output_bbox: [f32; 4],
     proj: &LambertConformal,
+    level: LevelPlacement,
 ) -> Vec<f32> {
     let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
 
@@ -942,15 +992,12 @@ fn resample_lambert_to_geographic_with_proj(
 
             // Convert geographic to Lambert grid indices
             // proj.geo_to_grid returns indices for the native resolution grid (e.g., 1799x1059 for HRRR)
-            // If we're reading from a pyramid level, we need to scale the indices to match the actual data dimensions
             let (native_i, native_j) = proj.geo_to_grid(lat as f64, lon as f64);
 
-            // Scale indices if data dimensions differ from native projection dimensions
-            // This handles pyramid levels where data_width < proj.nx and data_height < proj.ny
-            let scale_x = data_width as f64 / proj.nx as f64;
-            let scale_y = data_height as f64 / proj.ny as f64;
-            let grid_i = native_i * scale_x;
-            let grid_j = native_j * scale_y;
+            // The projection gives level-0 positions; a pyramid level's cells sit on level 0's as
+            // `LevelPlacement` says (block centres for mean/max, block corners for nearest).
+            let grid_i = level.index(native_i);
+            let grid_j = level.index(native_j);
 
             // Debug: log a few sample points and their values
             if debug_count < 10
@@ -1047,6 +1094,7 @@ fn resample_lambert_to_mercator_with_proj(
     output_height: usize,
     output_bbox: [f32; 4],
     proj: &LambertConformal,
+    level: LevelPlacement,
 ) -> Vec<f32> {
     let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
 
@@ -1073,14 +1121,12 @@ fn resample_lambert_to_mercator_with_proj(
 
             // Convert geographic to Lambert grid indices
             // proj.geo_to_grid returns indices for the native resolution grid (e.g., 1799x1059 for HRRR)
-            // If we're reading from a pyramid level, we need to scale the indices to match the actual data dimensions
             let (native_i, native_j) = proj.geo_to_grid(lat, lon as f64);
 
-            // Scale indices if data dimensions differ from native projection dimensions
-            let scale_x = data_width as f64 / proj.nx as f64;
-            let scale_y = data_height as f64 / proj.ny as f64;
-            let grid_i = native_i * scale_x;
-            let grid_j = native_j * scale_y;
+            // The projection gives level-0 positions; a pyramid level's cells sit on level 0's as
+            // `LevelPlacement` says (block centres for mean/max, block corners for nearest).
+            let grid_i = level.index(native_i);
+            let grid_j = level.index(native_j);
 
             // Check if within grid bounds
             if grid_i < 0.0
@@ -1348,6 +1394,7 @@ fn resample_mercator_to_geographic_with_proj(
     output_height: usize,
     output_bbox: [f32; 4],
     proj: &Mercator,
+    level: LevelPlacement,
 ) -> Vec<f32> {
     let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
 
@@ -1366,11 +1413,10 @@ fn resample_mercator_to_geographic_with_proj(
             // Convert geographic to Mercator grid indices
             let (native_i, native_j) = proj.geo_to_grid(lat as f64, lon as f64);
 
-            // Scale indices if data dimensions differ from native projection dimensions
-            let scale_x = data_width as f64 / proj.nx as f64;
-            let scale_y = data_height as f64 / proj.ny as f64;
-            let grid_i = native_i * scale_x;
-            let grid_j = native_j * scale_y;
+            // The projection gives level-0 positions; a pyramid level's cells sit on level 0's as
+            // `LevelPlacement` says (block centres for mean/max, block corners for nearest).
+            let grid_i = level.index(native_i);
+            let grid_j = level.index(native_j);
 
             // Check if within grid bounds
             if grid_i < 0.0
@@ -1428,6 +1474,7 @@ fn resample_mercator_to_mercator_with_proj(
     output_height: usize,
     output_bbox: [f32; 4],
     proj: &Mercator,
+    level: LevelPlacement,
 ) -> Vec<f32> {
     let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
 
@@ -1455,11 +1502,10 @@ fn resample_mercator_to_mercator_with_proj(
             // Convert geographic to Mercator grid indices
             let (native_i, native_j) = proj.geo_to_grid(lat, lon as f64);
 
-            // Scale indices if data dimensions differ from native projection dimensions
-            let scale_x = data_width as f64 / proj.nx as f64;
-            let scale_y = data_height as f64 / proj.ny as f64;
-            let grid_i = native_i * scale_x;
-            let grid_j = native_j * scale_y;
+            // The projection gives level-0 positions; a pyramid level's cells sit on level 0's as
+            // `LevelPlacement` says (block centres for mean/max, block corners for nearest).
+            let grid_i = level.index(native_i);
+            let grid_j = level.index(native_j);
 
             // Check if within grid bounds
             if grid_i < 0.0
@@ -1521,6 +1567,7 @@ fn resample_polar_stereo_to_geographic_with_proj(
     output_height: usize,
     output_bbox: [f32; 4],
     proj: &PolarStereographic,
+    level: LevelPlacement,
 ) -> Vec<f32> {
     let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
 
@@ -1539,11 +1586,10 @@ fn resample_polar_stereo_to_geographic_with_proj(
             // Convert geographic to Polar Stereographic grid indices
             let (native_i, native_j) = proj.geo_to_grid(lat as f64, lon as f64);
 
-            // Scale indices if data dimensions differ from native projection dimensions
-            let scale_x = data_width as f64 / proj.nx as f64;
-            let scale_y = data_height as f64 / proj.ny as f64;
-            let grid_i = native_i * scale_x;
-            let grid_j = native_j * scale_y;
+            // The projection gives level-0 positions; a pyramid level's cells sit on level 0's as
+            // `LevelPlacement` says (block centres for mean/max, block corners for nearest).
+            let grid_i = level.index(native_i);
+            let grid_j = level.index(native_j);
 
             // Check if within grid bounds
             if grid_i < 0.0
@@ -1601,6 +1647,7 @@ fn resample_polar_stereo_to_mercator_with_proj(
     output_height: usize,
     output_bbox: [f32; 4],
     proj: &PolarStereographic,
+    level: LevelPlacement,
 ) -> Vec<f32> {
     let [out_min_lon, out_min_lat, out_max_lon, out_max_lat] = output_bbox;
 
@@ -1628,11 +1675,10 @@ fn resample_polar_stereo_to_mercator_with_proj(
             // Convert geographic to Polar Stereographic grid indices
             let (native_i, native_j) = proj.geo_to_grid(lat, lon as f64);
 
-            // Scale indices if data dimensions differ from native projection dimensions
-            let scale_x = data_width as f64 / proj.nx as f64;
-            let scale_y = data_height as f64 / proj.ny as f64;
-            let grid_i = native_i * scale_x;
-            let grid_j = native_j * scale_y;
+            // The projection gives level-0 positions; a pyramid level's cells sit on level 0's as
+            // `LevelPlacement` says (block centres for mean/max, block corners for nearest).
+            let grid_i = level.index(native_i);
+            let grid_j = level.index(native_j);
 
             // Check if within grid bounds
             if grid_i < 0.0

@@ -160,7 +160,7 @@ pub use types::{
     AxisInfo, BoundingBox, CacheStats, GridMetadata, GridRegion, InterpolationMethod,
     MultiscaleMetadata, ProjectionType, PyramidLevel, RowOrigin,
 };
-pub use window::{cell_range, level_index, Footprint, NativeWindow};
+pub use window::{cell_range, level_index, Footprint, LevelPlacement, NativeWindow};
 pub use writer::{MultiscaleWriteResult, ZarrMetadata, ZarrWriteResult, ZarrWriter};
 
 // Re-export storage traits for use by consumers
