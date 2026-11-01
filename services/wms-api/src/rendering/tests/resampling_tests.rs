@@ -184,6 +184,39 @@ fn test_resample_from_geographic_360_longitude() {
     );
 }
 
+/// A global 0-360 grid read from a pyramid level starts east of 0: GFS level 1 has its first cell
+/// at 0.125 and its last at 359.625. Longitudes between 0 and the first cell are between the last
+/// cell and the first, and come out of the interpolation, not as a gap.
+#[test]
+fn test_resample_global_level_wraps_before_its_first_cell() {
+    // 4 columns 90 degrees apart, the first at 45; bounds run from the first cell to one cell past
+    // the last, as a region read says (45 .. 405), and every row holds 0, 1, 2, 3
+    let data: Vec<f32> = (0..16).map(|i| (i % 4) as f32).collect();
+    let data_bounds = [45.0f32, -90.0, 405.0, 90.0];
+    // a pixel centre at lon 10, 35 degrees before the first cell: 55 of the 90 degrees from
+    // the last cell (value 3) to the first (value 0)
+    let output_bbox = [0.0f32, -10.0, 20.0, 10.0];
+    let want = 3.0 * (1.0 - 55.0 / 90.0);
+
+    let plate_carree = resample_from_geographic(&data, 4, 4, 1, 1, output_bbox, data_bounds, true);
+    assert!(
+        (plate_carree[0] - want).abs() < 1e-3,
+        "got {}, want {want}",
+        plate_carree[0]
+    );
+    let mercator = resample_for_mercator(&data, 4, 4, 1, 1, output_bbox, data_bounds, true);
+    assert!(
+        (mercator[0] - want).abs() < 1e-3,
+        "got {}, want {want}",
+        mercator[0]
+    );
+
+    // a grid that is not global has nothing before its first cell
+    let regional = [45.0f32, -90.0, 225.0, 90.0];
+    let outside = resample_from_geographic(&data, 4, 4, 1, 1, output_bbox, regional, true);
+    assert!(outside[0].is_nan());
+}
+
 // ============================================================================
 // Mercator resampling tests
 // ============================================================================
