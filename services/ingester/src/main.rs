@@ -17,6 +17,7 @@
 
 mod conditions_retention;
 mod lightning;
+mod nws_alerts;
 mod obs_retention;
 mod server;
 
@@ -131,6 +132,11 @@ async fn main() -> Result<()> {
     catalog.migrate_trail_physics_progress().await?;
     info!("Trail physics progress schema migrated");
 
+    // Migrate NWS alerts (written by /ingest/nws-alerts + /ingest/nws-zones, read by
+    // the EDR alerts collection). After migrate_observations: needs PostGIS.
+    catalog.migrate_nws_alerts().await?;
+    info!("NWS alerts schema migrated");
+
     // Migrate GLM lightning flashes (written by /ingest/lightning, read by the
     // EDR `glm-lightning` collection). After migrate_observations: needs PostGIS.
     catalog.migrate_lightning().await?;
@@ -153,6 +159,7 @@ async fn main() -> Result<()> {
 
     // Create lightning catalog sharing the same connection pool
     let lightning_catalog = storage::LightningCatalog::new(catalog.pool_clone());
+    let nws_alert_catalog = storage::NwsAlertCatalog::new(catalog.pool_clone());
 
     // Create trail report catalog sharing the same connection pool (Phase 0
     // label archive; see docs/trail-conditions-design.md)
@@ -299,6 +306,12 @@ async fn main() -> Result<()> {
         lightning_retention_hours,
     ));
 
+    // NWS alerts are a live feed with a week of history: sweep what ended >7 days ago.
+    tokio::spawn(nws_alerts::run_retention(
+        nws_alert_catalog.clone(),
+        nws_alerts::retention_hours_from_env(),
+    ));
+
     // Create server state
     let state = Arc::new(ServerState {
         ingester,
@@ -306,6 +319,7 @@ async fn main() -> Result<()> {
         storm_event_catalog: Some(storm_event_catalog),
         trail_report_catalog: Some(trail_report_catalog),
         lightning_catalog: Some(lightning_catalog),
+        nws_alert_catalog: Some(nws_alert_catalog),
         tracker: IngestionTracker::new(),
     });
 
