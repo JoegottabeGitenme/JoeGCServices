@@ -2187,7 +2187,7 @@
                         setReadout(`<h3>${esc(p.name || 'Unnamed ' + (cls || 'way'))}</h3>` + dl([
                             ['Type', esc(cls || 'trail')],
                             sat != null ? ['Saturation', `${fmt(sat * 100)}% <span class="sc-muted">(0% dry, 100% wet)</span>`] : ['Conditions', '<span class="sc-muted">none outside the Front Range</span>'],
-                            p.region ? ['Region', esc(p.region)] : null
+                            p.region ? ['Region', esc(p.region.charAt(0).toUpperCase() + p.region.slice(1))] : null
                         ]) + '<p class="sc-muted">Advisory model output, not a rideability verdict.</p>');
                     },
                     leave() { removeMapStuff(['sc-trail-sel', 'sc-trails']); }
@@ -2226,7 +2226,7 @@
                             setResponse({ status: 200, headers: { 'content-type': 'image/png', 'x-edr-parameter': info.parameter, 'x-edr-units': info.units, 'x-edr-min': info.min, 'x-edr-max': info.max, 'x-edr-encoding': info.encoding, 'x-edr-bbox': info.bbox, 'x-edr-valid-time': info.validTime, 'x-edr-reference-time': info.referenceTime } });
                             const stops = TEMP_STOPS.map((x) => x[1]).join(',');
                             setReadout(`<h3>HRRR 2 m temperature</h3>` + dl([
-                                ['Units', esc(info.units || '')], ['Range', `${fmt(info.min)} to ${fmt(info.max)} ${esc(info.units || '')}`],
+                                ['Units', esc(info.units || '')], ['Scale', `${fmt(info.min)} to ${fmt(info.max)} ${esc(info.units || '')} (black to white)`],
                                 ['Encoding', esc(info.encoding || '')], ['Valid', utc(info.validTime)], ['Run', utc(info.referenceTime)]
                             ]) + `<div class="sc-ramp"><span>-30&deg;C</span><i style="background:linear-gradient(90deg,${stops})"></i><span>40&deg;C</span></div>` +
                                 '<p class="sc-muted" style="margin-top:.4rem">The PNG is plain grayscale; each pixel is mapped between X-EDR-Min and X-EDR-Max, then given a colour ramp here.</p>');
