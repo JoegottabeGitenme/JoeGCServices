@@ -231,6 +231,18 @@ impl DatasetQuery {
         self
     }
 
+    /// The query for an optional run (EDR instance) and an optional valid time.
+    ///
+    /// A run is read exactly (at `valid_time`, or its first forecast when none), keeping both;
+    /// a time alone is the nearest dataset of any run; neither leaves the query as it is.
+    pub fn in_run_at(self, run: Option<DateTime<Utc>>, valid_time: Option<DateTime<Utc>>) -> Self {
+        match (run, valid_time) {
+            (Some(run), valid_time) => self.in_instance(run, valid_time),
+            (None, Some(valid_time)) => self.at_valid_time(valid_time),
+            (None, None) => self,
+        }
+    }
+
     /// Request the latest available data.
     ///
     /// For forecast models: latest run, earliest forecast hour.
@@ -367,6 +379,31 @@ mod tests {
             } => assert_eq!((reference_time, valid_time), (run, Some(valid))),
             other => panic!("not an instance: {other:?}"),
         }
+    }
+
+    #[test]
+    fn in_run_at_keeps_the_run_and_the_time_whichever_are_named() {
+        let run = Utc.with_ymd_and_hms(2026, 10, 31, 12, 0, 0).unwrap();
+        let valid = Utc.with_ymd_and_hms(2026, 10, 31, 15, 0, 0).unwrap();
+        let base = || DatasetQuery::forecast("hrrr", "REFC");
+
+        assert!(matches!(
+            base().in_run_at(Some(run), Some(valid)).time_spec,
+            TimeSpecification::Instance { reference_time, valid_time: Some(v) }
+                if reference_time == run && v == valid
+        ));
+        assert!(matches!(
+            base().in_run_at(Some(run), None).time_spec,
+            TimeSpecification::Instance { reference_time, valid_time: None } if reference_time == run
+        ));
+        assert!(matches!(
+            base().in_run_at(None, Some(valid)).time_spec,
+            TimeSpecification::ValidTime { valid_time } if valid_time == valid
+        ));
+        assert!(matches!(
+            base().in_run_at(None, None).time_spec,
+            TimeSpecification::Latest
+        ));
     }
 
     #[test]

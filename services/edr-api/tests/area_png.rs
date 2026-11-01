@@ -233,6 +233,18 @@ async fn setup() -> (Router, Arc<AppState>, TestInfrastructure) {
             "/edr/collections/:collection_id/instances/:instance_id/area",
             get(handlers::area::instance_area_handler),
         )
+        .route(
+            "/edr/collections/:collection_id/instances/:instance_id/position",
+            get(handlers::position::instance_position_handler),
+        )
+        .route(
+            "/edr/collections/:collection_id/radius",
+            get(handlers::radius::radius_handler),
+        )
+        .route(
+            "/edr/collections/:collection_id/instances/:instance_id/radius",
+            get(handlers::radius::instance_radius_handler),
+        )
         .layer(Extension(Arc::clone(&state)));
     (app, state, infra)
 }
@@ -1108,4 +1120,77 @@ async fn cache_control_is_explicit_only_for_the_dataset_that_was_asked_for() {
         "max-age=60"
     );
     assert_eq!(cc(&get_reply(&app, &mrms("")).await), "max-age=60");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Instances of the other query types (cube needs numeric vertical levels, which no fixture has)
+// ---------------------------------------------------------------------------------------------
+
+/// Every number in `ranges.REFC.values` of a CoverageJSON body, nested arrays flattened.
+fn covjson_values(reply: &Reply) -> Vec<f64> {
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let body: serde_json::Value = serde_json::from_slice(&reply.body).expect("CoverageJSON");
+    let mut out = vec![];
+    let mut stack = vec![&body["ranges"]["REFC"]["values"]];
+    while let Some(v) = stack.pop() {
+        match v {
+            serde_json::Value::Array(a) => stack.extend(a.iter().rev()),
+            serde_json::Value::Number(n) => out.push(n.as_f64().unwrap()),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore] // Requires Docker
+async fn an_instance_position_and_radius_are_read_at_the_requested_time() {
+    let (app, _state, _infra) = setup().await;
+    let a = "/edr/collections/hrrr-subh-atmosphere/instances/2026-10-11T18:00:00Z";
+    let (lon, lat, at_18_00) = SNOW;
+    // REFC at the cell for 18:15 and 18:30, from hrrr_subhourly.rs
+    let at_18_15 = 25.69;
+    let at_18_30 = 24.56;
+
+    // The run's first forecast is 18:00. Before the fix each of these answered with it whatever the
+    // datetime, because the valid time was replaced by the run.
+    let mut radius_by_time = vec![];
+    for (time, want) in [
+        ("18:00:00", at_18_00),
+        ("18:15:00", at_18_15),
+        ("18:30:00", at_18_30),
+    ] {
+        let datetime = format!("datetime=2026-10-11T{time}Z");
+        let position = get_reply(
+            &app,
+            &format!("{a}/position?coords=POINT({lon}%20{lat})&parameter-name=REFC&{datetime}"),
+        )
+        .await;
+        let values = covjson_values(&position);
+        assert_eq!(values.len(), 1, "{time} position: {values:?}");
+        assert!(
+            (values[0] - want).abs() < 0.02,
+            "position at {time}: {} dBZ, wanted {want}",
+            values[0]
+        );
+
+        // A radius reads the cells within it: the instance answers with what the same run gives
+        // without naming it (the newest run is this one), and that differs from time to time.
+        let radius_uri = |prefix: &str| {
+            format!(
+                "{prefix}/radius?coords=POINT({lon}%20{lat})&within=60&within-units=km&parameter-name=REFC&{datetime}"
+            )
+        };
+        let instance = covjson_values(&get_reply(&app, &radius_uri(a)).await);
+        let newest = covjson_values(
+            &get_reply(&app, &radius_uri("/edr/collections/hrrr-subh-atmosphere")).await,
+        );
+        assert!(!instance.is_empty(), "radius at {time}");
+        assert_eq!(instance, newest, "radius at {time}");
+        radius_by_time.push(instance);
+    }
+    assert!(
+        radius_by_time[0] != radius_by_time[1] && radius_by_time[1] != radius_by_time[2],
+        "a radius is read at each requested time, not at the run's first hour"
+    );
 }
