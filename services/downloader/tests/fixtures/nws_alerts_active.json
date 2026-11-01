@@ -1,0 +1,1128 @@
+{
+ "type": "FeatureCollection",
+ "title": "Current watches, warnings, and advisories",
+ "updated": "2026-11-01T23:29:04+00:00",
+ "features": [
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.fa00a61107baa7eb937dcb76f1059d3910026236.001.1",
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -106.78,
+       34.65
+      ],
+      [
+       -106.53,
+       35.7
+      ],
+      [
+       -105.75,
+       36
+      ],
+      [
+       -105.72,
+       36
+      ],
+      [
+       -105.72,
+       35.31
+      ],
+      [
+       -105.76,
+       34.91
+      ],
+      [
+       -106.78,
+       34.65
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.fa00a61107baa7eb937dcb76f1059d3910026236.001.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.fa00a61107baa7eb937dcb76f1059d3910026236.001.1",
+    "areaDesc": "Bernalillo, NM; Los Alamos, NM; Sandoval, NM; Santa Fe, NM; Torrance, NM; Valencia, NM",
+    "geocode": {
+     "SAME": [
+      "035001",
+      "035028",
+      "035043",
+      "035049",
+      "035057",
+      "035061"
+     ],
+     "UGC": [
+      "NMC001",
+      "NMC028",
+      "NMC043",
+      "NMC049",
+      "NMC057",
+      "NMC061"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/county/NMC001",
+     "https://api.weather.gov/zones/county/NMC028",
+     "https://api.weather.gov/zones/county/NMC043",
+     "https://api.weather.gov/zones/county/NMC049",
+     "https://api.weather.gov/zones/county/NMC057",
+     "https://api.weather.gov/zones/county/NMC061"
+    ],
+    "references": [],
+    "sent": "2026-11-01T16:10:00-07:00",
+    "effective": "2026-11-01T16:10:00-07:00",
+    "onset": "2026-11-01T16:10:00-07:00",
+    "expires": "2026-11-01T17:00:00-07:00",
+    "ends": "2026-11-01T17:00:00-07:00",
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Severe",
+    "certainty": "Observed",
+    "urgency": "Immediate",
+    "event": "Severe Thunderstorm Warning",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Albuquerque NM",
+    "headline": "Severe Thunderstorm Warning issued November 1 at 4:10PM MST until November 1 at 5:00PM MST by NWS Albuquerque NM",
+    "description": "SVRABQ\n\nThe National Weather Service in Albuquerque has issued a\n\n* Severe Thunderstorm Warning for...\nBernalillo County in central New Mexico...\nNorthwestern Torrance County in central New Mexico...\nNortheastern Valencia County in central New Mexico...\nSoutheastern Los Alamos County in north central New Mexico...\nSoutheastern Sandoval County in north central New Mexico...\nSanta Fe County in north central New Mexico...\n\n* Until 500 PM MST.\n\n* At 410 PM MST, severe thunderstorms were located along a line from\nnear Cochiti Pueblo to over Meadow Lake, moving northeast at 55\nmph.\n\nHAZARD...60 mph wind gusts.\n\nSOURCE...Radar indicated.\n\nIMPACT...Expect damage to roofs, siding, and trees.\n\n* Locations impacted include...\nAlbuquerque, eastern Rio Rancho, Santa Fe, Los Lunas, Bernalillo,\nBelen, Moriarty, Valencia, Corrales and Los Ranchos De Albuquerque.\n\nThis includes the following highways...\nInterstate 40 between Mile Markers 157 and 213. Highway 285 between\nMile Markers 259 and 290. Highway 550 between Mile Markers 1 and 5.\nInterstate 25 between Mile Markers 213 and 302.",
+    "instruction": "Seek shelter inside a well-built structure and stay away from\nwindows. These storms are capable of producing damaging winds.\n\nIntense thunderstorm lines can produce brief tornadoes and widespread\nsignificant wind damage. Although a tornado is not immediately\nlikely, it is best to move to an interior room on the lowest floor of\na building. These storms may cause serious injury and significant\nproperty damage.",
+    "response": "Shelter",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "SVRABQ"
+     ],
+     "WMOidentifier": [
+      "WUUS55 KABQ 012310"
+     ],
+     "eventMotionDescription": [
+      "2026-11-01T23:09:00-00:00...storm...245DEG...45KT...35.64,-106.42 35.1,-106.54 34.79,-106.62"
+     ],
+     "windThreat": [
+      "RADAR INDICATED"
+     ],
+     "maxWindGust": [
+      "60 MPH"
+     ],
+     "hailThreat": [
+      "RADAR INDICATED"
+     ],
+     "maxHailSize": [
+      "0.00"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "EAS-ORG": [
+      "WXR"
+     ],
+     "VTEC": [
+      "/O.NEW.KABQ.SV.W.0428.261101T2310Z-261102T0000Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-01T17:00:00-07:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "SVR"
+     ],
+     "NationalWeatherService": [
+      "SVW"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e8d8e338915e70eb71541b7426b8d72ec98e13be.001.1",
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -80.04,
+       26.73
+      ],
+      [
+       -80.05,
+       26.7
+      ],
+      [
+       -80.18,
+       26.72
+      ],
+      [
+       -80.18,
+       26.92
+      ],
+      [
+       -80.06,
+       26.91
+      ],
+      [
+       -80.05,
+       26.82
+      ],
+      [
+       -80.06,
+       26.84
+      ],
+      [
+       -80.06,
+       26.83
+      ],
+      [
+       -80.04,
+       26.8
+      ],
+      [
+       -80.04,
+       26.83
+      ],
+      [
+       -80.03,
+       26.8
+      ],
+      [
+       -80.03,
+       26.77
+      ],
+      [
+       -80.05,
+       26.8
+      ],
+      [
+       -80.05,
+       26.78
+      ],
+      [
+       -80.04,
+       26.74
+      ],
+      [
+       -80.04,
+       26.76
+      ],
+      [
+       -80.03,
+       26.69
+      ],
+      [
+       -80.04,
+       26.73
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.e8d8e338915e70eb71541b7426b8d72ec98e13be.001.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.e8d8e338915e70eb71541b7426b8d72ec98e13be.001.1",
+    "areaDesc": "Metro Palm Beach County; Coastal Palm Beach County",
+    "geocode": {
+     "SAME": [
+      "012099"
+     ],
+     "UGC": [
+      "FLZ068",
+      "FLZ168"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/FLZ068",
+     "https://api.weather.gov/zones/forecast/FLZ168"
+    ],
+    "references": [],
+    "sent": "2026-11-01T18:28:00-05:00",
+    "effective": "2026-11-01T18:28:00-05:00",
+    "onset": "2026-11-01T18:28:00-05:00",
+    "expires": "2026-11-01T19:00:00-05:00",
+    "ends": null,
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Moderate",
+    "certainty": "Observed",
+    "urgency": "Expected",
+    "event": "Special Weather Statement",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Miami FL",
+    "headline": "Special Weather Statement issued November 1 at 6:28PM EST by NWS Miami FL",
+    "description": "At 627 PM EST, National Weather Service meteorologists were tracking\na strong thunderstorm over Riviera Beach, moving north at 5 mph.\n\nHAZARD...Wind gusts of 45 to 50 mph.\n\nSOURCE...Radar indicated.\n\nIMPACT...Gusty winds could knock down tree limbs and blow around\nunsecured objects.\n\nLocations impacted include...\nWest Palm Beach, Jupiter, Palm Beach Gardens, Riviera Beach, Palm\nBeach, Juno Beach, North Palm Beach, Lake Park, Port Of Palm Beach,\nSchall Circle, Juno Ridge, Downtown West Palm Beach, Mangonia Park,\nLakeside Green, Fau North Campus, Century Village, Cypress Lakes, and\nWestgate-Belvedere Homes.",
+    "instruction": "These winds can down small tree limbs and branches, and blow around\nunsecured small objects. Seek shelter in a safe building until the\nstorm passes.\n\nTorrential rainfall is also occurring with this storm and may lead to\nlocalized flooding. Do not drive your vehicle through flooded\nroadways.",
+    "response": "Execute",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "SPSMFL"
+     ],
+     "WMOidentifier": [
+      "WWUS82 KMFL 012328"
+     ],
+     "NWSheadline": [
+      "A strong thunderstorm will impact portions of northeastern Palm Beach County through 700 PM EST"
+     ],
+     "eventMotionDescription": [
+      "2026-11-01T23:27:00-00:00...storm...199DEG...6KT...26.79,-80.08"
+     ],
+     "maxWindGust": [
+      "50 MPH"
+     ],
+     "maxHailSize": [
+      "0.00"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "EAS-ORG": [
+      "WXR"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "SPS"
+     ],
+     "NationalWeatherService": [
+      "SPS"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.b2af89a4ca4cfcb11b2c029736953534ab445f4a.001.1",
+   "type": "Feature",
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -110.34,
+       34.14
+      ],
+      [
+       -110.32,
+       34.13
+      ],
+      [
+       -110.13,
+       34.38
+      ],
+      [
+       -109.84,
+       34.43
+      ],
+      [
+       -109.71,
+       34.77
+      ],
+      [
+       -109.35,
+       35.87
+      ],
+      [
+       -109.64,
+       36.06
+      ],
+      [
+       -110.4,
+       36.18
+      ],
+      [
+       -111.33,
+       35.42
+      ],
+      [
+       -111.5,
+       35.35
+      ],
+      [
+       -111.46,
+       35.29
+      ],
+      [
+       -111.41,
+       35.08
+      ],
+      [
+       -111.41,
+       34.75
+      ],
+      [
+       -111.52,
+       34.63
+      ],
+      [
+       -110.88,
+       34.41
+      ],
+      [
+       -110.84,
+       34.31
+      ],
+      [
+       -110.67,
+       34.3
+      ],
+      [
+       -110.5,
+       34.26
+      ],
+      [
+       -110.35,
+       34.16
+      ],
+      [
+       -110.34,
+       34.14
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.b2af89a4ca4cfcb11b2c029736953534ab445f4a.001.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.b2af89a4ca4cfcb11b2c029736953534ab445f4a.001.1",
+    "areaDesc": "Apache, AZ; Coconino, AZ; Gila, AZ; Navajo, AZ",
+    "geocode": {
+     "SAME": [
+      "004001",
+      "004005",
+      "004007",
+      "004017"
+     ],
+     "UGC": [
+      "AZC001",
+      "AZC005",
+      "AZC007",
+      "AZC017"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/county/AZC001",
+     "https://api.weather.gov/zones/county/AZC005",
+     "https://api.weather.gov/zones/county/AZC007",
+     "https://api.weather.gov/zones/county/AZC017"
+    ],
+    "references": [
+     {
+      "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.73978100b00b0d85a074ba23330de40236092e79.001.1",
+      "identifier": "urn:oid:2.49.0.1.840.0.73978100b00b0d85a074ba23330de40236092e79.001.1",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "sent": "2026-11-01T10:27:00-07:00"
+     }
+    ],
+    "sent": "2026-11-01T16:26:00-07:00",
+    "effective": "2026-11-01T16:26:00-07:00",
+    "onset": "2026-11-01T16:26:00-07:00",
+    "expires": "2026-11-01T16:36:00-07:00",
+    "ends": "2026-11-01T16:30:00-07:00",
+    "status": "Actual",
+    "messageType": "Update",
+    "category": "Met",
+    "severity": "Severe",
+    "certainty": "Likely",
+    "urgency": "Immediate",
+    "event": "Flash Flood Warning",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Flagstaff AZ",
+    "headline": "Flash Flood Warning issued November 1 at 4:26PM MST until November 1 at 4:30PM MST by NWS Flagstaff AZ",
+    "description": "A Flood Watch remains in effect until 500 AM MST Monday for portions\nof east central, north central, northeast, and west central Arizona.",
+    "instruction": null,
+    "response": "Avoid",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "FFSFGZ"
+     ],
+     "WMOidentifier": [
+      "WGUS75 KFGZ 012326"
+     ],
+     "NWSheadline": [
+      "FLASH FLOOD WARNING WILL EXPIRE AT 430 PM MST THIS AFTERNOON FOR GILA, COCONINO, NAVAJO AND APACHE COUNTIES"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "EAS-ORG": [
+      "WXR"
+     ],
+     "VTEC": [
+      "/O.EXP.KFGZ.FF.W.0209.000000T0000Z-261101T2330Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-01T16:30:00-07:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "FFS"
+     ],
+     "NationalWeatherService": [
+      "FFW"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0-KEEPALIVE-52222",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0-KEEPALIVE-52222",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0-KEEPALIVE-52222",
+    "areaDesc": "Montgomery",
+    "geocode": {
+     "SAME": [
+      "024031"
+     ],
+     "UGC": [
+      "MDC031"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/county/MDC031"
+    ],
+    "references": [],
+    "sent": "2026-11-01T23:24:58+00:00",
+    "effective": "2026-11-01T23:24:58+00:00",
+    "onset": null,
+    "expires": "2026-11-01T23:34:58+00:00",
+    "ends": null,
+    "status": "Test",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Unknown",
+    "certainty": "Unknown",
+    "urgency": "Unknown",
+    "event": "Test Message",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS",
+    "headline": null,
+    "description": "Monitoring message only. Please disregard.",
+    "instruction": "Monitoring message only. Please disregard.",
+    "response": "None",
+    "note": "This is only a test for monitoring of vital dissemination systems.",
+    "parameters": {
+     "AWIPSidentifier": [
+      "KEPWBC"
+     ],
+     "WMOidentifier": [
+      "NZUS91 KWBC 012324"
+     ],
+     "BLOCKCHANNEL": [
+      "CMAS",
+      "EAS",
+      "NWEM"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "TST"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.994b8191c6e7030d91cd62eb8345f4293ce0424b.001.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.994b8191c6e7030d91cd62eb8345f4293ce0424b.001.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.994b8191c6e7030d91cd62eb8345f4293ce0424b.001.1",
+    "areaDesc": "Eastern San Juan Mountains Above 10000 Ft",
+    "geocode": {
+     "SAME": [
+      "008021",
+      "008079",
+      "008105"
+     ],
+     "UGC": [
+      "COZ068"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/COZ068"
+    ],
+    "references": [
+     {
+      "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.73d23a0b0c2afdecbf75692528bccdaec7ab1310.001.1",
+      "identifier": "urn:oid:2.49.0.1.840.0.73d23a0b0c2afdecbf75692528bccdaec7ab1310.001.1",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "sent": "2026-11-01T03:04:00-07:00"
+     }
+    ],
+    "sent": "2026-11-01T10:57:00-07:00",
+    "effective": "2026-11-01T10:57:00-07:00",
+    "onset": "2026-11-01T17:00:00-07:00",
+    "expires": "2026-11-01T19:00:00-07:00",
+    "ends": "2026-11-02T11:00:00-07:00",
+    "status": "Actual",
+    "messageType": "Update",
+    "category": "Met",
+    "severity": "Severe",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Winter Storm Warning",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Pueblo CO",
+    "headline": "Winter Storm Warning issued November 1 at 10:57AM MST until November 2 at 11:00AM MST by NWS Pueblo CO",
+    "description": "* WHAT...Heavy snow expected. Total snow accumulations 8 to 14\ninches. Winds gusting as high as 50 mph.\n\n* WHERE...Eastern San Juan Mountains Above 10000 Feet.\n\n* WHEN...From 5 PM this afternoon to 11 AM MST Monday.\n\n* IMPACTS...Travel could be very difficult, especially tonight and\nMonday morning over Wolf Creek Pass and Cumbres Pass. Strong winds\ncould produce areas of blowing and drifting snow.",
+    "instruction": "If you must travel, keep an extra flashlight, food, and water in your\nvehicle in case of an emergency. The latest road conditions for the\nstate you are calling from can be obtained by calling 5 1 1.",
+    "response": "Prepare",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "WSWPUB"
+     ],
+     "WMOidentifier": [
+      "WWUS45 KPUB 011757"
+     ],
+     "NWSheadline": [
+      "WINTER STORM WARNING REMAINS IN EFFECT FROM 5 PM THIS AFTERNOON TO 11 AM MST MONDAY"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "EAS-ORG": [
+      "WXR"
+     ],
+     "VTEC": [
+      "/O.CON.KPUB.WS.W.0007.261102T0000Z-261102T1800Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-02T11:00:00-07:00"
+     ],
+     "expiredReferences": [
+      "w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.681963bb8119fe118c9c03d331c7709ba2bd3b05.001.1,2026-10-31T18:20:00-06:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.972dce7f6822bb9f6a918d407616194a7550c94d.001.2,2026-10-31T11:03:00-06:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "WSW"
+     ],
+     "NationalWeatherService": [
+      "WSW"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.ff3504df07855d4890bbea3031b8e6a0c93cbde9.001.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.ff3504df07855d4890bbea3031b8e6a0c93cbde9.001.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.ff3504df07855d4890bbea3031b8e6a0c93cbde9.001.1",
+    "areaDesc": "Coastal waters from Cape Mendocino to Pt. Arena CA out 10 nm; Waters from Cape Mendocino to Pt. Arena CA from 10 to 60 nm",
+    "geocode": {
+     "SAME": [
+      "057455",
+      "057475"
+     ],
+     "UGC": [
+      "PZZ455",
+      "PZZ475"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/PZZ455",
+     "https://api.weather.gov/zones/forecast/PZZ475"
+    ],
+    "references": [
+     {
+      "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.9f43a6f3642d5730bde6dd69bad42d625007f835.001.1",
+      "identifier": "urn:oid:2.49.0.1.840.0.9f43a6f3642d5730bde6dd69bad42d625007f835.001.1",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "sent": "2026-11-01T09:50:00-08:00"
+     }
+    ],
+    "sent": "2026-11-01T14:33:00-08:00",
+    "effective": "2026-11-01T14:33:00-08:00",
+    "onset": "2026-11-01T14:33:00-08:00",
+    "expires": "2026-11-01T21:00:00-08:00",
+    "ends": "2026-11-01T21:00:00-08:00",
+    "status": "Actual",
+    "messageType": "Update",
+    "category": "Met",
+    "severity": "Minor",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Small Craft Advisory",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Eureka CA",
+    "headline": "Small Craft Advisory issued November 1 at 2:33PM PST until November 1 at 9:00PM PST by NWS Eureka CA",
+    "description": "* WHAT...North winds 10 to 20 kt with gusts up to 25 kt and seas\n5 to 7 feet.\n\n* WHERE...Coastal waters from Cape Mendocino to Pt. Arena CA out\n10 nm and Waters from Cape Mendocino to Pt. Arena CA from 10\nto 60 nm.\n\n* WHEN...Until 9 PM PST this evening.\n\n* IMPACTS...Conditions will be hazardous to small craft.",
+    "instruction": "Inexperienced mariners, especially those operating smaller\nvessels, should avoid navigating in hazardous conditions.",
+    "response": "Avoid",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "MWWEKA"
+     ],
+     "WMOidentifier": [
+      "WHUS76 KEKA 012233"
+     ],
+     "NWSheadline": [
+      "SMALL CRAFT ADVISORY REMAINS IN EFFECT UNTIL 9 PM PST THIS EVENING"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "VTEC": [
+      "/O.CON.KEKA.SC.Y.0099.000000T0000Z-261102T0500Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-01T21:00:00-08:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "SCY"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.fc5dd7a7042d40e9f51d9182a6a297c833d6e721.009.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.fc5dd7a7042d40e9f51d9182a6a297c833d6e721.009.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.fc5dd7a7042d40e9f51d9182a6a297c833d6e721.009.1",
+    "areaDesc": "Icy Cape to Cape Suckling from 15 to 80 NM",
+    "geocode": {
+     "SAME": [
+      "058672"
+     ],
+     "UGC": [
+      "PKZ672"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/PKZ672"
+    ],
+    "references": [
+     {
+      "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.b16b264c275e22bc2d32094d3061cdb6b5d683d1.014.1",
+      "identifier": "urn:oid:2.49.0.1.840.0.b16b264c275e22bc2d32094d3061cdb6b5d683d1.014.1",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "sent": "2026-11-01T05:43:00-09:00"
+     },
+     {
+      "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.c5ccceb92fe251de77a34591d8c9a47afec0b6c8.010.1",
+      "identifier": "urn:oid:2.49.0.1.840.0.c5ccceb92fe251de77a34591d8c9a47afec0b6c8.010.1",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "sent": "2026-11-01T08:35:00-09:00"
+     },
+     {
+      "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.62a74ff0fe4297314fe66976e10711af7af78a2d.010.1",
+      "identifier": "urn:oid:2.49.0.1.840.0.62a74ff0fe4297314fe66976e10711af7af78a2d.010.1",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "sent": "2026-11-01T09:51:00-09:00"
+     }
+    ],
+    "sent": "2026-11-01T11:32:00-09:00",
+    "effective": "2026-11-01T11:32:00-09:00",
+    "onset": "2026-11-01T11:32:00-09:00",
+    "expires": "2026-11-01T19:45:00-09:00",
+    "ends": "2026-11-02T12:00:00-09:00",
+    "status": "Actual",
+    "messageType": "Update",
+    "category": "Met",
+    "severity": "Minor",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Small Craft Advisory",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Juneau AK",
+    "headline": "Small Craft Advisory issued November 1 at 11:32AM AKST until November 2 at 12:00PM AKST by NWS Juneau AK",
+    "description": "* WHAT...Southeast winds 15 to 25 kt and seas 7 to 10 ft.\n\n* WHERE...Icy Cape to Cape Suckling from 15 to 80 NM.\n\n* WHEN...Until noon AKST Monday.\n\n* IMPACTS...Conditions will be hazardous to small craft.",
+    "instruction": "Inexperienced mariners, especially those operating smaller\nvessels, should avoid navigating in hazardous conditions.",
+    "response": "Avoid",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "MWWAJK"
+     ],
+     "WMOidentifier": [
+      "WHAK77 PAJK 012032"
+     ],
+     "NWSheadline": [
+      "SMALL CRAFT ADVISORY REMAINS IN EFFECT UNTIL NOON AKST MONDAY"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "VTEC": [
+      "/O.CON.PAJK.SC.Y.0352.000000T0000Z-261102T2100Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-02T12:00:00-09:00"
+     ],
+     "expiredReferences": [
+      "w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.12a9c38ace27f0af1284b56aa67470f456294fc4.011.1,2026-11-01T02:22:00-09:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.0cddd089db82b2f3b640b0cd7acd7374a12824b5.007.1,2026-11-01T00:56:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.3680eb17d9bcb59bdcd0e90ea12ff3efe1dccb5f.010.1,2026-10-31T22:11:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.38d816bab3b9559f588b31b957fa0eba83eee0ab.010.1,2026-10-31T20:32:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.2361248733c4e6141523e84c242df145aa6a5b6c.010.1,2026-10-31T19:12:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.94d1350fcb4983c169877181c9e334993bec2cbc.009.1,2026-10-31T15:47:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.f6689e7fffc742d7572b823a58f377daae2a89a3.012.1,2026-10-31T15:32:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.96d807b7c0fee73590e158fbb0cd2cb84a80a9d2.013.1,2026-10-31T12:50:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.1d5a531d65796c83ea1742b53605d0abd92fd3d4.014.1,2026-10-31T09:41:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.508eee8eda1a2705e8cb993c4c1108b0f01c5f33.015.1,2026-10-31T06:35:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.219891b2971507e415c61d235cb4f6980e37015b.015.1,2026-10-31T03:39:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.3c2d15b3ce139cd4905e0a0e4897c32d1e643764.001.2,2026-10-31T02:38:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.7ad12907c77e5b306883dde04ea80e70cb057371.008.2,2026-10-31T00:38:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.c8231c5706c981dc36654aaa1247facca9f171d2.009.2,2026-10-30T21:52:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.6ace7dca69d0faace881d95334728f00fcad2487.011.2,2026-10-30T18:43:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.34b3a4e6a1fdf3d70f7c32ba46202854bbc62780.013.2,2026-10-30T15:31:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.1a5f8a3d54c607dc96d0b5fa8e8213b0a1bbd476.010.2,2026-10-30T12:34:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.28078a6e44dd172b155927a2b315696853f669e3.010.2,2026-10-30T11:17:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.30874fa55c960b4fb5df1b59e759a141925eb68d.002.3,2026-10-30T06:35:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.ba3f5c126cb2d850531484de6d381a0874052f59.002.3,2026-10-30T03:29:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.0af41fa0c5dd89aa8ab56871389df4945eeb86de.007.3,2026-10-30T02:51:00-08:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "SCY"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.c4b5046cbba9a281257a46344f5db127091be8f0.001.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.c4b5046cbba9a281257a46344f5db127091be8f0.001.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.c4b5046cbba9a281257a46344f5db127091be8f0.001.1",
+    "areaDesc": "Tohono O'odham Nation including Sells; Upper Santa Cruz River and Altar Valleys including Nogales; Tucson Metro Area including Tucson/Green Valley/Marana/Vail; South Central Pinal County including Eloy/Picacho Peak State Park; Southeast Pinal County including Kearny/Mammoth/Oracle; Upper Gila River and Aravaipa Valleys including Clifton/Safford; White Mountains of Graham and Greenlee Counties including Hannagan Meadow; Galiuro and Pinaleno Mountains including Mount Graham; Santa Catalina and Rincon Mountains including Mount Lemmon/Summerhaven; Baboquivari Mountains including Kitt Peak",
+    "geocode": {
+     "SAME": [
+      "004019",
+      "004021",
+      "004023",
+      "004009",
+      "004011",
+      "004003"
+     ],
+     "UGC": [
+      "AZZ502",
+      "AZZ503",
+      "AZZ504",
+      "AZZ505",
+      "AZZ506",
+      "AZZ509",
+      "AZZ510",
+      "AZZ511",
+      "AZZ514",
+      "AZZ515"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/AZZ502",
+     "https://api.weather.gov/zones/forecast/AZZ503",
+     "https://api.weather.gov/zones/forecast/AZZ504",
+     "https://api.weather.gov/zones/forecast/AZZ505",
+     "https://api.weather.gov/zones/forecast/AZZ506",
+     "https://api.weather.gov/zones/forecast/AZZ509",
+     "https://api.weather.gov/zones/forecast/AZZ510",
+     "https://api.weather.gov/zones/forecast/AZZ511",
+     "https://api.weather.gov/zones/forecast/AZZ514",
+     "https://api.weather.gov/zones/forecast/AZZ515"
+    ],
+    "references": [
+     {
+      "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.f077cfca52e65873306a8db771a903b627c01f5d.001.1",
+      "identifier": "urn:oid:2.49.0.1.840.0.f077cfca52e65873306a8db771a903b627c01f5d.001.1",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "sent": "2026-11-01T04:10:00-07:00"
+     }
+    ],
+    "sent": "2026-11-01T15:12:00-07:00",
+    "effective": "2026-11-01T15:12:00-07:00",
+    "onset": "2026-11-01T15:12:00-07:00",
+    "expires": "2026-11-02T05:00:00-07:00",
+    "ends": "2026-11-02T05:00:00-07:00",
+    "status": "Actual",
+    "messageType": "Update",
+    "category": "Met",
+    "severity": "Severe",
+    "certainty": "Possible",
+    "urgency": "Future",
+    "event": "Flood Watch",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Tucson AZ",
+    "headline": "Flood Watch issued November 1 at 3:12PM MST until November 2 at 5:00AM MST by NWS Tucson AZ",
+    "description": "* WHAT...Flooding caused by excessive rainfall continues to be\npossible.\n\n* WHERE...A portion of Southeast Arizona, including the following\nareas, Baboquivari Mountains, Catalina and Rincon Mountains,\nGaliuro and Pinaleno Mountains, South Central Pinal County,\nSoutheast Pinal County, Tohono O'odham Nation, Tucson Metro Area,\nUpper Gila River Valley, Upper Santa Cruz River Valley/Altar Valley\nand White Mountains of Graham and Greenlee Counties.\n\n* WHEN...Through late tonight.\n\n* IMPACTS...Excessive runoff may result in flooding of rivers,\ncreeks, streams, and other low-lying and flood-prone locations.\nFlooding may occur in poor drainage and urban areas. Low-water\ncrossings may be flooded.\n\n* ADDITIONAL DETAILS...\n- A strong weather system approaching the area will bring\nwidespread  showers today. Moderate to locally heavy rainfall\nwith rainfall totals 0.5 to 1.25 inches possible in the valleys\nand 1 to 3 inches possible in the mountains.\n- http://www.weather.gov/safety/flood",
+    "instruction": "You should monitor later forecasts and be alert for possible Flood\nWarnings. Those living in areas prone to flooding should be prepared\nto take action should flooding develop.",
+    "response": "Prepare",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "FFATWC"
+     ],
+     "WMOidentifier": [
+      "WGUS65 KTWC 012212"
+     ],
+     "NWSheadline": [
+      "FLOOD WATCH REMAINS IN EFFECT THROUGH LATE TONIGHT"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "EAS-ORG": [
+      "WXR"
+     ],
+     "VTEC": [
+      "/O.CON.KTWC.FA.A.0016.000000T0000Z-261102T1200Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-02T05:00:00-07:00"
+     ],
+     "expiredReferences": [
+      "w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.857a49bb7314f211a0dd27ff91d2802fbe20b3be.001.1,2026-10-31T14:52:00-07:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.8d5fa235ae06016b55403e9541ecd32f076da9c7.001.1,2026-10-31T02:29:00-07:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.f5d42d161750f54f764d77b3e6be1efc1d355a41.003.1,2026-10-30T10:36:00-07:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.52db82dd98af8527524db85d399010ff365ccf13.001.1,2026-10-30T02:43:00-07:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.96f0aafa6386a32cbe09119a73269948e6de05b9.001.1,2026-10-29T10:44:00-07:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "FFA"
+     ],
+     "NationalWeatherService": [
+      "FAA"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.5d9a0ec4f46df7deb3c2c0e5015df58147db243f.001.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.5d9a0ec4f46df7deb3c2c0e5015df58147db243f.001.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.5d9a0ec4f46df7deb3c2c0e5015df58147db243f.001.1",
+    "areaDesc": "West Elk and Sawatch Mountains; Northwestern San Juan Mountains; Southwest San Juan Mountains; Eastern San Juan Mountains Above 10000 Ft",
+    "geocode": {
+     "SAME": [
+      "008029",
+      "008051",
+      "008085",
+      "008053",
+      "008091",
+      "008113",
+      "008007",
+      "008033",
+      "008067",
+      "008083",
+      "008111",
+      "008021",
+      "008079",
+      "008105"
+     ],
+     "UGC": [
+      "COZ012",
+      "COZ018",
+      "COZ019",
+      "COZ068"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/COZ012",
+     "https://api.weather.gov/zones/forecast/COZ018",
+     "https://api.weather.gov/zones/forecast/COZ019",
+     "https://api.weather.gov/zones/forecast/COZ068"
+    ],
+    "references": [],
+    "sent": "2026-10-31T18:16:00-07:00",
+    "effective": "2026-10-31T18:16:00-07:00",
+    "onset": "2026-10-31T18:16:00-07:00",
+    "expires": "2026-11-02T16:30:00-07:00",
+    "ends": null,
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Unknown",
+    "certainty": "Unknown",
+    "urgency": "Unknown",
+    "event": "Avalanche Advisory",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Denver CO",
+    "headline": "Avalanche Advisory issued October 31 at 7:16PM MDT by NWS Denver CO",
+    "description": "SABCO\n\nTHE FOLLOWING MESSAGE IS TRANSMITTED AT THE REQUEST OF THE\nCOLORADO AVALANCHE INFORMATION CENTER.\n\n...A SPECIAL AVALANCHE ADVISORY IN EFFECT FROM 4:30 PM SATURDAY\nUNTIL 4:30 PM MONDAY...\n\n*WHAT...Avalanche conditions are dangerous above treeline.\n*WHERE...West Elk Mountains, Elk Mountains, San Juan Mountains, and\nLa Plata Mountains\n*WHEN...From 4:30 PM Saturday until 4:30 PM Monday.\n*IMPACTS...Backcountry travelers can easily trigger dangerous\navalanches large enough to bury a human.\n\n*PRECAUTION/PREPAREDNESS ACTIONS...A potent winter storm increases\navalanche danger Sunday into Monday. Rain, snow, and wind will cause\nnatural avalanches above treeline. Check the forecast at\nwww.colorado.gov/avalanche.\n\nBeyer & Pritchett",
+    "instruction": null,
+    "response": "Monitor",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "SABCO"
+     ],
+     "WMOidentifier": [
+      "WWUS85 KBOU 010116"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "SAB"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.fc5dd7a7042d40e9f51d9182a6a297c833d6e721.003.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.fc5dd7a7042d40e9f51d9182a6a297c833d6e721.003.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.fc5dd7a7042d40e9f51d9182a6a297c833d6e721.003.1",
+    "areaDesc": "Clarence Strait",
+    "geocode": {
+     "SAME": [
+      "058036"
+     ],
+     "UGC": [
+      "PKZ036"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/PKZ036"
+    ],
+    "references": [
+     {
+      "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.b16b264c275e22bc2d32094d3061cdb6b5d683d1.006.1",
+      "identifier": "urn:oid:2.49.0.1.840.0.b16b264c275e22bc2d32094d3061cdb6b5d683d1.006.1",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "sent": "2026-11-01T05:43:00-09:00"
+     },
+     {
+      "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.c5ccceb92fe251de77a34591d8c9a47afec0b6c8.003.1",
+      "identifier": "urn:oid:2.49.0.1.840.0.c5ccceb92fe251de77a34591d8c9a47afec0b6c8.003.1",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "sent": "2026-11-01T08:35:00-09:00"
+     },
+     {
+      "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.62a74ff0fe4297314fe66976e10711af7af78a2d.003.1",
+      "identifier": "urn:oid:2.49.0.1.840.0.62a74ff0fe4297314fe66976e10711af7af78a2d.003.1",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "sent": "2026-11-01T09:51:00-09:00"
+     }
+    ],
+    "sent": "2026-11-01T11:32:00-09:00",
+    "effective": "2026-11-01T11:32:00-09:00",
+    "onset": "2026-11-01T11:32:00-09:00",
+    "expires": "2026-11-01T19:45:00-09:00",
+    "ends": "2026-11-01T18:00:00-09:00",
+    "status": "Actual",
+    "messageType": "Update",
+    "category": "Met",
+    "severity": "Moderate",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Gale Warning",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Juneau AK",
+    "headline": "Gale Warning issued November 1 at 11:32AM AKST until November 1 at 6:00PM AKST by NWS Juneau AK",
+    "description": "* WHAT...For the Gale Warning, southeast winds 30 to 40 kt with\ngusts up to 50 kt and seas 11 to 16 ft. For the Small Craft\nAdvisory, seas 6 to 9 ft expected.\n\n* WHERE...Clarence Strait.\n\n* WHEN...For the Gale Warning, until 6 PM AKST this evening. For\nthe Small Craft Advisory, from 6 PM to 9 PM AKST this evening.\n\n* IMPACTS...Strong winds will cause hazardous seas which could\ncapsize or damage vessels and reduce visibility.",
+    "instruction": "Mariners should alter plans to avoid these hazardous conditions.\nRemain in port, seek safe harbor, alter course, and/or secure the\nvessel for hazardous conditions.",
+    "response": "Avoid",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "MWWAJK"
+     ],
+     "WMOidentifier": [
+      "WHAK77 PAJK 012032"
+     ],
+     "NWSheadline": [
+      "GALE WARNING REMAINS IN EFFECT UNTIL 6 PM AKST THIS EVENING... ...SMALL CRAFT ADVISORY REMAINS IN EFFECT FROM 6 PM TO 9 PM AKST THIS EVENING"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "VTEC": [
+      "/O.CON.PAJK.GL.W.0123.000000T0000Z-261102T0300Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-01T18:00:00-09:00"
+     ],
+     "expiredReferences": [
+      "w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.12a9c38ace27f0af1284b56aa67470f456294fc4.001.1,2026-11-01T02:22:00-09:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.0cddd089db82b2f3b640b0cd7acd7374a12824b5.001.2,2026-11-01T00:56:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.3680eb17d9bcb59bdcd0e90ea12ff3efe1dccb5f.005.2,2026-10-31T22:11:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.38d816bab3b9559f588b31b957fa0eba83eee0ab.003.2,2026-10-31T20:32:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.2361248733c4e6141523e84c242df145aa6a5b6c.003.2,2026-10-31T19:12:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.94d1350fcb4983c169877181c9e334993bec2cbc.004.2,2026-10-31T15:47:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.f6689e7fffc742d7572b823a58f377daae2a89a3.002.2,2026-10-31T15:32:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.96d807b7c0fee73590e158fbb0cd2cb84a80a9d2.004.2,2026-10-31T12:50:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.1d5a531d65796c83ea1742b53605d0abd92fd3d4.006.2,2026-10-31T09:41:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.508eee8eda1a2705e8cb993c4c1108b0f01c5f33.007.2,2026-10-31T06:35:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.219891b2971507e415c61d235cb4f6980e37015b.008.2,2026-10-31T03:39:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.3c2d15b3ce139cd4905e0a0e4897c32d1e643764.007.2,2026-10-31T02:38:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.7ad12907c77e5b306883dde04ea80e70cb057371.009.2,2026-10-31T00:38:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.c8231c5706c981dc36654aaa1247facca9f171d2.010.2,2026-10-30T21:52:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.6ace7dca69d0faace881d95334728f00fcad2487.012.2,2026-10-30T18:43:00-08:00 w-nws.webmaster@noaa.gov,urn:oid:2.49.0.1.840.0.34b3a4e6a1fdf3d70f7c32ba46202854bbc62780.004.2,2026-10-30T15:31:00-08:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "GLW"
+     ]
+    }
+   }
+  }
+ ]
+}
