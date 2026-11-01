@@ -20,7 +20,7 @@
 use std::ops::Range;
 
 use crate::projection::{bilinear_interpolate, NativeGrid};
-use crate::types::{BoundingBox, GridRegion, PyramidLevel};
+use crate::types::{BoundingBox, GridRegion, MultiscaleMetadata, PyramidLevel};
 
 /// Cells added on every side of the cells a box needs, so sampling at the box's edge still has
 /// neighbours to interpolate with. The lat/lon read adds the same two cells.
@@ -40,6 +40,51 @@ const OUTLINE_STEPS: usize = 32;
 /// position; the identity at scale 1.
 pub fn level_index(native_index: f64, scale: f64) -> f64 {
     (native_index - (scale - 1.0) / 2.0) / scale
+}
+
+/// How a pyramid level's cells sit on level 0's, enough to turn a level-0 position (what a
+/// projection gives) into a position in the level read.
+///
+/// `Mean`/`Max` levels are centred on their blocks (see [`level_index`]); a `Nearest` level
+/// (category codes) holds the top-left cell of each block, so its cell `k` IS level-0 cell
+/// `k * scale` and the index is the level-0 index over the scale. `scale` is the level's nominal
+/// factor (`PyramidLevel::scale`), not a ratio of widths, which an odd-sized grid's dropped
+/// remainder makes slightly different.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LevelPlacement {
+    /// Level-0 cells per cell of the level: 1 at level 0.
+    pub scale: f64,
+    /// Whether the level was downsampled by picking a cell rather than combining a block.
+    pub nearest: bool,
+}
+
+impl LevelPlacement {
+    /// Level 0: level-0 positions are level positions.
+    pub const NATIVE: Self = Self {
+        scale: 1.0,
+        nearest: false,
+    };
+
+    pub fn new(scale: f64, nearest: bool) -> Self {
+        Self { scale, nearest }
+    }
+
+    /// The placement of `level` in a dataset downsampled the way `multiscale` says.
+    pub fn of(multiscale: &MultiscaleMetadata, level: &PyramidLevel) -> Self {
+        Self::new(level.scale, multiscale.uses_nearest())
+    }
+
+    /// Fractional cell of this level at level-0 position `native_index` (cell centres at
+    /// integers). The identity at scale 1.
+    pub fn index(&self, native_index: f64) -> f64 {
+        if self.scale <= 1.0 {
+            native_index
+        } else if self.nearest {
+            native_index / self.scale
+        } else {
+            level_index(native_index, self.scale)
+        }
+    }
 }
 
 /// Where a longitude/latitude box falls on a projected grid, in level-0 cells.
@@ -263,6 +308,27 @@ mod tests {
         // Level 2 cell k covers 4k..4k+3: centred on 4k + 1.5
         assert_eq!(level_index(1.5, 4.0), 0.0);
         assert_eq!(level_index(9.5, 4.0), 2.0);
+    }
+
+    #[test]
+    fn level_placement_centres_mean_blocks_and_picks_nearest_cells() {
+        let mean = LevelPlacement::new(4.0, false);
+        // Level 2 cell k is centred on 4k + 1.5
+        assert_eq!(mean.index(1.5), 0.0);
+        assert_eq!(mean.index(5.5), 1.0);
+        assert_eq!(mean.index(0.0), -0.375);
+        // A nearest level's cell k is level-0 cell 4k
+        let nearest = LevelPlacement::new(4.0, true);
+        assert_eq!(nearest.index(0.0), 0.0);
+        assert_eq!(nearest.index(8.0), 2.0);
+        assert_eq!(nearest.index(10.0), 2.5);
+        // Level 0 is the identity either way
+        for p in [LevelPlacement::NATIVE, LevelPlacement::new(1.0, true)] {
+            assert_eq!(p.index(123.25), 123.25);
+        }
+        // The factor, not a width ratio: a 1799-wide grid at factor 4 is 449 wide, and the
+        // ratio 449/1799 would put native 1798 at 448.75 instead of 449.125
+        assert_eq!(mean.index(1798.0), 449.125);
     }
 
     #[test]

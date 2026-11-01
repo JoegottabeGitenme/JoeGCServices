@@ -14,7 +14,7 @@ mod tests;
 use crate::metrics::{DataSourceType, MetricsCollector};
 use grid_processor::GridProcessorFactory;
 use loaders::load_grid_data;
-use resampling::resample_grid_for_bbox_with_proj;
+use resampling::resample_grid_for_bbox_at_level;
 use std::time::Instant;
 use storage::Catalog;
 use tracing::info;
@@ -278,7 +278,7 @@ pub async fn render_weather_data(
     let resampled_data = {
         if let Some(output_bbox) = bbox {
             // Resample grid data to output bbox using projection-aware resampling
-            resample_grid_for_bbox_with_proj(
+            resample_grid_for_bbox_at_level(
                 &grid_data,
                 grid_width,
                 grid_height,
@@ -290,6 +290,7 @@ pub async fn render_weather_data(
                 model,
                 goes_projection.as_ref(),
                 grid_result.grid_uses_360,
+                grid_result.level,
             )
         } else {
             // No bbox - resample entire data grid
