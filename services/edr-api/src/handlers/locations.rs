@@ -640,13 +640,7 @@ async fn location_query(
                     query = query.at_level(level);
                 }
 
-                if let Some(valid_time) = parsed_times.first() {
-                    query = query.at_valid_time(*valid_time);
-                }
-
-                if let Some(ref_time) = reference_time {
-                    query = query.at_run(ref_time);
-                }
+                query = query.in_run_at(reference_time, parsed_times.first().copied());
 
                 match state.grid_data_service.read_point(&query, lon, lat).await {
                     Ok(point_value) => {
@@ -684,17 +678,13 @@ async fn location_query(
 
             for valid_time in &parsed_times {
                 // Build the DatasetQuery for this specific valid time (forecast vs observation)
-                let mut query = model_config
-                    .create_query(param_name)
-                    .at_valid_time(*valid_time);
+                let mut query = model_config.create_query(param_name);
 
                 if let Some(level) = &level_str {
                     query = query.at_level(level);
                 }
 
-                if let Some(ref_time) = reference_time {
-                    query = query.at_run(ref_time);
-                }
+                query = query.in_run_at(reference_time, Some(*valid_time));
 
                 match state.grid_data_service.read_point(&query, lon, lat).await {
                     Ok(point_value) => {
@@ -729,13 +719,7 @@ async fn location_query(
                 query = query.at_level(level);
             }
 
-            if let Some(valid_time) = parsed_times.first() {
-                query = query.at_valid_time(*valid_time);
-            }
-
-            if let Some(ref_time) = reference_time {
-                query = query.at_run(ref_time);
-            }
+            query = query.in_run_at(reference_time, parsed_times.first().copied());
 
             match state.grid_data_service.read_point(&query, lon, lat).await {
                 Ok(point_value) => {
