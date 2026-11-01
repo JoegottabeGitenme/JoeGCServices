@@ -50,6 +50,7 @@ VALID_SOURCE_TYPES = {
     "ndbc_latest_obs",
     "dart_realtime",
     "storm_events_csv",
+    "nws_alerts",
 }
 VALID_PROJECTION_TYPES = {
     "geographic",
@@ -501,6 +502,7 @@ class ModelValidator:
                         "dart_realtime",
                         "aws_s3_glm",
                         "storm_events_csv",
+                        "nws_alerts",
                     )
                     and dim_type != "static"
                 ):

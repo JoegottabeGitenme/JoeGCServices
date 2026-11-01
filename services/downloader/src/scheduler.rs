@@ -21,6 +21,7 @@ use crate::glm_runner::{self, GlmConfig, GlmRunner};
 use crate::lis_runner;
 use crate::model_runner::{EarthdataAuth, ModelRunner};
 use crate::ndbc_runner::{self, NdbcConfig, NdbcRunner};
+use crate::nws_alerts_runner::{self, NwsAlertsConfig, NwsAlertsRunner};
 use crate::observation_runner::{self, ObservationConfig, ObservationRunner, TafRunner};
 use crate::state::DownloadState;
 use crate::storm_events_runner::{self, StormEventsConfig, StormEventsRunner};
@@ -99,6 +100,7 @@ pub struct Scheduler {
     dart_configs: Vec<DartConfig>,
     /// Storm Events (hail/wind/tornado) configs
     storm_events_configs: Vec<StormEventsConfig>,
+    nws_alerts_configs: Vec<NwsAlertsConfig>,
     /// AWS S3 client for listing files
     s3_client: Option<aws_sdk_s3::Client>,
     /// Optional Earthdata auth for NASA GES DISC sources (NLDAS)
@@ -151,6 +153,9 @@ impl Scheduler {
 
         // Load Storm Events (hail/wind/tornado) configs
         let storm_events_configs = Self::load_storm_events_configs(&config_dir, &ingester_url);
+
+        // Load NWS alerts configs
+        let nws_alerts_configs = Self::load_nws_alerts_configs(&config_dir, &ingester_url);
 
         // Initialize AWS SDK for S3 listing
         // For NOAA public buckets, we need to explicitly allow anonymous access
@@ -262,6 +267,7 @@ impl Scheduler {
             glm_configs,
             dart_configs,
             storm_events_configs,
+            nws_alerts_configs,
             s3_client,
             earthdata_auth,
         }
@@ -531,6 +537,39 @@ impl Scheduler {
                                 error = %e,
                                 "Failed to load Storm Events config"
                             );
+                        }
+                    }
+                }
+            }
+        }
+
+        configs
+    }
+
+    /// Load NWS alerts configurations from model config files.
+    fn load_nws_alerts_configs(
+        config_dir: &std::path::Path,
+        ingester_url: &Option<String>,
+    ) -> Vec<NwsAlertsConfig> {
+        let mut configs = Vec::new();
+        let models_dir = config_dir.join("models");
+        let ingester_base = ingester_url.as_deref().unwrap_or("http://localhost:8082");
+
+        if let Ok(entries) = std::fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path
+                    .extension()
+                    .is_some_and(|ext| ext == "yaml" || ext == "yml")
+                {
+                    match nws_alerts_runner::load_nws_alerts_config(&path, ingester_base) {
+                        Ok(Some(config)) => {
+                            info!(source = %config.id, "Loaded NWS alerts config");
+                            configs.push(config);
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            warn!(path = %path.display(), error = %e, "Failed to load NWS alerts config");
                         }
                     }
                 }
@@ -811,6 +850,26 @@ impl Scheduler {
             handles.push(tokio::spawn(async move {
                 if let Err(e) = runner.run_forever(shutdown_rx).await {
                     error!(source = %source_id, error = %e, "Storm Events runner failed");
+                }
+            }));
+        }
+
+        // Spawn NWS alerts runners (alerts poll + lazy zone geometry fill)
+        for nws_config in &self.nws_alerts_configs {
+            let runner = match NwsAlertsRunner::new(nws_config.clone()) {
+                Ok(r) => r,
+                Err(e) => {
+                    error!(source = %nws_config.id, error = %e, "Failed to create NWS alerts runner");
+                    continue;
+                }
+            };
+
+            let shutdown_rx = shutdown.resubscribe();
+            let source_id = nws_config.id.clone();
+
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = runner.run_forever(shutdown_rx).await {
+                    error!(source = %source_id, error = %e, "NWS alerts runner failed");
                 }
             }));
         }
