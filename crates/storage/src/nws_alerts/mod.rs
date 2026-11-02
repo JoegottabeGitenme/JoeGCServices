@@ -354,6 +354,12 @@ mod tests {
     }
 
     #[test]
+    fn test_message_has_the_test_colour() {
+        let all = parsed();
+        assert_eq!(by_event(&all, "Test Message")[0].color, "#F0FFFF");
+    }
+
+    #[test]
     fn county_ugc_alert() {
         let all = parsed();
         let t = by_event(&all, "Test Message")[0];

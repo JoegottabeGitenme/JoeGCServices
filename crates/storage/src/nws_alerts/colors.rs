@@ -4,7 +4,7 @@
 //! The table below is embedded statically (checked against the page on 2026-11-01; older
 //! event names such as "Excessive Heat Warning" are kept for alerts that still use them): NWS publishes it as a web page, not an
 //! API, and it changes a few times a decade. Events that are not listed (new
-//! products, `Test Message`, ...) fall back to a colour by significance
+//! products, ...) fall back to a colour by significance
 //! (warning / watch / advisory / statement, taken from the event name or VTEC)
 //! and then to a neutral grey, so every alert always has a colour.
 
@@ -123,6 +123,8 @@ const EVENT_COLORS: &[(&str, &str)] = &[
     ("Storm Warning", "#9400D3"),
     ("Storm Watch", "#FFE4B5"),
     ("Test", "#F0FFFF"),
+    // the name NWS sends for the "Test" row of the map table
+    ("Test Message", "#F0FFFF"),
     ("Tornado Warning", "#FF0000"),
     ("Tornado Watch", "#FFFF00"),
     ("Tropical Cyclone Local Statement", "#FFE4B5"),
@@ -189,13 +191,21 @@ mod tests {
     }
 
     #[test]
+    fn test_messages_get_the_nws_test_colour_not_the_statement_grey() {
+        // The feed's keepalive is "Test Message" (CAP status Test, VTEC-less, so no significance).
+        assert_eq!(hazard_color("Test Message", None), "#F0FFFF");
+        assert_eq!(hazard_color("Test Message", Some('S')), "#F0FFFF");
+        assert_eq!(hazard_color("Test", None), "#F0FFFF");
+        assert_ne!(hazard_color("Test Message", None), FALLBACK_STATEMENT);
+    }
+
+    #[test]
     fn unknown_event_falls_back_by_significance() {
         assert_eq!(hazard_color("Brand New Warning", None), FALLBACK_WARNING);
         assert_eq!(hazard_color("Brand New Watch", None), FALLBACK_WATCH);
         assert_eq!(hazard_color("Brand New Advisory", None), FALLBACK_ADVISORY);
         // VTEC significance wins over the name.
         assert_eq!(hazard_color("Odd Thing", Some('A')), FALLBACK_WATCH);
-        assert_eq!(hazard_color("Test Message", None), FALLBACK_STATEMENT);
         assert_eq!(hazard_color("Mystery", None), FALLBACK_OTHER);
     }
 
