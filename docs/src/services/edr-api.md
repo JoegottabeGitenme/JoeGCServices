@@ -81,7 +81,7 @@ graph TB
 |----------|--------|-------------|
 | `/edr` | GET | Landing page with API links |
 | `/edr/conformance` | GET | Supported conformance classes |
-| `/edr/api` | GET | OpenAPI specification (YAML) |
+| `/edr/api` | GET | OpenAPI specification (JSON; `?f=yaml` for the YAML source) |
 | `/edr/api.html` | GET | Interactive API documentation (ReDoc) |
 
 ### Collection Endpoints
