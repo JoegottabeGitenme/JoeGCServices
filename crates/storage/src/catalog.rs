@@ -3024,7 +3024,7 @@ CREATE TABLE IF NOT EXISTS nws_alerts (
     geom GEOMETRY(MultiPolygon, 4326),         -- effective geometry (own polygon, else union of zones)
     geometry_source TEXT NOT NULL DEFAULT 'pending',  -- polygon | zones | pending | none
     first_seen_at TIMESTAMPTZ NOT NULL,
-    last_seen_at TIMESTAMPTZ NOT NULL,         -- last poll that listed it
+    last_seen_at TIMESTAMPTZ NOT NULL,         -- last poll that listed it (not indexed, see below)
     updated_at TIMESTAMPTZ NOT NULL            -- last time its content changed (ETag seed)
 );
 
@@ -3036,13 +3036,15 @@ CREATE INDEX IF NOT EXISTS idx_nws_alerts_geom_live ON nws_alerts USING GIST(geo
     WHERE superseded_by IS NULL AND ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_end_time ON nws_alerts(end_time);
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_effective ON nws_alerts(effective);
-CREATE INDEX IF NOT EXISTS idx_nws_alerts_last_seen ON nws_alerts(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_event ON nws_alerts(event);
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_ugc ON nws_alerts USING GIN(ugc);
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_zone_keys ON nws_alerts USING GIN(zone_keys);
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_vtec_event ON nws_alerts(vtec_event_key);
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_pending ON nws_alerts(geometry_source)
     WHERE geometry_source = 'pending';
+-- last_seen_at is not indexed: every poll sets it on every alert, and an indexed column rules out a HOT update.
+-- Only the retention sweep read that index, and a scan of the retained rows does as well. CONCURRENTLY, so no lock queues readers.
+DROP INDEX CONCURRENTLY IF EXISTS idx_nws_alerts_last_seen;
 
 -- Single row: poll health, for a data-age indicator.
 CREATE TABLE IF NOT EXISTS nws_alerts_status (
