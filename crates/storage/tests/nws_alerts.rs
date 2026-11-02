@@ -1431,3 +1431,129 @@ async fn an_older_feed_counts_as_a_poll_but_changes_no_alert() {
         .unwrap();
     assert!(!r.stale_ignored && r.upserted == alerts.len());
 }
+
+async fn zone_row(env: &Env, key: &str) -> (String, bool, DateTime<Utc>) {
+    sqlx::query_as(
+        "SELECT fetch_status, geom IS NOT NULL, fetched_at FROM nws_zones WHERE zone_key = $1",
+    )
+    .bind(key)
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_zone_whose_fetch_failed_is_recorded_retried_in_15_minutes_and_never_wipes_geometry() {
+    let env = env().await;
+    let alerts = fixture_alerts();
+    let winter = id_of(&alerts, "Winter Storm Warning", |_| true);
+    env.nws.apply_feed(&alerts, Some(t0()), t0()).await.unwrap();
+    assert!(env
+        .nws
+        .missing_zones(t0())
+        .await
+        .unwrap()
+        .contains(&"forecast/COZ068".to_string()));
+
+    // The first fetch of COZ068 times out / 500s: recorded, so the next polls do not ask again...
+    let r = env
+        .nws
+        .upsert_zones(&[zone("forecast/COZ068", ZoneStatus::Error, None)], t0())
+        .await
+        .unwrap();
+    assert_eq!((r.stored, r.invalid_geometry, r.failed), (1, 0, 0));
+    assert_eq!(zone_row(&env, "forecast/COZ068").await.0, "error");
+    for minute in [0, 1, 5, 14] {
+        assert!(
+            !env.nws
+                .missing_zones(t0() + Duration::minutes(minute))
+                .await
+                .unwrap()
+                .contains(&"forecast/COZ068".to_string()),
+            "not asked for again after {minute} min"
+        );
+    }
+    // ...until the retry delay has passed (15 minutes), long before the 24 h of a 404.
+    assert!(env
+        .nws
+        .missing_zones(t0() + Duration::minutes(16))
+        .await
+        .unwrap()
+        .contains(&"forecast/COZ068".to_string()));
+    // The alert is still waiting for that zone, not settled on "no geometry".
+    assert_eq!(source_of(&env, &winter).await, ("pending".into(), false));
+
+    // The retry succeeds: geometry, status ok, alert resolved.
+    let t1 = t0() + Duration::minutes(16);
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/COZ068",
+                ZoneStatus::Ok,
+                Some(square(CO[0], CO[1], CO[2], CO[3])),
+            )],
+            t1,
+        )
+        .await
+        .unwrap();
+    assert_eq!(zone_row(&env, "forecast/COZ068").await.0, "ok");
+    assert_eq!(source_of(&env, &winter).await, ("zones".into(), true));
+
+    // A refresh (a month on) that fails keeps the geometry we hold and the alerts that use it,
+    // and is retried after 15 minutes, not after another month.
+    let t2 = t1 + Duration::days(31);
+    assert!(env
+        .nws
+        .missing_zones(t2)
+        .await
+        .unwrap()
+        .contains(&"forecast/COZ068".to_string()));
+    env.nws
+        .upsert_zones(&[zone("forecast/COZ068", ZoneStatus::Error, None)], t2)
+        .await
+        .unwrap();
+    let (status, has_geom, fetched_at) = zone_row(&env, "forecast/COZ068").await;
+    assert_eq!((status.as_str(), has_geom, fetched_at), ("error", true, t2));
+    assert_eq!(
+        source_of(&env, &winter).await,
+        ("zones".into(), true),
+        "the stale geometry still serves the alert"
+    );
+    let hit = env
+        .nws
+        .active_at_point(-107.0, 37.5, t0() + Duration::hours(7), false)
+        .await
+        .unwrap();
+    assert!(ids(&hit).contains(&winter));
+    assert!(!env
+        .nws
+        .missing_zones(t2 + Duration::minutes(14))
+        .await
+        .unwrap()
+        .contains(&"forecast/COZ068".to_string()));
+    assert!(env
+        .nws
+        .missing_zones(t2 + Duration::minutes(16))
+        .await
+        .unwrap()
+        .contains(&"forecast/COZ068".to_string()));
+
+    // Other outcomes keep their own schedule: 404 waits a day, ok waits a month.
+    env.nws
+        .upsert_zones(&[zone("county/MDC031", ZoneStatus::NotFound, None)], t2)
+        .await
+        .unwrap();
+    assert!(!env
+        .nws
+        .missing_zones(t2 + Duration::hours(23))
+        .await
+        .unwrap()
+        .contains(&"county/MDC031".to_string()));
+    assert!(env
+        .nws
+        .missing_zones(t2 + Duration::hours(25))
+        .await
+        .unwrap()
+        .contains(&"county/MDC031".to_string()));
+}

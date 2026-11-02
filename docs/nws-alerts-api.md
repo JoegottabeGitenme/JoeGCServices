@@ -78,4 +78,8 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   (NWS is behind a CDN and a lagging node can serve a stale copy): the poll counts for
   `meta.last_success_at`, but nothing in it changes an alert, so a stale copy cannot end alerts
   issued since. Equal stamps are applied normally.
+- Zone boundaries are fetched lazily (about 800 on a cold start) and cached: 30 days when fetched,
+  24 hours before retrying a 404 or an empty/invalid zone, 15 minutes before retrying a fetch that
+  failed (timeout, 5xx, rate limit). A failed refresh never discards a boundary already held. An
+  alert waiting on a zone whose fetch failed stays `geometry_source: pending`.
 

@@ -35,6 +35,8 @@ pub const NWS_WRITE_LOCK_KEY: i64 = 0x4E57_5357_5249_5445;
 pub const ZONE_REFRESH_DAYS: i64 = 30;
 /// A zone that 404'd / had no geometry is retried after this long.
 pub const ZONE_RETRY_HOURS: i64 = 24;
+/// A zone whose fetch failed transiently (timeout, 5xx, rate limit) is retried after this long.
+pub const ZONE_ERROR_RETRY_MINUTES: i64 = 15;
 
 fn db(what: &'static str) -> impl Fn(sqlx::Error) -> WmsError {
     move |e| WmsError::DatabaseError(format!("NWS alerts {what} failed: {e}"))
@@ -48,6 +50,10 @@ pub enum ZoneStatus {
     NotFound,
     /// Fetched, but the zone has no usable polygon.
     NoGeometry,
+    /// The fetch failed transiently (timeout, 5xx, rate limit). Recorded so the zone is not
+    /// asked for again every poll; it is retried after [`ZONE_ERROR_RETRY_MINUTES`]. Never
+    /// replaces a geometry we already hold.
+    Error,
     /// Fetched, but PostGIS rejected the polygon. Set by the catalog when it stores a zone
     /// whose geometry raised an error, never by a caller.
     InvalidGeometry,
@@ -59,6 +65,7 @@ impl ZoneStatus {
             Self::Ok => "ok",
             Self::NotFound => "not_found",
             Self::NoGeometry => "no_geometry",
+            Self::Error => "error",
             Self::InvalidGeometry => "invalid_geometry",
         }
     }
@@ -474,8 +481,9 @@ impl NwsAlertCatalog {
     }
 
     /// Zones that live alerts (not carrying their own polygon) reference but that
-    /// have no fresh row: never fetched, `ok` older than [`ZONE_REFRESH_DAYS`], or
-    /// failed more than [`ZONE_RETRY_HOURS`] ago.
+    /// have no fresh row: never fetched, `ok` older than [`ZONE_REFRESH_DAYS`], a
+    /// transient `error` older than [`ZONE_ERROR_RETRY_MINUTES`], or any other
+    /// outcome without geometry (404, none, invalid) older than [`ZONE_RETRY_HOURS`].
     pub async fn missing_zones(&self, now: DateTime<Utc>) -> WmsResult<Vec<String>> {
         sqlx::query_scalar(
             "SELECT DISTINCT k FROM nws_alerts a \
@@ -484,11 +492,13 @@ impl NwsAlertCatalog {
              WHERE a.ended_at IS NULL AND a.superseded_by IS NULL AND a.geometry_source <> 'polygon' \
                AND (z.zone_key IS NULL \
                     OR (z.fetch_status = 'ok' AND z.fetched_at < $1) \
-                    OR (z.fetch_status <> 'ok' AND z.fetched_at < $2)) \
+                    OR (z.fetch_status = 'error' AND z.fetched_at < $3) \
+                    OR (z.fetch_status NOT IN ('ok', 'error') AND z.fetched_at < $2)) \
              ORDER BY k",
         )
         .bind(now - Duration::days(ZONE_REFRESH_DAYS))
         .bind(now - Duration::hours(ZONE_RETRY_HOURS))
+        .bind(now - Duration::minutes(ZONE_ERROR_RETRY_MINUTES))
         .fetch_all(&self.pool)
         .await
         .map_err(db("missing zones"))
@@ -907,6 +917,7 @@ async fn upsert_zone(
             kind = COALESCE(EXCLUDED.kind, nws_zones.kind), \
             geom = COALESCE(EXCLUDED.geom, nws_zones.geom), \
             fetch_status = CASE WHEN EXCLUDED.geom IS NULL AND nws_zones.geom IS NOT NULL \
+                                     AND EXCLUDED.fetch_status <> 'error' \
                                 THEN nws_zones.fetch_status ELSE EXCLUDED.fetch_status END, \
             fetched_at = EXCLUDED.fetched_at",
     )
@@ -982,7 +993,8 @@ fn recompute_geometry_sql(cond: &str) -> String {
                     nws_clean_geom((SELECT ST_UnaryUnion(ST_Collect(z.geom)) FROM nws_zones z \
                                     WHERE z.zone_key = ANY(a2.zone_keys))) AS g, \
                     (SELECT count(*) FROM unnest(a2.zone_keys) AS k \
-                      WHERE NOT EXISTS (SELECT 1 FROM nws_zones z WHERE z.zone_key = k)) AS unresolved \
+                      WHERE NOT EXISTS (SELECT 1 FROM nws_zones z WHERE z.zone_key = k \
+                                        AND NOT (z.fetch_status = 'error' AND z.geom IS NULL))) AS unresolved \
              FROM nws_alerts a2 WHERE {cond} \
            ) x \
          ) r WHERE a.id = r.id"

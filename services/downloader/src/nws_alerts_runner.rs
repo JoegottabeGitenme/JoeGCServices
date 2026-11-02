@@ -10,7 +10,9 @@
 //! * Those zones are fetched by a **separate task** (`GET {base_url}/zones/{key}`,
 //!   bounded concurrency, a pause after each request) and posted to
 //!   `POST /ingest/nws-zones` in small batches, so alerts keep flowing at the poll
-//!   cadence while the ~800-zone cold start fills in over a minute or two.
+//!   cadence while the ~800-zone cold start fills in over a minute or two. A zone whose
+//!   fetch fails transiently is posted as `status: "error"`, which the ingester records
+//!   (and retries after 15 minutes) so it is not fetched again every poll.
 //!
 //! The runner holds only the `ETag` and the in-memory zone queue; a restart loses
 //! nothing (the ingester recomputes `missing_zones` on the next poll).
@@ -309,15 +311,12 @@ impl NwsAlertsRunner {
         );
         let mut posted = 0usize;
         for group in keys.chunks(ZONE_POST_BATCH) {
-            let fetched: Vec<Option<Value>> = stream::iter(group.iter().cloned())
+            let zones: Vec<Value> = stream::iter(group.iter().cloned())
                 .map(|k| async move { self.fetch_zone(&k).await })
                 .buffer_unordered(self.config.zone_concurrency.max(1))
                 .collect()
                 .await;
-            let zones: Vec<Value> = fetched.into_iter().flatten().collect();
-            if !zones.is_empty() {
-                posted += self.post_zones(&zones).await;
-            }
+            posted += self.post_zones(&zones).await;
             self.zones.done(group);
         }
         // Anything the ingester refused is simply asked for again by a later poll.
@@ -370,8 +369,13 @@ impl NwsAlertsRunner {
         posted
     }
 
-    /// `None` = transient failure (retried on a later poll); `Some` = a result to store.
-    async fn fetch_zone(&self, key: &str) -> Option<Value> {
+    /// The outcome to post for one zone. A transient failure (timeout, 5xx, rate limit, garbage
+    /// body) is posted as `status: "error"` with nothing else, so the ingester records the attempt
+    /// and offers the zone again only after its retry delay (15 minutes); returning nothing would
+    /// have every poll queue it again, every minute, for as long as NWS keeps failing. The
+    /// ingester never lets an error replace a geometry it already holds.
+    async fn fetch_zone(&self, key: &str) -> Value {
+        let error = || json!({ "zone_key": key, "status": "error" });
         let url = format!("{}/zones/{}", self.config.base_url, key);
         let out = match self
             .client
@@ -382,30 +386,30 @@ impl NwsAlertsRunner {
         {
             Err(e) => {
                 warn!(source = "nws_alerts", zone = key, error = %e, "Zone fetch failed");
-                None
+                error()
             }
             Ok(resp) => match resp.status() {
                 StatusCode::OK => match resp.json::<Value>().await {
                     Ok(f) => {
                         let p = f.get("properties").unwrap_or(&Value::Null);
                         let geometry = f.get("geometry").filter(|g| g.is_object()).cloned();
-                        Some(json!({
+                        json!({
                             "zone_key": key,
                             "status": if geometry.is_some() { "ok" } else { "no_geometry" },
                             "name": p.get("name"),
                             "state": p.get("state"),
                             "kind": p.get("type"),
                             "geometry": geometry,
-                        }))
+                        })
                     }
                     Err(e) => {
                         warn!(source = "nws_alerts", zone = key, error = %e, "Bad zone JSON");
-                        None
+                        error()
                     }
                 },
                 StatusCode::NOT_FOUND => {
                     debug!(source = "nws_alerts", zone = key, "Zone not found");
-                    Some(json!({ "zone_key": key, "status": "not_found" }))
+                    json!({ "zone_key": key, "status": "not_found" })
                 }
                 StatusCode::TOO_MANY_REQUESTS => {
                     warn!(
@@ -414,11 +418,11 @@ impl NwsAlertsRunner {
                         "Rate limited by NWS; backing off"
                     );
                     tokio::time::sleep(Duration::from_secs(5)).await;
-                    None
+                    error()
                 }
                 s => {
                     warn!(source = "nws_alerts", zone = key, status = %s, "Zone fetch returned an error status");
-                    None
+                    error()
                 }
             },
         };
@@ -688,6 +692,11 @@ mod tests {
             .mount(&nws)
             .await;
         Mock::given(method("GET"))
+            .and(path("/zones/forecast/BADJSON"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>not json</html>"))
+            .mount(&nws)
+            .await;
+        Mock::given(method("GET"))
             .and(path("/zones/forecast/NOGEO1"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(
@@ -703,12 +712,16 @@ mod tests {
                 "forecast/COZ068",
                 "county/GONE01",
                 "forecast/FLAKY1",
+                "forecast/BADJSON",
                 "forecast/NOGEO1",
             ]
             .map(String::from),
         );
         let posted = runner.process_zone_queue().await.unwrap();
-        assert_eq!(posted, 3, "the 500 is left for a later poll");
+        assert_eq!(
+            posted, 5,
+            "the 500 and the garbage body are posted too, as errors"
+        );
 
         let zone_posts = posted_json(&ing.received_requests().await.unwrap(), "/ingest/nws-zones");
         let zones: Vec<&Value> = zone_posts
@@ -722,9 +735,35 @@ mod tests {
         assert!(by("forecast/COZ068")["geometry"].is_object());
         assert_eq!(by("county/GONE01")["status"], "not_found");
         assert_eq!(by("forecast/NOGEO1")["status"], "no_geometry");
+        // A transient failure is reported to the ingester as an error with nothing else, so it
+        // records the attempt (and retries in 15 minutes) instead of the next poll asking again.
+        for k in ["forecast/FLAKY1", "forecast/BADJSON"] {
+            assert_eq!(by(k), &json!({"zone_key": k, "status": "error"}), "{k}");
+        }
         // in-flight bookkeeping is cleared, so a later poll can ask for the flaky one again
         runner.zones.add(["forecast/FLAKY1".to_string()]);
         assert_eq!(runner.zones.pending_len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_zone_request_that_times_out_is_recorded_as_an_error() {
+        let nws = MockServer::start().await;
+        let ing = ingester_ok(&[]).await;
+        Mock::given(method("GET"))
+            .and(path("/zones/forecast/SLOW01"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(1500)))
+            .mount(&nws)
+            .await;
+        let mut c = cfg(&nws, &ing);
+        c.request_timeout_secs = 1;
+        let runner = NwsAlertsRunner::new(c).unwrap();
+        runner.zones.add(["forecast/SLOW01".to_string()]);
+        assert_eq!(runner.process_zone_queue().await.unwrap(), 1);
+        let zone_posts = posted_json(&ing.received_requests().await.unwrap(), "/ingest/nws-zones");
+        assert_eq!(
+            zone_posts[0]["zones"],
+            json!([{"zone_key": "forecast/SLOW01", "status": "error"}])
+        );
     }
 
     /// Zones are posted in batches of `ZONE_POST_BATCH`. The first batch holds a zone the
