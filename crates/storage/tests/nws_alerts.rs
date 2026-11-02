@@ -2844,11 +2844,12 @@ async fn poll(
     env.nws.apply_feed(alerts, Some(t), t).await.unwrap()
 }
 
-/// Every stored alert as JSON, bar the two columns a quiet poll is allowed to move
-/// (`last_seen_at`) and the hash.
+/// Every stored alert as JSON, bar the columns a quiet poll is allowed to move (`last_seen_at`,
+/// `hashed_seen_at`) and the hash.
 async fn alert_rows(env: &Env) -> Vec<(String, Value)> {
     sqlx::query_as(
-        "SELECT id, to_jsonb(a) - 'last_seen_at' - 'content_hash' FROM nws_alerts a ORDER BY id",
+        "SELECT id, to_jsonb(a) - 'last_seen_at' - 'hashed_seen_at' - 'content_hash' \
+         FROM nws_alerts a ORDER BY id",
     )
     .fetch_all(env.catalog.pool())
     .await
@@ -3227,8 +3228,8 @@ async fn rows_stored_before_the_hash_existed_are_migrated_and_rewritten_once() {
     resolve_all_zones(&env, &alerts, t0()).await;
     let before = alert_rows(&env).await;
 
-    // The table as the previous release left it: no hash column, the last_seen_at index.
-    sqlx::query("ALTER TABLE nws_alerts DROP COLUMN content_hash")
+    // The table as the previous release left it: no hash columns, the last_seen_at index.
+    sqlx::query("ALTER TABLE nws_alerts DROP COLUMN content_hash, DROP COLUMN hashed_seen_at")
         .execute(env.catalog.pool())
         .await
         .unwrap();
@@ -3251,6 +3252,7 @@ async fn rows_stored_before_the_hash_existed_are_migrated_and_rewritten_once() {
         (n, 0),
         "the rows survive, hash unknown"
     );
+    assert_eq!(hash_columns(&env).await, 2, "and both columns are back");
     let index: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_indexes WHERE tablename = 'nws_alerts' AND indexname = 'idx_nws_alerts_last_seen'",
     )
@@ -3276,6 +3278,152 @@ async fn rows_stored_before_the_hash_existed_are_migrated_and_rewritten_once() {
     let r = poll(&env, &alerts, t1 + Duration::minutes(1)).await;
     assert_eq!((r.upserted, r.unchanged), (0, n));
     assert!(drain_write_log(&env).await.is_empty());
+}
+
+/// How many of the hash columns `nws_alerts` has (2 when migrated).
+async fn hash_columns(env: &Env) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM pg_attribute WHERE attrelid = 'nws_alerts'::regclass \
+         AND attname IN ('content_hash', 'hashed_seen_at') AND NOT attisdropped",
+    )
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap()
+}
+
+/// What a poll of a build that predates the hash leaves in the rows `filter` selects: its own
+/// colour and sections, `last_seen_at` moved to `t`, and the hash as it was.
+async fn older_build_polls(env: &Env, t: DateTime<Utc>, filter: &str) {
+    sqlx::query(&format!(
+        "UPDATE nws_alerts SET color = '#808080', sections = '{{}}', last_seen_at = $1 {filter}"
+    ))
+    .bind(t)
+    .execute(env.catalog.pool())
+    .await
+    .unwrap();
+}
+
+/// An older build rewrites every listed alert on every poll with its own parsers and moves
+/// `last_seen_at`, but knows nothing of the hash, so the hash stays what it was. After a rollback
+/// and a roll forward the hash still equals the feature's while the row is the old build's: the
+/// poll has to see that, and rewrite the row once.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn rows_an_older_build_rewrote_are_rewritten_by_the_next_poll_whatever_their_hash() {
+    let env = env().await;
+    install_write_log(&env).await;
+    let alerts = fixture_alerts();
+    let n = alerts.len();
+    poll(&env, &alerts, t0()).await;
+    resolve_all_zones(&env, &alerts, t0()).await;
+    let before = alert_rows(&env).await;
+    drain_write_log(&env).await;
+
+    // The older build polls, and rewrites one alert its way.
+    let t1 = t0() + Duration::minutes(1);
+    older_build_polls(&env, t1, "WHERE event = 'Avalanche Advisory'").await;
+    assert_ne!(alert_rows(&env).await, before);
+    let t2 = t1 + Duration::minutes(1);
+    let r = poll(&env, &alerts, t2).await;
+    assert_eq!((r.upserted, r.unchanged, r.failed), (1, n - 1, 0));
+    assert_eq!(drain_write_log(&env).await.len(), 1);
+    assert_eq!(
+        alert_rows(&env).await,
+        before,
+        "derived the current way again"
+    );
+
+    // Then quiet; and the whole table written by the older build is rewritten, once.
+    let r = poll(&env, &alerts, t2 + Duration::minutes(1)).await;
+    assert_eq!((r.upserted, r.unchanged), (0, n));
+    older_build_polls(&env, t2 + Duration::minutes(2), "").await;
+    let t4 = t2 + Duration::minutes(2);
+    let r = poll(&env, &alerts, t4).await;
+    assert_eq!((r.upserted, r.unchanged, r.failed), (n, 0, 0));
+    assert_eq!(alert_rows(&env).await, before);
+    let r = poll(&env, &alerts, t4 + Duration::minutes(1)).await;
+    assert_eq!((r.upserted, r.unchanged), (0, n));
+}
+
+/// Looking whether the columns exist is what the migration does at every start; the `ALTER TABLE
+/// ... ADD COLUMN IF NOT EXISTS` it replaced queues for an `ACCESS EXCLUSIVE` lock even when
+/// there is nothing to add, and every read of the table queues behind it.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn the_migration_takes_no_lock_on_the_alerts_when_nothing_is_missing() {
+    let env = env().await;
+    // a transaction that has read the table and is still open: a long read, a psql session
+    let mut open = env.catalog.pool().begin().await.unwrap();
+    sqlx::query("SELECT count(*) FROM nws_alerts")
+        .fetch_one(&mut *open)
+        .await
+        .unwrap();
+
+    // the old statement would have waited for it (so the test is sensitive)...
+    let mut probe = env.catalog.pool().begin().await.unwrap();
+    sqlx::query("SET LOCAL lock_timeout = '300ms'")
+        .execute(&mut *probe)
+        .await
+        .unwrap();
+    let e = sqlx::query("ALTER TABLE nws_alerts ADD COLUMN IF NOT EXISTS content_hash TEXT")
+        .execute(&mut *probe)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        e.as_database_error().and_then(|d| d.code()).as_deref(),
+        Some("55P03"),
+        "{e}"
+    );
+    probe.rollback().await.unwrap();
+
+    // ...the migration does not
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        env.catalog.migrate_nws_alerts(),
+    )
+    .await
+    .expect("the migration waited for a lock on nws_alerts")
+    .unwrap();
+    open.rollback().await.unwrap();
+}
+
+/// A column that is missing is added under a short `lock_timeout` and tried again, so the reads
+/// queued behind its lock request wait for that long at most, not for as long as the transaction
+/// it waits for stays open.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_missing_column_is_added_without_holding_reads_up_behind_a_lock() {
+    let env = env().await;
+    sqlx::query("ALTER TABLE nws_alerts DROP COLUMN hashed_seen_at")
+        .execute(env.catalog.pool())
+        .await
+        .unwrap();
+    assert_eq!(hash_columns(&env).await, 1);
+    let mut open = env.catalog.pool().begin().await.unwrap();
+    sqlx::query("SELECT count(*) FROM nws_alerts")
+        .fetch_one(&mut *open)
+        .await
+        .unwrap();
+
+    let catalog = env.catalog.clone();
+    let migrating = tokio::spawn(async move { catalog.migrate_nws_alerts().await });
+    // the ALTER is now waiting for `open`; a read arriving queues behind it
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let started = std::time::Instant::now();
+    tokio::time::timeout(std::time::Duration::from_secs(15), env.nws.status())
+        .await
+        .expect("a read was held up behind the migration's lock request")
+        .unwrap();
+    let waited = started.elapsed();
+    assert!(waited < std::time::Duration::from_secs(5), "{waited:?}");
+
+    open.rollback().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(15), migrating)
+        .await
+        .expect("the migration never finished")
+        .unwrap()
+        .expect("the retry succeeds once the lock is free");
+    assert_eq!(hash_columns(&env).await, 2);
 }
 
 #[tokio::test]

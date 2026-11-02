@@ -257,8 +257,11 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   of the version of its own parsing): a poll of a feed whose alerts are the same ones as the
   minute before only sets `last_seen_at`, and a change to how alerts are parsed is applied to the
   stored ones by one rewrite at the next poll, which leaves `updated_at` alone unless the message
-  itself differs. An alert that left the feed and comes back is live again (`ended_at` cleared)
-  with its `first_seen_at` and `updated_at` as they were.
+  itself differs. A build that predates the hash (after a rollback, or while it still runs beside
+  this one) rewrites every listed alert with its own parsing and moves `last_seen_at` without
+  touching the hash; the ingester sees that the two have come apart and rewrites those alerts at its
+  next poll, so no step is needed after a rollback. An alert that left the feed and comes back is
+  live again (`ended_at` cleared) with its `first_seen_at` and `updated_at` as they were.
 - Zone boundaries are fetched lazily (about 800 on a cold start) and cached: 30 days when fetched,
   24 hours before retrying a 404 or an empty/invalid zone, 15 minutes before retrying a fetch that
   failed (timeout, 5xx, rate limit). A failed refresh never discards a boundary already held. An

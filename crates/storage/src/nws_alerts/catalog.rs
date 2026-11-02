@@ -512,7 +512,9 @@ impl NwsAlertCatalog {
         // entry) is the cost an unchanged feed must not have.
         let ids: Vec<&str> = alerts.iter().map(|a| a.id.as_str()).collect();
         let held: HashMap<String, HeldAlert> = sqlx::query_as::<_, HeldAlert>(
-            "SELECT id, content_hash, ended_at IS NOT NULL AS ended FROM nws_alerts WHERE id = ANY($1)",
+            "SELECT id, content_hash, ended_at IS NOT NULL AS ended, \
+                    hashed_seen_at IS NOT DISTINCT FROM last_seen_at AS hash_holds \
+             FROM nws_alerts WHERE id = ANY($1)",
         )
         .bind(&ids)
         .fetch_all(&mut *tx)
@@ -1059,6 +1061,11 @@ struct HeldAlert {
     content_hash: Option<String>,
     /// `ended_at` is set.
     ended: bool,
+    /// Nothing that does not know `content_hash` has written the row since the hash was: both
+    /// the hash and `hashed_seen_at` are written along with `last_seen_at`, so a build that
+    /// predates them (this one, after a rollback and a roll forward, or alongside the old one)
+    /// moves `last_seen_at` alone, and the hash no longer says what the row was derived from.
+    hash_holds: bool,
 }
 
 impl HeldAlert {
@@ -1071,6 +1078,7 @@ impl HeldAlert {
     fn is_current(&self, a: &ParsedAlert) -> bool {
         a.content_hash.is_some()
             && self.content_hash == a.content_hash
+            && self.hash_holds
             && self.ended == a.ended_on_arrival
     }
 }
@@ -1084,11 +1092,13 @@ async fn touch_alerts(
     now: DateTime<Utc>,
 ) -> WmsResult<bool> {
     savepoint(conn).await.map_err(db("last seen"))?;
-    let r = sqlx::query("UPDATE nws_alerts SET last_seen_at = $2 WHERE id = ANY($1)")
-        .bind(ids)
-        .bind(now)
-        .execute(&mut *conn)
-        .await;
+    let r = sqlx::query(
+        "UPDATE nws_alerts SET last_seen_at = $2, hashed_seen_at = $2 WHERE id = ANY($1)",
+    )
+    .bind(ids)
+    .bind(now)
+    .execute(&mut *conn)
+    .await;
     match finish_savepoint(conn, r).await {
         Ok(_) => Ok(true),
         Err(e) if is_row_error(&e) => {
@@ -1393,7 +1403,8 @@ INSERT INTO nws_alerts (
     area_desc, sender, sender_name, web, sent, effective, onset, expires, ends,
     ugc, same, zone_keys, is_marine, vtec, vtec_event_key, vtec_office, vtec_phenomenon,
     vtec_significance, vtec_action, vtec_etn, sections, parameters, color, references_ids,
-    geom, geometry_source, ended_at, first_seen_at, last_seen_at, updated_at, content_hash
+    geom, geometry_source, ended_at, first_seen_at, last_seen_at, updated_at, content_hash,
+    hashed_seen_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
     $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36,
@@ -1401,7 +1412,7 @@ INSERT INTO nws_alerts (
     nws_clean_geom(ST_SetSRID(ST_GeomFromGeoJSON($40::text), 4326)),
     CASE WHEN $40::text IS NULL THEN 'pending' ELSE 'polygon' END,
     $41,
-    $42, $42, $42, $43
+    $42, $42, $42, $43, $42
 )
 ON CONFLICT (id) DO UPDATE SET
     event = EXCLUDED.event, severity = EXCLUDED.severity, urgency = EXCLUDED.urgency,
@@ -1433,6 +1444,7 @@ ON CONFLICT (id) DO UPDATE SET
     -- over from its issue time ($41), or from the earlier moment an older write of it recorded
     ended_at = CASE WHEN $41::timestamptz IS NOT NULL THEN LEAST(nws_alerts.ended_at, $41) ELSE NULL END,
     last_seen_at = $42,
+    hashed_seen_at = $42,
     updated_at = CASE WHEN (nws_alerts.description, nws_alerts.headline, nws_alerts.severity,
                             nws_alerts.expires, nws_alerts.ends, nws_alerts.message_type)
                            IS DISTINCT FROM
