@@ -2911,6 +2911,7 @@ async fn returned_geometry_is_valid_after_rounding_and_simplification() {
         ("search simplify=0.2", Some(0.2)),
         ("search simplify=0.00001", Some(0.00001)),
         ("search simplify=0.00002", Some(0.00002)),
+        ("search simplify=0.00012", Some(0.00012)),
         ("search simplify=3", Some(3.0)),
     ] {
         let q = with_geometry(
@@ -3128,6 +3129,7 @@ async fn returned_rings_follow_the_right_hand_rule() {
             Some(0.0),
             Some(0.00001),
             Some(0.00002),
+            Some(0.00012),
             Some(0.2),
             Some(5.0),
         ],
@@ -3261,7 +3263,7 @@ async fn simplified_coastal_unions_have_no_nested_shells() {
 
     let tolerances = [
         // the default for a world view, a CONUS view, a state, a metro area, a city
-        0.05, 0.0393, 0.01, 0.004, 0.0039, 0.0008, 0.000133, 0.00002, 0.00001, 0.2, 3.0,
+        0.05, 0.0393, 0.01, 0.004, 0.0039, 0.0008, 0.000133, 0.00012, 0.00002, 0.00001, 0.2, 3.0,
     ];
     let simplify: Vec<Option<f64>> = tolerances.iter().map(|t| Some(*t)).collect();
     let reads = geometry_reads(&env, [-125.0, 24.0, -70.0, 36.0], now, &simplify).await;
@@ -3365,7 +3367,9 @@ async fn a_small_alert_survives_every_simplification() {
         .await
         .unwrap();
     let now = at(12, 0);
-    let tolerances = [0.05, 0.0393, 0.004, 0.0039, 0.0005, 0.00002, 0.00001, 3.0];
+    let tolerances = [
+        0.05, 0.0393, 0.004, 0.0039, 0.002, 0.0005, 0.0002, 0.00012, 0.00002, 0.00001, 3.0,
+    ];
     let simplify: Vec<Option<f64>> = tolerances.iter().map(|t| Some(*t)).collect();
     for (name, rows) in &geometry_reads(&env, [29.0, 29.0, 41.0, 41.0], now, &simplify).await {
         assert_eq!(rows.len(), 5, "{name}: {:?}", ids(rows));
@@ -3390,6 +3394,86 @@ async fn a_small_alert_survives_every_simplification() {
                 .await
                 .unwrap();
             assert!(area > 0.0, "{what}: no area left: {g}");
+        }
+    }
+}
+
+/// A coastal island of 250 m, a part of NWS Miami's Small Craft Advisory
+/// `...0bc85022.002.1` (the 8-vertex island at 26.97N 80.11W). Its vertices lie on a line to within
+/// 4e-18 square degrees once simplified, so Douglas-Peucker and `ST_SimplifyPreserveTopology` both
+/// take it to a triangle with no area, which `ST_MakeValid` turns into a line and the rounding to
+/// the grid removes. The alert of that part alone then had a `null` geometry from a tolerance of
+/// 0.002, and an alert it was a part of lost the part, at every tolerance from 0.0039 up.
+fn islet_ring() -> Value {
+    json!([
+        [-80.1095, 26.96901],
+        [-80.11062, 26.97083],
+        [-80.11096, 26.97083],
+        [-80.11127, 26.97122],
+        [-80.1117, 26.97141],
+        [-80.1085, 26.97071],
+        [-80.1073, 26.96661],
+        [-80.1095, 26.96901]
+    ])
+}
+
+/// A part that the simplification collapses to a line is not lost: it comes back as the convex hull
+/// of the part, as an alert of its own and as a far-off part of a larger alert, at every tolerance.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_part_that_collapses_in_simplification_is_kept() {
+    let env = env().await;
+    let alerts = vec![
+        alert_with_geometry(
+            "urn:test:islet",
+            json!({"type": "Polygon", "coordinates": [islet_ring()]}),
+        ),
+        // a 100 km square and, 10 km from it, the island
+        alert_with_geometry(
+            "urn:test:islet_far",
+            json!({"type": "MultiPolygon", "coordinates": [
+                [[[-80.0, 26.0], [-79.0, 26.0], [-79.0, 27.0], [-80.0, 27.0], [-80.0, 26.0]]],
+                [islet_ring()]
+            ]}),
+        ),
+    ];
+    env.nws
+        .apply_feed(&alerts, Some(at(10, 1)), at(10, 1))
+        .await
+        .unwrap();
+    let now = at(12, 0);
+    // both sides of DOUGLAS_PEUCKER_FROM and of the smallest tolerance that simplifies at all, and
+    // the ones that are no simplification
+    let tolerances = [
+        3.0, 0.05, 0.01, 0.004, 0.0039, 0.002, 0.0005, 0.0002, 0.00012, 0.0001, 0.00001,
+    ];
+    let simplify: Vec<Option<f64>> = tolerances.iter().map(|t| Some(*t)).collect();
+    for (name, rows) in &geometry_reads(&env, [-81.0, 25.0, -78.0, 28.0], now, &simplify).await {
+        assert_eq!(rows.len(), 2, "{name}: {:?}", ids(rows));
+        for a in rows {
+            let g = a
+                .geometry_geojson
+                .as_deref()
+                .unwrap_or_else(|| panic!("{name}: {} has no geometry", a.id));
+            let what = format!("{name} {}", a.id);
+            assert!(is_valid_geojson(&env, g).await, "{what}: {g}");
+            let v: Value = serde_json::from_str(g).unwrap();
+            let parts = v["coordinates"].as_array().unwrap().len();
+            // the island is a part of its own, 10 km from the square
+            assert_eq!(
+                parts,
+                if a.id.ends_with("islet_far") { 2 } else { 1 },
+                "{what}: {g}"
+            );
+            // and it is where the island is
+            let there: bool = sqlx::query_scalar(
+                "SELECT ST_DWithin(ST_GeomFromGeoJSON($1), ST_SetSRID(ST_MakePoint(-80.1095, 26.96901), 4326), 0.0006)",
+            )
+            .bind(g)
+            .fetch_one(env.catalog.pool())
+            .await
+            .unwrap();
+            assert!(there, "{what}: not at the island: {g}");
         }
     }
 }

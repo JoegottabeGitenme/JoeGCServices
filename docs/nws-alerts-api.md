@@ -39,12 +39,16 @@ disables). Without `simplify`, `/items`, `/area` and `/radius` simplify the geom
 about a pixel of a 1500 px wide view of the query's extent (the bbox, the polygon's bounding box, the
 circle), at most 0.05 degrees, so a CONUS view or a continent-sized area stays small (every alert
 in the country is 1-2 MB, instead of tens); `/position` returns the full geometry unless you give a
-`simplify`. `simplify` is a Douglas-Peucker tolerance in degrees: the returned outline stays
-within about that distance of the full-resolution one. Every part of an alert stays, however small
-the alert: a part (or a whole alert, such as a tornado warning on a continent view) smaller than
-the tolerance is kept, as little as a triangle, not dropped. A hole smaller than the tolerance is
-filled in. A tolerance of 0.00001 or less (the 5 decimals the coordinates are rounded to) is the
-same as `0`. The simplified geometry is as valid as the full one at any tolerance (see `geometry`
+`simplify`. `simplify` is a Douglas-Peucker tolerance in degrees: the area the returned shape covers
+stays within about that distance of the full-resolution one. Every part of an alert stays, however
+small the alert: a part (or a whole alert, such as a tornado warning on a continent view) smaller
+than the tolerance is kept, as a triangle or as the convex hull of the part, not dropped. What is
+narrower than about the tolerance goes, however long it is: a hole (an island in a marine zone) is
+filled in and its outline disappears, and a sliver or a spit is cut off. A tolerance of 0.00011
+degrees (about 12 m) or less is the same as `0`: the full outline, rounded to the 5 decimals the
+coordinates have, because at that tolerance simplifying takes out about 5% of the points or fewer
+and costs several times as long as the answer would. (A map view up to 0.16 degrees wide gets that
+by default.) The simplified geometry is as valid as the full one at any tolerance (see `geometry`
 under [Response](#response)).
 `/items` also takes `status=active|all` (with `all`, `datetime=from/to` returns history,
 default window the last 24 h; superseded messages hidden unless `include_superseded=true`),
