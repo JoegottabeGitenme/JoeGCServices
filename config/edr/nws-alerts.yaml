@@ -22,7 +22,12 @@ collections:
   - id: nws-alerts
     title: "NWS Alerts"
     description: "Active National Weather Service watches, warnings and advisories. Query /position for the alerts in force at a point; each feature carries event, severity, colour, headline, timing and the what/where/when/impacts/instruction text pre-split for display."
-    parameters: []
+    # Filter fields, not gridded parameters (the collection document lists the same two)
+    parameters:
+      - name: severity
+        levels: [surface]
+      - name: event
+        levels: [surface]
     run_mode: latest
 
 settings:
