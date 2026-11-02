@@ -33,6 +33,10 @@ use storage::{
 
 const FIXTURE: &str =
     include_str!("../../../services/downloader/tests/fixtures/nws_alerts_active.json");
+/// Eight alerts saved from the live feed on 2026-11-02 whose text has no WHAT or HAZARD: Alaska
+/// coastal-water forecasts (`.TODAY...`, `.TUE NIGHT...`) and free-text statements.
+const NO_LABELS: &str =
+    include_str!("../../../services/downloader/tests/fixtures/nws_alerts_no_labels.json");
 const AT: &str = "2026-11-01T23:30:00Z";
 
 struct Env {
@@ -1836,6 +1840,133 @@ fn circle(centre: (f64, f64), radius: f64, n: usize) -> String {
         })
         .collect();
     json!({"type": "Polygon", "coordinates": [ring]}).to_string()
+}
+
+/// Half the feed on a day with Alaska gales out has neither WHAT nor HAZARD, so its `summary` was
+/// empty and the card had only a headline. A forecast alert says the period or periods its
+/// headline names; its periods are in the full record and its description has one on each line;
+/// a free-text statement says its first sentences.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn alerts_with_no_what_get_a_summary_from_their_periods_or_first_sentences() {
+    let e = env().await;
+    let feed: Vec<ParsedAlert> = serde_json::from_str::<Value>(NO_LABELS).unwrap()["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| parse_feature(f).unwrap())
+        .collect();
+    let poll = Utc.with_ymd_and_hms(2026, 11, 3, 4, 0, 0).unwrap();
+    e.nws.apply_feed(&feed, Some(poll), poll).await.unwrap();
+    // every zone of every alert is the same square over Alaska
+    let mut keys: Vec<&String> = feed.iter().flat_map(|a| &a.zone_keys).collect();
+    keys.sort();
+    keys.dedup();
+    let zones: Vec<ZoneRecord> = keys
+        .into_iter()
+        .map(|k| zone(k, square(-150.0, 59.0, -149.0, 60.0)))
+        .collect();
+    e.nws.upsert_zones(&zones, poll).await.unwrap();
+    let pos = |at: &str| {
+        format!("/edr/collections/nws-alerts/position?coords=POINT(-149.5%2059.5)&datetime={at}")
+    };
+    let id_of = |tail: &str| {
+        feed.iter()
+            .find(|a| a.id.ends_with(tail))
+            .unwrap_or_else(|| panic!("no {tail}"))
+            .id
+            .clone()
+    };
+
+    // GALE WARNING TONIGHT AND TUESDAY (NWS Anchorage, sent Monday early morning)
+    let gale = id_of("ed4e123.003.1");
+    let (st, _, v, _) = e.get(&pos("2026-11-03T03:00:00Z")).await;
+    assert_eq!(st, 200, "{v}");
+    let f = v["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == gale.as_str())
+        .unwrap_or_else(|| panic!("{:?}", events(&v)));
+    let p = &f["properties"];
+    assert_eq!(p["headline"], "GALE WARNING TONIGHT AND TUESDAY");
+    assert_eq!(
+        p["formal_headline"],
+        "Gale Warning issued November 2 at 3:20AM AKST until November 3 at 5:00PM AKST by NWS Anchorage AK"
+    );
+    assert_eq!(
+        p["summary"],
+        json!({"what": "Tonight: SE wind 25 kt becoming E 35 kt after midnight. Seas 9 ft. Rain. Tue: E wind 45 kt. Seas 18 ft. Rain."})
+    );
+    assert!(
+        p.get("sections").is_none(),
+        "the periods are in the full record"
+    );
+
+    // the full record: the periods, and a description with one on each line
+    let (st, _, full, _) = e
+        .get(&format!(
+            "/edr/collections/nws-alerts/items/{}?geometry=false",
+            handlers::nws_alerts::encode_id(&gale)
+        ))
+        .await;
+    assert_eq!(st, 200, "{full}");
+    let p = &full["properties"];
+    assert_eq!(p["summary"], f["properties"]["summary"]);
+    let periods = p["sections"]["periods"].as_array().unwrap();
+    let names: Vec<&str> = periods
+        .iter()
+        .map(|x| x["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        ["TODAY", "TONIGHT", "TUE", "TUE NIGHT", "WED", "THU", "FRI"]
+    );
+    assert_eq!(periods[3]["text"], "SE wind 50 kt. Seas 20 ft.");
+    let lines: Vec<&str> = p["description"]
+        .as_str()
+        .unwrap()
+        .lines()
+        .filter(|l| l.starts_with('.'))
+        .collect();
+    assert_eq!(lines.len(), 7, "{}", p["description"]);
+    assert_eq!(
+        lines[1],
+        ".TONIGHT...SE wind 25 kt becoming E 35 kt after midnight. Seas 9 ft. Rain."
+    );
+    assert!(p["description_raw"]
+        .as_str()
+        .unwrap()
+        .contains("Seas 9\nft. Rain."));
+    assert_eq!(p["sections"]["narrative"].as_array().unwrap().len(), 2);
+
+    // no NWS broadcast text, and the formal headline names no day: the first period
+    let juneau = id_of("a5449608c1.002.1");
+    let (_, _, v, _) = e.get(&pos("2026-11-02T01:00:00Z")).await;
+    let f = v["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == juneau.as_str())
+        .unwrap_or_else(|| panic!("{:?}", events(&v)));
+    assert_eq!(
+        f["properties"]["summary"],
+        json!({"what": "Rest of today: SW wind 25 kt. Seas 16 ft."})
+    );
+
+    // a free-text Special Weather Statement (NWS Pendleton): its first two sentences
+    let sps = id_of("4a3d6e4557.001.1");
+    let (_, _, v, _) = e.get(&pos("2026-11-02T16:00:00Z")).await;
+    let f = v["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == sps.as_str())
+        .unwrap_or_else(|| panic!("{:?}", events(&v)));
+    assert_eq!(
+        f["properties"]["summary"],
+        json!({"what": "Patchy dense fog has been observed around the Tri Cities this morning. Within fog, visibilities as low as one-quarter mile are expected to persist through mid morning."})
+    );
 }
 
 /// The geometry of one answer is held to the collection's `max_response_size_mb`: past it the
