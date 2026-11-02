@@ -37,6 +37,7 @@ const AT: &str = "2026-11-01T23:30:00Z";
 
 struct Env {
     app: Router,
+    edr_config: Arc<RwLock<EdrConfig>>,
     catalog: Arc<Catalog>,
     nws: NwsAlertCatalog,
     alerts: Vec<ParsedAlert>,
@@ -102,6 +103,9 @@ async fn env_with_read_timeout(read_timeout: Option<std::time::Duration>) -> Env
         64,
     )
     .unwrap();
+    let edr_config = Arc::new(RwLock::new(
+        EdrConfig::load_from_dir("../../config/edr").unwrap(),
+    ));
     let state = Arc::new(AppState {
         observation_catalog: Arc::new(ObservationCatalog::new(catalog.pool_clone())),
         storm_event_catalog: Arc::new(StormEventCatalog::new(catalog.pool_clone())),
@@ -117,9 +121,7 @@ async fn env_with_read_timeout(read_timeout: Option<std::time::Duration>) -> Env
         )),
         catalog: Arc::clone(&catalog),
         grid_data_service,
-        edr_config: Arc::new(RwLock::new(
-            EdrConfig::load_from_dir("../../config/edr").unwrap(),
-        )),
+        edr_config: Arc::clone(&edr_config),
         base_url: "http://localhost:8083/edr".into(),
         location_cache: Arc::new(LocationCache::new(16, 60)),
         availability_cache: Arc::new(AvailabilityCache::new(60)),
@@ -170,6 +172,7 @@ async fn env_with_read_timeout(read_timeout: Option<std::time::Duration>) -> Env
         .collect();
     Env {
         app,
+        edr_config,
         nws: NwsAlertCatalog::new(catalog.pool_clone()),
         catalog,
         alerts,
@@ -1775,4 +1778,93 @@ async fn a_cancellation_is_not_an_alert_in_force_before_the_poll_that_stored_it(
         listed,
         vec![("urn:test:a", "superseded"), ("urn:test:c", "ended")]
     );
+}
+
+/// A closed ring of `n` vertices around `centre`, as a GeoJSON polygon: a few MB of text at
+/// full resolution for the few alerts that make a budget worth testing.
+fn circle(centre: (f64, f64), radius: f64, n: usize) -> String {
+    let ring: Vec<Value> = (0..=n)
+        .map(|i| {
+            let a = std::f64::consts::TAU * (i % n) as f64 / n as f64;
+            json!([
+                ((centre.0 + radius * a.cos()) * 1e5).round() / 1e5,
+                ((centre.1 + radius * a.sin()) * 1e5).round() / 1e5
+            ])
+        })
+        .collect();
+    json!({"type": "Polygon", "coordinates": [ring]}).to_string()
+}
+
+/// The geometry of one answer is held to the collection's `max_response_size_mb`: past it the
+/// alerts are left out, `truncated` says so, and the body stays about that size however much was
+/// asked for (`simplify=0`, every alert there is).
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn the_geometry_of_a_list_answer_is_held_to_the_response_size_limit() {
+    let e = env().await;
+    let far = Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap();
+    // five alerts over one place, each a ring of 40 000 vertices: about 1 MB of GeoJSON each
+    let feed: Vec<ParsedAlert> = (0..5)
+        .map(|i| {
+            let mut a = e.timed("urn:test:x", BIG, at(10, i), at(10, i), far, &[]);
+            a.id = format!("urn:test:big{i}");
+            a.geometry_json = Some(circle(P, 0.4 + f64::from(i) * 0.01, 40_000));
+            a
+        })
+        .collect();
+    e.nws
+        .apply_feed(&feed, Some(at(10, 5)), at(10, 5))
+        .await
+        .unwrap();
+    let uri = format!(
+        "/edr/collections/nws-alerts/items?bbox={},{},{},{}&simplify=0",
+        P.0 - 0.01,
+        P.1 - 0.01,
+        P.0 + 0.01,
+        P.1 + 0.01
+    );
+
+    // the configured 50 MB holds all five
+    let (st, _, v, bytes) = e.get(&uri).await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["numberReturned"], 5);
+    assert!(v.get("truncated").is_none(), "{}", v["truncated"]);
+    let one = bytes / 5;
+    assert!(one > 800_000, "each alert is about 1 MB, not {one} bytes");
+
+    // 2 MB holds one or two
+    for m in e.edr_config.write().await.models.values_mut() {
+        if m.observation_source.as_deref() == Some("nws_alerts") {
+            m.limits.max_response_size_mb = 2;
+        }
+    }
+    let (st, _, v, bytes) = e.get(&uri).await;
+    assert_eq!(st, 200, "{v}");
+    let n = v["numberReturned"].as_u64().unwrap();
+    assert!(
+        (1..=2).contains(&n),
+        "{n} alerts of 1 MB under a 2 MB limit"
+    );
+    assert_eq!(v["numberReturned"], v["features"].as_array().unwrap().len());
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["limit"], 500, "the limit asked for is still said");
+    assert!(bytes < 2 * 1024 * 1024 + 64 * 1024, "{bytes} bytes");
+    // the worst first, as without the limit: the newest of equal severity
+    assert_eq!(v["features"][0]["id"], "urn:test:big4");
+
+    // a limit under the budget still wins, and says so the same way
+    let (_, _, v, _) = e.get(&format!("{uri}&limit=1")).await;
+    assert_eq!(v["numberReturned"], 1);
+    assert_eq!(v["truncated"], true);
+
+    // an alert alone over the budget is still answered
+    for m in e.edr_config.write().await.models.values_mut() {
+        if m.observation_source.as_deref() == Some("nws_alerts") {
+            m.limits.max_response_size_mb = 0;
+        }
+    }
+    let (_, _, v, _) = e.get(&uri).await;
+    assert_eq!(v["numberReturned"], 1);
+    assert_eq!(v["truncated"], true);
+    assert_eq!(v["features"][0]["geometry"]["type"], "MultiPolygon");
 }

@@ -758,6 +758,7 @@ fn search(region: AlertRegion, now: DateTime<Utc>) -> AlertSearch {
         with_geometry: false,
         simplify: None,
         include_non_actual: false,
+        max_geometry_bytes: None,
     }
 }
 
@@ -2259,6 +2260,61 @@ async fn the_replacement_issued_first_ends_the_old_message_whatever_the_feed_ord
             .collect();
         assert_eq!(got, sorted(want), "at {t}");
     }
+}
+
+/// A search reads rows only until their geometry text outgrows `max_geometry_bytes`: the row that
+/// crosses the line is the last one returned, so a caller holds the budget plus one row at most.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_search_stops_reading_rows_once_their_geometry_outgrows_the_budget() {
+    let env = env().await;
+    let feed: Vec<ParsedAlert> = (0..5)
+        .map(|i| {
+            timed_alert(
+                &format!("urn:test:g{i}"),
+                BIG,
+                at(10, i),
+                at(10, i),
+                at(23, 59),
+                &[],
+            )
+        })
+        .collect();
+    env.nws.apply_feed(&feed, Some(t0()), t0()).await.unwrap();
+    let with_geometry = |budget: Option<usize>| {
+        let mut q = search(bbox_around(P), t0());
+        q.with_geometry = true;
+        q.max_geometry_bytes = budget;
+        q
+    };
+    let all = env.nws.search(&with_geometry(None)).await.unwrap();
+    assert_eq!(all.len(), 5);
+    let one = all[0].geometry_geojson.as_ref().unwrap().len();
+    assert!(all
+        .iter()
+        .all(|a| a.geometry_geojson.as_ref().unwrap().len() == one));
+
+    // (budget, rows returned): the row that crosses the budget is returned, the rest are not read
+    for (budget, want) in [
+        (Some(1), 1),
+        (Some(one - 1), 1),
+        (Some(one), 2),
+        (Some(2 * one), 3),
+        (Some(4 * one), 5),
+        (Some(5 * one), 5),
+        (Some(usize::MAX), 5),
+        (None, 5),
+    ] {
+        let rows = env.nws.search(&with_geometry(budget)).await.unwrap();
+        assert_eq!(rows.len(), want, "budget {budget:?}");
+        assert_eq!(ids(&rows), ids(&all[..want]), "the first ones in order");
+    }
+    // the connection that was left with unread rows is usable and clean
+    assert_eq!(
+        env.nws.search(&with_geometry(Some(1))).await.unwrap().len(),
+        1
+    );
+    assert_eq!(env.nws.search(&with_geometry(None)).await.unwrap().len(), 5);
 }
 
 /// A search without a window is what it always was: the lifecycle flags at `now`, on the partial

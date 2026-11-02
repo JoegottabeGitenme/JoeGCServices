@@ -44,6 +44,15 @@ in the country is 1-2 MB, instead of tens); `/position` returns the full geometr
 default window the last 24 h; superseded messages hidden unless `include_superseded=true`),
 `limit` (default 500, max 2000; `"truncated": true` when cut).
 
+**Answer size.** The geometry of one list answer (`/position`, `/items`, `/area`, `/radius`) is held
+to the collection's `limits.max_response_size_mb` (50 MB, `config/edr/nws-alerts.yaml`), whatever
+`limit` and `simplify` say: the alerts that would take it past that are left out and `"truncated":
+true` says so, also when fewer than `limit` came back. Never fewer than one alert is returned. The
+alerts in force now come to about 30 MB at `simplify=0` for the whole country, so the limit is
+met by asking for full resolution over a history (`status=all`, `include_superseded=true`, a wide
+`datetime` interval); a bounding box, the default `simplify` or `geometry=false` keep the answer
+well under it. What is left out is the end of the list: the least severe, oldest alerts.
+
 **Errors.** A mistake in the request is a `4xx` with the JSON exception body (`type`, `title`,
 `status`, `detail`; `application/json`), on every route, never a plain-text body or a `5xx`:
 
