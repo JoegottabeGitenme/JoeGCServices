@@ -226,7 +226,69 @@ impl Catalog {
                     })?;
             }
         }
+        self.add_nws_alerts_columns().await
+    }
 
+    /// Add the [`NWS_ALERTS_ADDED_COLUMNS`] a table made by an older release lacks.
+    ///
+    /// `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` takes an `ACCESS EXCLUSIVE` lock before it looks
+    /// whether the column is there, and the EDR API's reads queue behind a waiting lock request:
+    /// run at every start, it would stall them whenever a transaction on `nws_alerts` is still
+    /// open (they run under a time limit, so they would fail). So the columns are looked up first
+    /// and the `ALTER` runs only for one that is missing, under a `lock_timeout` short enough that
+    /// the queue behind it never builds up, and is tried again.
+    async fn add_nws_alerts_columns(&self) -> WmsResult<()> {
+        let failed =
+            |e: sqlx::Error| WmsError::DatabaseError(format!("NWS alerts migration failed: {}", e));
+        let names: Vec<&str> = NWS_ALERTS_ADDED_COLUMNS.iter().map(|(n, _)| *n).collect();
+        let present: Vec<String> = sqlx::query_scalar(
+            "SELECT attname::text FROM pg_attribute \
+             WHERE attrelid = to_regclass('nws_alerts') AND attname = ANY($1) AND NOT attisdropped",
+        )
+        .bind(&names)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(failed)?;
+        for (name, sql_type) in NWS_ALERTS_ADDED_COLUMNS {
+            if present.iter().any(|p| p == name) {
+                continue;
+            }
+            for attempt in 1.. {
+                let mut tx = self.pool.begin().await.map_err(failed)?;
+                let added = async {
+                    sqlx::query(&format!(
+                        "SET LOCAL lock_timeout = {NWS_ALERTS_ALTER_LOCK_TIMEOUT_MS}"
+                    ))
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query(&format!(
+                        "ALTER TABLE nws_alerts ADD COLUMN IF NOT EXISTS {name} {sql_type}"
+                    ))
+                    .execute(&mut *tx)
+                    .await
+                };
+                match added.await {
+                    Ok(_) => {
+                        tx.commit().await.map_err(failed)?;
+                        break;
+                    }
+                    // 55P03: the lock was not granted in time; whoever holds it will let go
+                    Err(sqlx::Error::Database(d))
+                        if d.code().as_deref() == Some("55P03")
+                            && attempt < NWS_ALERTS_ALTER_ATTEMPTS =>
+                    {
+                        tracing::warn!(
+                            column = name,
+                            attempt,
+                            "NWS alerts migration: nws_alerts is locked; trying again"
+                        );
+                        drop(tx);
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                    Err(e) => return Err(failed(e)),
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2895,6 +2957,14 @@ mod tests {
     }
 }
 
+/// Columns of `nws_alerts` that a table made by an older release lacks, with their types.
+/// `CREATE TABLE IF NOT EXISTS` leaves such a table as it is; see `Catalog::migrate_nws_alerts`.
+const NWS_ALERTS_ADDED_COLUMNS: [(&str, &str); 2] =
+    [("content_hash", "TEXT"), ("hashed_seen_at", "TIMESTAMPTZ")];
+/// How long the `ALTER TABLE` that adds one waits for its lock (ms), and how many times it is tried.
+const NWS_ALERTS_ALTER_LOCK_TIMEOUT_MS: u32 = 2000;
+const NWS_ALERTS_ALTER_ATTEMPTS: u32 = 5;
+
 /// NWS alerts (api.weather.gov). See `storage::nws_alerts`.
 ///
 /// Statements are split on `;`, so no statement body may contain one.
@@ -2973,11 +3043,10 @@ CREATE TABLE IF NOT EXISTS nws_alerts (
     geometry_source TEXT NOT NULL DEFAULT 'pending',  -- polygon | zones | pending | none
     first_seen_at TIMESTAMPTZ NOT NULL,
     last_seen_at TIMESTAMPTZ NOT NULL,         -- last poll that listed it (not indexed, see below)
-    updated_at TIMESTAMPTZ NOT NULL            -- last time its content changed (ETag seed)
+    updated_at TIMESTAMPTZ NOT NULL,           -- last time its content changed (ETag seed)
+    content_hash TEXT,                         -- what the row was derived from: NWS feature and derivation version, hashed. NULL = unknown, so the next poll rewrites the row
+    hashed_seen_at TIMESTAMPTZ                 -- last_seen_at as the writer that knows content_hash set it, which any other writer leaves behind (then content_hash no longer describes the row)
 );
-
--- What the row was derived from: NWS feature and derivation version, hashed. NULL = unknown, so the next poll rewrites the row.
-ALTER TABLE nws_alerts ADD COLUMN IF NOT EXISTS content_hash TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_geom ON nws_alerts USING GIST(geom);
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_geom_live ON nws_alerts USING GIST(geom)
