@@ -1842,6 +1842,221 @@ fn circle(centre: (f64, f64), radius: f64, n: usize) -> String {
     json!({"type": "Polygon", "coordinates": [ring]}).to_string()
 }
 
+/// "Worst first" is the CAP severity, then (NWS rates most watches Severe, like the warnings) the
+/// significance, then urgency, then certainty, then the newest `effective`, then the id. A Flood
+/// Watch issued after the Flood Warning it comes with does not lead the list, on `/position` (the
+/// splash shows its first alert in full), `/items` or at an instant.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn equal_severity_is_ordered_by_significance_urgency_certainty_then_newest() {
+    let e = env().await;
+    let far = Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap();
+    // (id, event, VTEC significance letter or none, severity, urgency, certainty, effective hour)
+    #[allow(clippy::type_complexity)]
+    let rows: [(&str, &str, Option<char>, Option<&str>, &str, &str, u32); 12] = [
+        // listed in the order they are expected back, then shuffled by the database's own order
+        (
+            "ext-adv",
+            "Dense Fog Advisory",
+            Some('Y'),
+            Some("Extreme"),
+            "Expected",
+            "Likely",
+            5,
+        ),
+        (
+            "tor",
+            "Tornado Warning",
+            Some('W'),
+            Some("Severe"),
+            "Immediate",
+            "Observed",
+            8,
+        ),
+        (
+            "flood-w",
+            "Flood Warning",
+            Some('W'),
+            Some("Severe"),
+            "Expected",
+            "Likely",
+            10,
+        ),
+        // no VTEC: the name says warning, and it is older than flood-w
+        (
+            "dam-w",
+            "Dam Break Warning",
+            None,
+            Some("Severe"),
+            "Expected",
+            "Likely",
+            9,
+        ),
+        // a VTEC letter that is none of W/A/Y/S falls back to the name, as `significance` does
+        (
+            "gale-f",
+            "Gale Warning",
+            Some('F'),
+            Some("Severe"),
+            "Expected",
+            "Likely",
+            7,
+        ),
+        // newer than the three above, but less certain
+        (
+            "flood-w2",
+            "Flash Flood Warning",
+            Some('W'),
+            Some("Severe"),
+            "Expected",
+            "Possible",
+            11,
+        ),
+        // the newest Severe alert but a watch (and Future, Possible)
+        (
+            "flood-a",
+            "Flood Watch",
+            Some('A'),
+            Some("Severe"),
+            "Future",
+            "Possible",
+            12,
+        ),
+        (
+            "fog-y",
+            "Dense Fog Advisory",
+            Some('Y'),
+            Some("Severe"),
+            "Expected",
+            "Likely",
+            13,
+        ),
+        (
+            "sps",
+            "Special Weather Statement",
+            None,
+            Some("Severe"),
+            "Expected",
+            "Likely",
+            14,
+        ),
+        (
+            "other",
+            "Test Message",
+            None,
+            Some("Severe"),
+            "Expected",
+            "Likely",
+            15,
+        ),
+        (
+            "mod-w",
+            "High Wind Warning",
+            Some('W'),
+            Some("Moderate"),
+            "Expected",
+            "Likely",
+            16,
+        ),
+        (
+            "unknown",
+            "Air Quality Alert",
+            None,
+            None,
+            "Unknown",
+            "Unknown",
+            17,
+        ),
+    ];
+    let feed: Vec<ParsedAlert> = rows
+        .iter()
+        .rev()
+        .map(|(id, event, sig, severity, urgency, certainty, hour)| {
+            let mut a = e.timed(
+                &format!("urn:test:{id}"),
+                BIG,
+                at(*hour, 0),
+                at(*hour, 0),
+                far,
+                &[],
+            );
+            a.event = event.to_string();
+            a.severity = severity.map(str::to_string);
+            a.urgency = Some(urgency.to_string());
+            a.certainty = Some(certainty.to_string());
+            match sig {
+                Some(c) => a.vtec[0].significance = *c,
+                None => a.vtec.clear(),
+            }
+            a
+        })
+        .collect();
+    e.nws
+        .apply_feed(&feed, Some(at(18, 0)), at(18, 0))
+        .await
+        .unwrap();
+    let want: Vec<String> = rows.iter().map(|r| format!("urn:test:{}", r.0)).collect();
+    let ids = |v: &Value| -> Vec<String> {
+        v["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    let at_p = format!("coords=POINT({}%20{})", P.0, P.1);
+    for (what, uri) in [
+        (
+            "position",
+            format!("/edr/collections/nws-alerts/position?{at_p}"),
+        ),
+        (
+            "position at an instant",
+            format!("/edr/collections/nws-alerts/position?{at_p}&datetime=2026-11-01T18:00:00Z"),
+        ),
+        (
+            "items",
+            "/edr/collections/nws-alerts/items?bbox=-107.4,37.1,-107.1,37.9&geometry=false".into(),
+        ),
+        (
+            "radius",
+            format!("/edr/collections/nws-alerts/radius?{at_p}&within=5&within-units=km"),
+        ),
+    ] {
+        let (st, _, v, _) = e.get(&uri).await;
+        assert_eq!(st, 200, "{what}: {v}");
+        assert_eq!(ids(&v), want, "{what}");
+    }
+
+    // the significance the cards show agrees with the order, wherever severity ties
+    let (_, _, v, _) = e
+        .get(&format!("/edr/collections/nws-alerts/position?{at_p}"))
+        .await;
+    let rank = |f: &Value| {
+        ["warning", "watch", "advisory", "statement", "other"]
+            .iter()
+            .position(|s| *s == f["properties"]["significance"])
+            .unwrap()
+    };
+    let fs = v["features"].as_array().unwrap();
+    for pair in fs.windows(2) {
+        if pair[0]["properties"]["severity"] == pair[1]["properties"]["severity"] {
+            assert!(rank(&pair[0]) <= rank(&pair[1]), "{:?}", ids(&v));
+        }
+    }
+    assert_eq!(fs[1]["properties"]["event"], "Tornado Warning");
+    let watch = fs
+        .iter()
+        .position(|f| f["properties"]["event"] == "Flood Watch")
+        .unwrap();
+    assert!(
+        watch > 4,
+        "the watch is after every Severe warning: {:?}",
+        ids(&v)
+    );
+}
+
 /// Half the feed on a day with Alaska gales out has neither WHAT nor HAZARD, so its `summary` was
 /// empty and the card had only a headline. A forecast alert says the period or periods its
 /// headline names; its periods are in the full record and its description has one on each line;

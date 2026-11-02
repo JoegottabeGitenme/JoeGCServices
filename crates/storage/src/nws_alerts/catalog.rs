@@ -410,9 +410,30 @@ fn geometry_json_sql(with_geometry: bool, simplify: Option<f64>) -> String {
     format!("(SELECT ST_AsGeoJSON(ST_ForcePolygonCCW(v.g), {GEOJSON_DIGITS}) FROM ({valid}) v)")
 }
 
-/// `ORDER BY` that puts the worst, most recent alerts first.
-const SEVERITY_ORDER: &str = "CASE a.severity WHEN 'Extreme' THEN 0 WHEN 'Severe' THEN 1 \
-    WHEN 'Moderate' THEN 2 WHEN 'Minor' THEN 3 ELSE 4 END, a.effective DESC NULLS LAST, a.id";
+/// `ORDER BY` that puts the worst, most recent alerts first. In this order:
+///
+/// 1. the CAP severity: Extreme, Severe, Moderate, Minor, anything else;
+/// 2. the significance: warning, watch, advisory, statement, anything else. NWS rates most
+///    watches Severe, like the warnings, so severity alone would put a Flood Watch re-issued a
+///    minute ago ahead of the Flood Warning it comes with. It is the first VTEC code's letter
+///    (W, A, Y, S), else the event's name (`... Warning`), as `significance()` in the API's
+///    handler reads it (a VTEC letter of another kind, F or O, falls back to the name too);
+/// 3. the CAP urgency: Immediate, Expected, Future, Past, anything else;
+/// 4. the CAP certainty: Observed, Likely, Possible, Unlikely, anything else;
+/// 5. the newest `effective` first, then the id, so equal alerts come in a fixed order.
+const SEVERITY_ORDER: &str = "\
+    CASE a.severity WHEN 'Extreme' THEN 0 WHEN 'Severe' THEN 1 \
+        WHEN 'Moderate' THEN 2 WHEN 'Minor' THEN 3 ELSE 4 END, \
+    CASE CASE WHEN a.vtec_significance IN ('W', 'A', 'Y', 'S') THEN a.vtec_significance \
+              WHEN a.event ILIKE '%warning' THEN 'W' WHEN a.event ILIKE '%watch' THEN 'A' \
+              WHEN a.event ILIKE '%advisory' THEN 'Y' WHEN a.event ILIKE '%statement' THEN 'S' \
+         END \
+        WHEN 'W' THEN 0 WHEN 'A' THEN 1 WHEN 'Y' THEN 2 WHEN 'S' THEN 3 ELSE 4 END, \
+    CASE a.urgency WHEN 'Immediate' THEN 0 WHEN 'Expected' THEN 1 WHEN 'Future' THEN 2 \
+        WHEN 'Past' THEN 3 ELSE 4 END, \
+    CASE a.certainty WHEN 'Observed' THEN 0 WHEN 'Likely' THEN 1 WHEN 'Possible' THEN 2 \
+        WHEN 'Unlikely' THEN 3 ELSE 4 END, \
+    a.effective DESC NULLS LAST, a.id";
 
 /// Where an [`AlertSearch`] looks.
 #[derive(Debug, Clone, PartialEq)]
