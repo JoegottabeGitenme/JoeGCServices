@@ -3045,8 +3045,12 @@ async fn rows_stored_before_the_hash_existed_are_migrated_and_rewritten_once() {
     resolve_all_zones(&env, &alerts, t0()).await;
     let before = alert_rows(&env).await;
 
-    // The table as the previous release left it: no hash column.
+    // The table as the previous release left it: no hash column, the last_seen_at index.
     sqlx::query("ALTER TABLE nws_alerts DROP COLUMN content_hash")
+        .execute(env.catalog.pool())
+        .await
+        .unwrap();
+    sqlx::query("CREATE INDEX idx_nws_alerts_last_seen ON nws_alerts(last_seen_at)")
         .execute(env.catalog.pool())
         .await
         .unwrap();
@@ -3065,6 +3069,13 @@ async fn rows_stored_before_the_hash_existed_are_migrated_and_rewritten_once() {
         (n, 0),
         "the rows survive, hash unknown"
     );
+    let index: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_indexes WHERE tablename = 'nws_alerts' AND indexname = 'idx_nws_alerts_last_seen'",
+    )
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap();
+    assert_eq!(index, 0, "last_seen_at is no longer indexed");
     drain_write_log(&env).await;
 
     // Unknown means changed: the first poll rewrites everything, and says nothing else changed.
