@@ -1251,6 +1251,7 @@ mod tests {
             "urn%3Aoid%3A2.49.0.1.840.0.abc.001.1"
         );
         assert_eq!(encode_id("a/b c"), "a%2Fb%20c");
+            superseded_at: None,
     }
 
     #[test]

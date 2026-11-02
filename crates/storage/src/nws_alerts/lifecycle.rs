@@ -14,6 +14,10 @@
 //!
 //! Each successful poll is authoritative for which alerts are current. A failed
 //! poll changes nothing (see `NwsAlertCatalog::record_poll_failure`).
+//!
+//! That is the *live* set, read from the flags at the wall clock. An alert in force at an
+//! instant in the past is judged from the message's own times instead (issued, `superseded_at`,
+//! `ended_at`, end time): see `AlertSearch::in_force_at`.
 
 use chrono::{DateTime, Utc};
 

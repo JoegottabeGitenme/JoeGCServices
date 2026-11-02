@@ -201,6 +201,8 @@ pub struct StoredAlert {
     pub color: String,
     pub references_ids: Vec<String>,
     pub superseded_by: Option<String>,
+    /// When the replacement was issued (set with `superseded_by`).
+    pub superseded_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
     pub geometry_source: String,
     pub first_seen_at: DateTime<Utc>,
@@ -231,13 +233,47 @@ const COLS: &str = "a.id, a.event, a.severity, a.urgency, a.certainty, a.categor
     a.description_text, a.instruction_text, a.area_desc, a.sender_name, a.web, a.sent, \
     a.effective, a.onset, a.expires, a.ends, a.end_time, a.ugc, a.zone_keys, a.is_marine, \
     a.vtec, a.vtec_event_key, a.sections, a.parameters, a.color, a.references_ids, \
-    a.superseded_by, a.ended_at, a.geometry_source, a.first_seen_at, a.updated_at, a.last_seen_at";
+    a.superseded_by, a.superseded_at, a.ended_at, a.geometry_source, a.first_seen_at, \
+    a.updated_at, a.last_seen_at";
 
 /// Not superseded, not ended, end time (if any) in the future. `$now` is bound by the caller.
 fn active_predicate(now_param: &str) -> String {
     format!(
         "a.superseded_by IS NULL AND a.ended_at IS NULL AND (a.end_time IS NULL OR a.end_time > {now_param})"
     )
+}
+
+/// The message's life `[issue, end)` overlaps the window `[from, to]`: issued by `to` (`effective`,
+/// else `sent`) and not over before `from`, over being its end time, its `ended_at` or the
+/// moment a newer message replaced it, whichever came first. For `from == to` this is "in force
+/// at that instant", an end time or replacement at that very instant already counting as over.
+/// `$from` and `$to` are bound by the caller.
+fn life_overlaps(from_param: &str, to_param: &str) -> String {
+    format!(
+        "COALESCE(a.effective, a.sent) <= {to_param} \
+         AND COALESCE(LEAST(a.end_time, a.ended_at, a.superseded_at), 'infinity'::timestamptz) > {from_param}"
+    )
+}
+
+/// The time part of [`NwsAlertCatalog::search`]'s `WHERE`: `$1` is `now`, `$2`/`$3` the window.
+/// Without a window it is the lifecycle-flag predicate the partial index
+/// `idx_nws_alerts_geom_live` serves, and must stay exactly that.
+fn time_predicate(q: &AlertSearch) -> String {
+    match q.window {
+        None => format!(
+            "{} AND $2::timestamptz IS NULL AND $3::timestamptz IS NULL",
+            active_predicate("$1")
+        ),
+        Some(_) => format!(
+            "{} AND {}",
+            if q.include_superseded {
+                "TRUE"
+            } else {
+                "a.superseded_by IS NULL"
+            },
+            life_overlaps("$2", "$3"),
+        ),
+    }
 }
 
 /// The CAP `status` filter. NWS' feed also carries `Test`, `Exercise`, `System` and `Draft`
@@ -290,10 +326,12 @@ pub enum AlertRegion {
 #[derive(Debug, Clone)]
 pub struct AlertSearch {
     pub region: AlertRegion,
+    /// The moment the caller reads the alerts at; the lifecycle status of each is as of `now`.
     pub now: DateTime<Utc>,
-    /// `None`: alerts in force at `now` (not superseded, not ended, end time
-    /// null or future; alerts that start later count). `Some((from, to))`:
-    /// every alert whose life overlaps the window, ended ones included.
+    /// `None`: the live set at `now` (not superseded, not ended, end time null or future;
+    /// alerts that start later count), from the lifecycle flags alone: the indexed fast path
+    /// for the wall clock. `Some((from, to))`: every alert whose life overlaps the window,
+    /// ended ones included; see [`Self::in_force_at`] for an instant in the past.
     pub window: Option<(DateTime<Utc>, DateTime<Utc>)>,
     /// Window mode only: also return messages that a later one replaced.
     pub include_superseded: bool,
@@ -307,6 +345,19 @@ pub struct AlertSearch {
     pub simplify: Option<f64>,
     /// Also return CAP `status` Test / Exercise / System / Draft messages (default: only `Actual`).
     pub include_non_actual: bool,
+}
+
+impl AlertSearch {
+    /// The messages in force at `t`: issued by then and not yet over, ended or replaced, whatever
+    /// became of them since (so a message replaced a minute after `t` is returned, its
+    /// replacement is not). That is the window `[t, t]` over every message, replaced ones
+    /// included, read as of `t`. History reaches back only as far as retention keeps rows.
+    pub fn in_force_at(mut self, t: DateTime<Utc>) -> Self {
+        self.now = t;
+        self.window = Some((t, t));
+        self.include_superseded = true;
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -446,13 +497,17 @@ impl NwsAlertCatalog {
 
             let targets = lifecycle::supersede_targets(&a.id, &a.references);
             if !targets.is_empty() {
+                // The old message is over from the moment the new one was issued, not from the
+                // poll that first showed it, so no instant in between has both in force. Never
+                // later than this poll: an issue time still ahead is not waited for.
+                let replaced_at = a.effective.or(a.sent).map_or(now, |t| t.min(now));
                 let r = sqlx::query(
                     "UPDATE nws_alerts SET superseded_by = $1, superseded_at = $3 \
                      WHERE id = ANY($2) AND superseded_by IS NULL",
                 )
                 .bind(&a.id)
                 .bind(&targets)
-                .bind(now)
+                .bind(replaced_at)
                 .execute(&mut *tx)
                 .await
                 .map_err(db("supersede"))?;
@@ -719,11 +774,11 @@ impl NwsAlertCatalog {
              WHERE {filter} AND {actual} \
                AND a.geom && ST_MakeEnvelope($1, $2, $3, $4, 4326) \
                AND ST_Intersects(a.geom, ST_MakeEnvelope($1, $2, $3, $4, 4326)) \
-               AND COALESCE(a.effective, a.sent) <= $6 \
-               AND COALESCE(LEAST(a.end_time, a.ended_at, a.superseded_at), 'infinity'::timestamptz) >= $5 \
+               AND {overlap} \
              ORDER BY {SEVERITY_ORDER} LIMIT $8",
             geom = geom_col(with_geometry),
             actual = actual_only(false),
+            overlap = life_overlaps("$5", "$6"),
         );
         let mut tx = self.read_tx().await?;
         let rows = sqlx::query_as(&sql)
@@ -745,58 +800,7 @@ impl NwsAlertCatalog {
     /// Filtered search over a point, box, polygon or radius; worst alerts first.
     /// Only CAP `Actual` alerts unless `include_non_actual`.
     pub async fn search(&self, q: &AlertSearch) -> WmsResult<Vec<StoredAlert>> {
-        let geom = match q.simplify.filter(|t| t.is_finite() && *t > 0.0) {
-            Some(tol) if q.with_geometry => {
-                format!("ST_AsGeoJSON(ST_SimplifyPreserveTopology(a.geom, {tol}), 5)")
-            }
-            _ => geom_col(q.with_geometry).to_string(),
-        };
-        let time = match q.window {
-            None => format!(
-                "{} AND $2::timestamptz IS NULL AND $3::timestamptz IS NULL",
-                active_predicate("$1")
-            ),
-            Some(_) => format!(
-                "{} AND COALESCE(a.effective, a.sent) <= $3 \
-                 AND COALESCE(LEAST(a.end_time, a.ended_at, a.superseded_at), 'infinity'::timestamptz) >= $2",
-                if q.include_superseded { "TRUE" } else { "a.superseded_by IS NULL" }
-            ),
-        };
-        // A polygon is parsed and made valid once, in a CTE the planner may not fold back into
-        // the predicates, not once per candidate row in each of them.
-        let (with, from, region) = match &q.region {
-            AlertRegion::Point { .. } => (
-                "",
-                "nws_alerts a",
-                "a.geom && ST_SetSRID(ST_MakePoint($7, $8), 4326) \
-                 AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($7, $8), 4326))",
-            ),
-            AlertRegion::Bbox(_) => (
-                "",
-                "nws_alerts a",
-                "a.geom && ST_MakeEnvelope($7, $8, $9, $10, 4326) \
-                 AND ST_Intersects(a.geom, ST_MakeEnvelope($7, $8, $9, $10, 4326))",
-            ),
-            AlertRegion::Polygon { .. } => (
-                "WITH q AS MATERIALIZED (SELECT ST_MakeValid(ST_GeomFromText($7, 4326)) AS g) ",
-                "nws_alerts a, q",
-                "a.geom && q.g AND ST_Intersects(a.geom, q.g)",
-            ),
-            AlertRegion::Radius { .. } => (
-                "",
-                "nws_alerts a",
-                "a.geom && ST_Expand(ST_SetSRID(ST_MakePoint($7, $8), 4326), $10) \
-                 AND ST_DWithin(a.geom::geography, ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography, $9)",
-            ),
-        };
-        let sql = format!(
-            "{with}SELECT {COLS}, {geom} AS geometry_geojson FROM {from} \
-             WHERE {time} AND {actual} AND {region} \
-               AND (cardinality($4::text[]) = 0 OR lower(a.severity) = ANY($4)) \
-               AND (cardinality($5::text[]) = 0 OR lower(a.event) = ANY($5)) \
-             ORDER BY {SEVERITY_ORDER} LIMIT $6",
-            actual = actual_only(q.include_non_actual),
-        );
+        let sql = search_sql(q);
         let lower = |v: &[String]| v.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>();
         let (from, to) = match q.window {
             Some((f, t)) => (Some(f), Some(t)),
@@ -840,6 +844,54 @@ impl NwsAlertCatalog {
         tx.commit().await.map_err(db("commit"))?;
         Ok(alert)
     }
+}
+
+/// The statement [`NwsAlertCatalog::search`] runs, its `$n` placeholders unbound (`$1` is `now`,
+/// `$2`/`$3` the window, `$4` severities, `$5` events, `$6` the limit, `$7..` the region). Public
+/// so plan checks can ask Postgres how it would run it.
+pub fn search_sql(q: &AlertSearch) -> String {
+    let geom = match q.simplify.filter(|t| t.is_finite() && *t > 0.0) {
+        Some(tol) if q.with_geometry => {
+            format!("ST_AsGeoJSON(ST_SimplifyPreserveTopology(a.geom, {tol}), 5)")
+        }
+        _ => geom_col(q.with_geometry).to_string(),
+    };
+    let time = time_predicate(q);
+    // A polygon is parsed and made valid once, in a CTE the planner may not fold back into
+    // the predicates, not once per candidate row in each of them.
+    let (with, from, region) = match &q.region {
+        AlertRegion::Point { .. } => (
+            "",
+            "nws_alerts a",
+            "a.geom && ST_SetSRID(ST_MakePoint($7, $8), 4326) \
+             AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($7, $8), 4326))",
+        ),
+        AlertRegion::Bbox(_) => (
+            "",
+            "nws_alerts a",
+            "a.geom && ST_MakeEnvelope($7, $8, $9, $10, 4326) \
+             AND ST_Intersects(a.geom, ST_MakeEnvelope($7, $8, $9, $10, 4326))",
+        ),
+        AlertRegion::Polygon { .. } => (
+            "WITH q AS MATERIALIZED (SELECT ST_MakeValid(ST_GeomFromText($7, 4326)) AS g) ",
+            "nws_alerts a, q",
+            "a.geom && q.g AND ST_Intersects(a.geom, q.g)",
+        ),
+        AlertRegion::Radius { .. } => (
+            "",
+            "nws_alerts a",
+            "a.geom && ST_Expand(ST_SetSRID(ST_MakePoint($7, $8), 4326), $10) \
+             AND ST_DWithin(a.geom::geography, ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography, $9)",
+        ),
+    };
+    format!(
+        "{with}SELECT {COLS}, {geom} AS geometry_geojson FROM {from} \
+         WHERE {time} AND {actual} AND {region} \
+           AND (cardinality($4::text[]) = 0 OR lower(a.severity) = ANY($4)) \
+           AND (cardinality($5::text[]) = 0 OR lower(a.event) = ANY($5)) \
+         ORDER BY {SEVERITY_ORDER} LIMIT $6",
+        actual = actual_only(q.include_non_actual),
+    )
 }
 
 /// Take the writers' lock for the rest of the transaction. Feed polls and zone batches both
@@ -1137,3 +1189,70 @@ ON CONFLICT (id) DO UPDATE SET
                            EXCLUDED.expires, EXCLUDED.ends, EXCLUDED.message_type)
                       THEN $42 ELSE nws_alerts.updated_at END
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn t() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 11, 1, 12, 0, 0).unwrap()
+    }
+
+    fn point_search() -> AlertSearch {
+        AlertSearch {
+            region: AlertRegion::Point {
+                lon: -107.0,
+                lat: 37.5,
+            },
+            now: t(),
+            window: None,
+            include_superseded: false,
+            severities: vec![],
+            events: vec![],
+            limit: 10,
+            with_geometry: false,
+            simplify: None,
+            include_non_actual: false,
+        }
+    }
+
+    /// The common app read (`/position`, no `datetime`) is the lifecycle-flag predicate the
+    /// partial index `idx_nws_alerts_geom_live` is built for. This pins the statement; a change
+    /// here changes the plan of the hottest query (the Docker test `a_search_without_a_datetime...`
+    /// asks Postgres for it).
+    #[test]
+    fn no_window_keeps_the_lifecycle_flag_predicate_verbatim() {
+        assert_eq!(
+            time_predicate(&point_search()),
+            "a.superseded_by IS NULL AND a.ended_at IS NULL AND (a.end_time IS NULL OR a.end_time > $1) \
+             AND $2::timestamptz IS NULL AND $3::timestamptz IS NULL"
+        );
+        let sql = search_sql(&point_search());
+        assert!(sql.contains("WHERE a.superseded_by IS NULL AND a.ended_at IS NULL AND"));
+        assert!(!sql.contains("COALESCE(a.effective"), "{sql}");
+    }
+
+    #[test]
+    fn an_instant_reads_each_messages_own_life() {
+        let at = point_search().in_force_at(t() - chrono::Duration::hours(3));
+        assert_eq!(at.window, Some((at.now, at.now)));
+        assert_eq!(at.now, t() - chrono::Duration::hours(3));
+        let p = time_predicate(&at);
+        // replaced and ended messages are not hidden by today's flags...
+        assert!(p.starts_with("TRUE AND "), "{p}");
+        // ...but by when it happened: issued by the instant, not over at it (end exclusive)
+        assert_eq!(
+            p,
+            "TRUE AND COALESCE(a.effective, a.sent) <= $3 AND \
+             COALESCE(LEAST(a.end_time, a.ended_at, a.superseded_at), 'infinity'::timestamptz) > $2"
+        );
+        // the history window rule is the same predicate with `to` and `from` apart
+        let mut win = point_search();
+        win.window = Some((t() - chrono::Duration::hours(1), t()));
+        assert_eq!(
+            time_predicate(&win),
+            format!("a.superseded_by IS NULL AND {}", life_overlaps("$2", "$3"))
+        );
+    }
+}
