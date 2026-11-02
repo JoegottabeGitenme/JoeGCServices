@@ -1174,6 +1174,57 @@
             font-weight: 600;
         }
 
+        .sc-valid {
+            color: var(--ink);
+            font-weight: 600;
+        }
+
+        .sc-valid-run {
+            display: block;
+            font-weight: 400;
+            font-size: 0.8rem;
+        }
+
+        .sc-legend {
+            margin: 0.6rem 0 0.7rem;
+        }
+
+        .sc-lgtitle {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--ink);
+            margin-bottom: 0.3rem;
+        }
+
+        .sc-lgbar {
+            height: 12px;
+            border-radius: 4px;
+            border: 1px solid rgba(46, 40, 24, 0.35);
+        }
+
+        .sc-lgticks {
+            position: relative;
+            height: 1.1rem;
+            font-size: 0.75rem;
+            color: var(--ink-2);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .sc-lgticks span {
+            position: absolute;
+            top: 0.15rem;
+            transform: translateX(-50%);
+            white-space: nowrap;
+        }
+
+        .sc-lgticks .sc-lg-l {
+            transform: none;
+        }
+
+        .sc-lgticks .sc-lg-r {
+            transform: translateX(-100%);
+        }
+
         .sc-hint {
             font-size: 0.78rem;
             color: var(--ink-3);
@@ -2428,6 +2479,80 @@
                 const w = Math.round(Math.min(c.width, 1000)), h = Math.round(Math.min(c.height, 1000));
                 setRequest(`/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${l.id}&STYLES=${l.style}&CRS=EPSG:3857&BBOX=${[sw[0], sw[1], ne[0], ne[1]].map(Math.round).join(',')}&WIDTH=${w}&HEIGHT=${h}&FORMAT=image/png`, { kinds: true });
             }
+            // ---- Maps readout: what the tiles show and when, plus a colour scale ----
+            // WMS GetLegendGraphic answers 400 "Unknown request" on this server, so the scales are drawn here from the same stops the tiles are
+            // rendered with (config/styles/*.json, linear between stops). Values are in the unit shown on the scale.
+            const SCALES = {
+                mrms_REFL: { title: 'Reflectivity', unit: 'dBZ', min: 5, max: 75, ticks: [[5, '5'], [20, '20'], [35, '35'], [50, '50'], [65, '65'], [75, '75+']],
+                    stops: [[5, '#9C9C9C'], [10, '#767676'], [15, '#00FFFF'], [20, '#00BFFF'], [25, '#0080FF'], [30, '#00FF00'], [35, '#00C000'], [40, '#008000'], [45, '#FFFF00'], [50, '#E6C000'], [55, '#FF8000'], [60, '#FF0000'], [65, '#C00000'], [70, '#800000'], [75, '#FF00FF']] },
+                temp: { title: '2 m temperature', unit: '\u00b0C', min: -40, max: 40, ticks: [[-40, '\u221240'], [-20, '\u221220'], [0, '0'], [20, '20'], [40, '40']],
+                    stops: [[-40, '#1E0082'], [-30, '#0032C8'], [-20, '#0096FF'], [-10, '#32C8FF'], [0, '#96FFC8'], [10, '#FFFF32'], [20, '#FF9600'], [30, '#FF3200'], [40, '#960000']] },
+                goes19_CMI_C13: { title: 'Brightness temperature', unit: '\u00b0C', min: 180 - 273.15, max: 330 - 273.15,
+                    ticks: [[-80, '\u221280'], [-60, '\u221260'], [-40, '\u221240'], [-20, '\u221220'], [0, '0'], [20, '20'], [40, '40']],
+                    stops: [[180, '#000000'], [195, '#500050'], [205, '#8000FF'], [213, '#0000FF'], [220, '#0080FF'], [228, '#00FFFF'], [235, '#00FF80'], [243, '#00FF00'], [250, '#FFFF00'], [258, '#FFC800'], [265, '#FF9600'], [273, '#FF6400'], [283, '#FF3200'], [293, '#FF0000'], [303, '#C80000'], [313, '#960000'], [323, '#643232'], [330, '#505050']].map(([k, c]) => [k - 273.15, c]) },
+                gfswave_HTSGW: { title: 'Wave height', unit: 'm', min: 0.25, max: 15, ticks: [[1, '1'], [3, '3'], [6, '6'], [9, '9'], [12, '12'], [15, '15+']],
+                    stops: [[0.25, '#E0F0FF'], [0.5, '#B0D8FF'], [1, '#60B0FF'], [1.5, '#2090FF'], [2, '#0070E0'], [3, '#00A060'], [4, '#40C040'], [5, '#C0D800'], [6, '#FFD000'], [8, '#FF8000'], [10, '#FF3000'], [12, '#D00000'], [15, '#800040']] },
+                gfs_ICEC: { title: 'Ice concentration', unit: '% of each cell', min: 10, max: 100, ticks: [[10, '10'], [30, '30'], [50, '50'], [70, '70'], [100, '100']],
+                    stops: [[10, '#E0F0FF'], [20, '#B0DCFF'], [30, '#80C8FF'], [40, '#50B4FF'], [50, '#30A0F0'], [60, '#2088D0'], [70, '#1070B0'], [80, '#005890'], [90, '#003870'], [100, '#E8E8F0']] }
+            };
+            SCALES.hrrr_TMP = SCALES.gfs_TMP = SCALES.temp;
+            function scaleHtml(id) {
+                const d = SCALES[id];
+                if (!d) return '';
+                const pos = (v) => ((v - d.min) / (d.max - d.min) * 100);
+                const grad = d.stops.map(([v, c]) => `${c} ${pos(v).toFixed(1)}%`).join(',');
+                const ticks = d.ticks.map(([v, t]) => { const x = pos(v); return `<span class="${x < 6 ? 'sc-lg-l' : x > 94 ? 'sc-lg-r' : ''}" style="left:${x.toFixed(1)}%">${t}</span>`; }).join('');
+                const first = d.ticks[0][1], last = d.ticks[d.ticks.length - 1][1];
+                return `<div class="sc-legend" role="group" aria-label="Colour scale: ${esc(d.title)}, ${first} to ${last} ${esc(d.unit)}">` +
+                    `<div class="sc-lgtitle">${esc(d.title)} <span class="sc-muted">${esc(d.unit)}</span></div>` +
+                    `<div class="sc-lgbar" style="background:linear-gradient(90deg,${grad})" aria-hidden="true"></div><div class="sc-lgticks">${ticks}</div></div>`;
+            }
+            // Valid times come from one GetCapabilities (the default TIME, or the model run plus its forecast hour), fetched once and kept
+            let capsP = null;
+            const validCache = {};
+            function loadValid() {
+                if (!capsP) {
+                    capsP = fetch('/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0').then((r) => { if (!r.ok) throw new Error('capabilities ' + r.status); return r.text(); }).then((xml) => {
+                        const doc = new DOMParser().parseFromString(xml, 'text/xml');
+                        const want = new Set(LAYERS.map((l) => l.id));
+                        Array.from(doc.getElementsByTagName('Layer')).forEach((n) => {
+                            const nm = Array.from(n.children).find((c) => c.localName === 'Name');
+                            if (!nm || !want.has(nm.textContent.trim())) return;
+                            const dim = {};
+                            Array.from(n.children).filter((c) => c.localName === 'Dimension').forEach((c) => { dim[c.getAttribute('name')] = c.getAttribute('default'); });
+                            const time = dim.TIME && new Date(dim.TIME), run = dim.RUN && new Date(dim.RUN), fh = dim.FORECAST == null ? 0 : parseInt(dim.FORECAST, 10) || 0;
+                            if (time && !isNaN(time)) validCache[nm.textContent.trim()] = { valid: time };
+                            else if (run && !isNaN(run)) validCache[nm.textContent.trim()] = { valid: new Date(run.getTime() + fh * 3600e3), run, fh };
+                        });
+                    }).catch((e) => { capsP = null; throw e; });
+                }
+                return capsP;
+            }
+            const ago = (d) => {
+                const sec = (Date.now() - d.getTime()) / 1000, a = Math.abs(sec);
+                const t = a < 90 ? fmt(a) + ' s' : a < 5400 ? fmt(a / 60) + ' min' : a < 172800 ? fmt(a / 3600) + ' h' : fmt(a / 86400) + ' d';
+                return sec >= 0 ? t + ' ago' : 'in ' + t;
+            };
+            // 19:40 UTC when it's today (UTC), else with the day: Nov 1, 18:00 UTC
+            const utcShort = (d) => {
+                const hm = d.toISOString().slice(11, 16) + ' UTC';
+                return d.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10) ? hm : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) + ', ' + hm;
+            };
+            function validHtml(v) {
+                return `Valid <time datetime="${v.valid.toISOString()}">${utcShort(v.valid)}</time> &middot; <span data-ago="${v.valid.getTime()}">${ago(v.valid)}</span>` +
+                    (v.run ? `<span class="sc-muted sc-valid-run">Model run ${utcShort(v.run)}, forecast hour ${v.fh}</span>` : '');
+            }
+            async function fillValid(id) {
+                const box = () => el.readout.querySelector('[data-valid="' + id + '"]');
+                if (!validCache[id]) {
+                    try { await loadValid(); } catch (e) { const b = box(); if (b) b.innerHTML = '<span class="sc-muted">Valid time unavailable right now.</span>'; return; }
+                }
+                const b = box(), v = validCache[id];
+                if (b) b.innerHTML = v ? validHtml(v) : '<span class="sc-muted">Valid time not published for this layer.</span>';
+            }
+            // "6 min ago" keeps counting while the layer stays on screen
+            setInterval(() => { el.readout.querySelectorAll('[data-ago]').forEach((n) => { n.textContent = ago(new Date(Number(n.dataset.ago))); }); }, 30000);
+
             const narrow = () => (el.map.clientWidth < 500 ? 0.8 : 0);
             function showLayer(animate) {
                 const l = LAYERS[layerIdx];
@@ -2435,7 +2560,10 @@
                 removeMapStuff(['wx']);
                 map.addSource('wx', { type: 'raster', tiles: [abs(wmtsTemplate(l)).replace(/%7B/g, '{').replace(/%7D/g, '}')], tileSize: 256, minzoom: 0, maxzoom: 8 });
                 map.addLayer({ id: 'wx', type: 'raster', source: 'wx', paint: { 'raster-opacity': 0.8, 'raster-fade-duration': 250 } }, firstSymbol());
-                setReadout(`<h3>${esc(l.title)}</h3><p>${esc(l.note)}</p><p class="sc-tilenote sc-muted">Latest available data, drawn from WMTS tiles.</p>`);
+                setReadout(`<h3>${esc(l.title)}</h3><p>${esc(l.note)}</p>` +
+                    `<p class="sc-valid" data-valid="${l.id}">${validCache[l.id] ? validHtml(validCache[l.id]) : '<span class="sc-muted">Checking the valid time&hellip;</span>'}</p>` +
+                    scaleHtml(l.id) + `<p class="sc-tilenote sc-muted">Latest available data, drawn from WMTS tiles.</p>`);
+                if (!validCache[l.id]) fillValid(l.id);
                 setHint('Drag and zoom: the tiles and the request below follow the view.');
                 const opts = { duration: animate ? 1100 : 0, padding: 20 };
                 if (l.bounds) map.fitBounds(l.bounds, opts);
