@@ -46,7 +46,10 @@ const MAX_ITEMS_LIMIT: i64 = 2000;
 /// Upper bound for position/area/radius answers (a point is never under this many alerts).
 const NEARBY_LIMIT: i64 = 500;
 const MAX_RADIUS_M: f64 = 500_000.0;
-const MAX_POLYGON_VERTICES: usize = 2000;
+/// Most vertices an `/area` ring may have (the closing repeat of the first one not counted). The
+/// ring is checked for self-intersection pairwise, and PostGIS repairs an invalid one at a cost
+/// that explodes with the crossings, so the size is capped well below what a URL could carry.
+const MAX_POLYGON_VERTICES: usize = 500;
 /// Compact-mode text caps.
 const INSTRUCTION_MAX: usize = 600;
 const SUMMARY_MAX: usize = 500;
@@ -394,42 +397,184 @@ pub fn parse_point(coords: &str) -> Result<(f64, f64), String> {
     Ok((n[0], n[1]))
 }
 
-/// `POLYGON((lon lat, ...))` (outer ring only), returned as validated WKT.
+/// `POLYGON((lon lat, ...))` (one ring, either winding), returned as validated WKT.
+///
+/// The ring is closed for you and must be simple: at least 3 vertices (not all on one line), at
+/// most [`MAX_POLYGON_VERTICES`], no edge spanning more than 180 degrees of longitude (so no
+/// crossing the antimeridian), no inner rings, and no two edges crossing, touching or
+/// overlapping. Anything else PostGIS would have to repair, at a cost the request should not get
+/// to choose.
 pub fn parse_polygon(coords: &str) -> Result<String, String> {
+    const SHAPE: &str = "Invalid coords. Use POLYGON((lon lat, lon lat, ...))";
     let c = coords.trim();
     if !c
         .get(..7)
         .is_some_and(|p| p.eq_ignore_ascii_case("POLYGON"))
     {
-        return Err("Invalid coords. Use POLYGON((lon lat, lon lat, ...))".into());
+        return Err(SHAPE.into());
     }
-    let ring = c[7..]
+    let body = c[7..]
         .trim()
-        .trim_start_matches('(')
-        .trim_start_matches('(');
-    let ring = ring.split(')').next().unwrap_or("");
-    let mut pts = Vec::new();
+        .strip_prefix('(')
+        .and_then(|b| b.strip_suffix(')'))
+        .ok_or(SHAPE)?;
+    let (ring, rest) = body
+        .trim()
+        .strip_prefix('(')
+        .and_then(|b| b.split_once(')'))
+        .ok_or(SHAPE)?;
+    if ring.contains('(') {
+        return Err(SHAPE.into());
+    }
+    match rest.trim() {
+        "" => {}
+        r if r.starts_with(',') => {
+            return Err(
+                "Polygon holes are not supported (inner rings); send the outer ring only".into(),
+            )
+        }
+        _ => return Err(SHAPE.into()),
+    }
+    let mut pts: Vec<Pt> = Vec::new();
     for pair in ring.split(',') {
         let n = nums(pair)?;
         if n.len() != 2 {
             return Err("Invalid polygon vertex".into());
         }
         check_lonlat(n[0], n[1])?;
-        pts.push((n[0], n[1]));
+        // A repeated vertex adds nothing; dropping it keeps zero-length edges out of the checks.
+        if pts.last() != Some(&(n[0], n[1])) {
+            pts.push((n[0], n[1]));
+        }
+        if pts.len() > MAX_POLYGON_VERTICES + 1 {
+            break; // already too many; no need to read the rest
+        }
     }
-    if pts.len() > MAX_POLYGON_VERTICES {
+    if pts.first() != pts.last() {
+        pts.push(pts[0]);
+    }
+    if pts.len() - 1 > MAX_POLYGON_VERTICES {
         return Err(format!(
             "Polygon has more than {MAX_POLYGON_VERTICES} vertices"
         ));
     }
-    if pts.first() != pts.last() && !pts.is_empty() {
-        pts.push(pts[0]);
-    }
     if pts.len() < 4 {
         return Err("A polygon needs at least 3 distinct vertices".into());
     }
+    if pts.windows(2).any(|e| (e[1].0 - e[0].0).abs() > 180.0) {
+        return Err(
+            "Polygon must not cross the antimeridian (an edge spans more than 180 \
+                    degrees of longitude); split it into two requests, one on each side of 180"
+                .into(),
+        );
+    }
+    if pts
+        .iter()
+        .all(|&p| turn(pts[0], pts[1], p) == Turn::Collinear)
+    {
+        return Err("Polygon has no area (all its vertices are on one line)".into());
+    }
+    if let Some((i, j)) = find_self_contact(&pts) {
+        return Err(format!(
+            "Polygon must be a simple ring: its edges {} and {} cross, touch or overlap",
+            i + 1,
+            j + 1
+        ));
+    }
     let body: Vec<String> = pts.iter().map(|(x, y)| format!("{x} {y}")).collect();
     Ok(format!("POLYGON(({}))", body.join(", ")))
+}
+
+type Pt = (f64, f64);
+
+#[derive(Clone, Copy, PartialEq)]
+enum Turn {
+    Left,
+    Right,
+    /// On the line, or too close to it for f64 to say which side.
+    Collinear,
+}
+
+/// Which side of the directed line `a`-`b` the point `c` is on. The determinant is only trusted
+/// outside Shewchuk's bound on its rounding error (his `ccwerrboundA`); inside it the answer is
+/// `Collinear`, so decimal coordinates that are collinear on paper but not bit for bit still
+/// count as collinear.
+fn turn(a: Pt, b: Pt, c: Pt) -> Turn {
+    const EPS: f64 = f64::EPSILON / 2.0;
+    const ERR_BOUND: f64 = (3.0 + 16.0 * EPS) * EPS;
+    let left = (a.0 - c.0) * (b.1 - c.1);
+    let right = (a.1 - c.1) * (b.0 - c.0);
+    let det = left - right;
+    let bound = ERR_BOUND * (left.abs() + right.abs());
+    if det > bound {
+        Turn::Left
+    } else if -det > bound {
+        Turn::Right
+    } else {
+        Turn::Collinear
+    }
+}
+
+/// `p` lies in the bounding box of `a` and `b`.
+fn in_box(a: Pt, b: Pt, p: Pt) -> bool {
+    (a.0.min(b.0)..=a.0.max(b.0)).contains(&p.0) && (a.1.min(b.1)..=a.1.max(b.1)).contains(&p.1)
+}
+
+/// True when the closed segments `p1p2` and `p3p4` have a point in common: they cross, touch at
+/// an end, or overlap along a line.
+fn segments_meet(p1: Pt, p2: Pt, p3: Pt, p4: Pt) -> bool {
+    let (d1, d2) = (turn(p3, p4, p1), turn(p3, p4, p2));
+    let (d3, d4) = (turn(p1, p2, p3), turn(p1, p2, p4));
+    let apart = |a, b| {
+        matches!(
+            (a, b),
+            (Turn::Left, Turn::Right) | (Turn::Right, Turn::Left)
+        )
+    };
+    (apart(d1, d2) && apart(d3, d4))
+        || (d1 == Turn::Collinear && in_box(p3, p4, p1))
+        || (d2 == Turn::Collinear && in_box(p3, p4, p2))
+        || (d3 == Turn::Collinear && in_box(p1, p2, p3))
+        || (d4 == Turn::Collinear && in_box(p1, p2, p4))
+}
+
+/// The first pair of edges (0-based) of a closed ring that meet anywhere but at the vertex they
+/// share: non-adjacent edges that cross or touch, and adjacent edges that double back over each
+/// other. `None` for a simple ring. Quadratic, which is fine at [`MAX_POLYGON_VERTICES`].
+fn find_self_contact(ring: &[Pt]) -> Option<(usize, usize)> {
+    let m = ring.len() - 1;
+    let edge = |i: usize| (ring[i], ring[i + 1]);
+    for i in 0..m {
+        // The next edge (the first, after the last) starts where this one ends.
+        let j = (i + 1) % m;
+        let (a, b) = edge(i);
+        let c = edge(j).1;
+        let dot = (b.0 - a.0) * (c.0 - b.0) + (b.1 - a.1) * (c.1 - b.1);
+        if turn(a, b, c) == Turn::Collinear && dot < 0.0 {
+            return Some((i.min(j), i.max(j)));
+        }
+    }
+    for i in 0..m {
+        let (a, b) = edge(i);
+        for j in i + 2..m {
+            if i == 0 && j == m - 1 {
+                continue; // adjacent through the closing vertex
+            }
+            let (c, d) = edge(j);
+            // Segments whose boxes do not overlap cannot meet: settles most pairs cheaply.
+            if a.0.max(b.0) < c.0.min(d.0)
+                || c.0.max(d.0) < a.0.min(b.0)
+                || a.1.max(b.1) < c.1.min(d.1)
+                || c.1.max(d.1) < a.1.min(b.1)
+            {
+                continue;
+            }
+            if segments_meet(a, b, c, d) {
+                return Some((i, j));
+            }
+        }
+    }
+    None
 }
 
 pub fn parse_bbox(s: &str) -> Result<[f64; 4], String> {
@@ -1304,6 +1449,237 @@ mod tests {
         );
         assert!(parse_bbox("-105,39,-106,40").is_err());
         assert!(parse_bbox("1,2,3").is_err());
+    }
+
+    /// `POLYGON((x y, ...))` from points, written as the request would carry it (not closed).
+    fn wkt(pts: &[Pt]) -> String {
+        let body: Vec<String> = pts.iter().map(|(x, y)| format!("{x} {y}")).collect();
+        format!("POLYGON(({}))", body.join(","))
+    }
+
+    /// `n` points on a circle, counter-clockwise (or clockwise).
+    fn circle(n: usize, centre: Pt, radius: f64, ccw: bool) -> Vec<Pt> {
+        (0..n)
+            .map(|i| {
+                let a = std::f64::consts::TAU * i as f64 / n as f64 * if ccw { 1.0 } else { -1.0 };
+                (centre.0 + radius * a.cos(), centre.1 + radius * a.sin())
+            })
+            .collect()
+    }
+
+    /// `n` random points, 1 decimal, in lon -120..-70 and lat 25..48, from a fixed seed. Joined in
+    /// order they make the ring that took the live service minutes to answer.
+    fn scribble(n: usize, seed: u64) -> Vec<Pt> {
+        let mut state = seed;
+        let mut next = |lo: f64, hi: f64| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let unit = (state >> 11) as f64 / (1u64 << 53) as f64;
+            ((lo + unit * (hi - lo)) * 10.0).round() / 10.0
+        };
+        (0..n)
+            .map(|_| (next(-120.0, -70.0), next(25.0, 48.0)))
+            .collect()
+    }
+
+    #[test]
+    fn polygon_rings_that_are_simple_are_accepted_in_either_winding() {
+        for ccw in [true, false] {
+            let w = parse_polygon(&wkt(&circle(300, (-100.0, 40.0), 2.0, ccw))).unwrap();
+            assert_eq!(
+                w.matches(',').count(),
+                300,
+                "300 vertices plus the closing one"
+            );
+        }
+        let square = |pts: &[Pt]| parse_polygon(&wkt(pts)).is_ok();
+        assert!(square(&[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)]));
+        assert!(square(&[(0.0, 0.0), (0.0, 4.0), (4.0, 4.0), (4.0, 0.0)]));
+        // collinear but apart: the two y=4 edges of a U shape are no contact
+        assert!(square(&[
+            (0.0, 0.0),
+            (6.0, 0.0),
+            (6.0, 4.0),
+            (4.0, 4.0),
+            (4.0, 2.0),
+            (2.0, 2.0),
+            (2.0, 4.0),
+            (0.0, 4.0),
+        ]));
+        // a redundant vertex on a straight edge, and a repeated vertex, change nothing
+        assert!(square(&[
+            (0.0, 0.0),
+            (2.0, 0.0),
+            (4.0, 0.0),
+            (4.0, 4.0),
+            (0.0, 4.0)
+        ]));
+        assert_eq!(
+            parse_polygon("POLYGON((0 0,4 0,4 0,4 4,0 4,0 0,0 0))").unwrap(),
+            "POLYGON((0 0, 4 0, 4 4, 0 4, 0 0))"
+        );
+        // exactly 180 degrees of longitude in one edge is still allowed
+        assert!(square(&[
+            (-90.0, 0.0),
+            (90.0, 0.0),
+            (90.0, 10.0),
+            (-90.0, 10.0)
+        ]));
+    }
+
+    #[test]
+    fn polygon_rejects_a_self_intersecting_scribble() {
+        let ring = scribble(200, 1);
+        let e = parse_polygon(&wkt(&ring)).unwrap_err();
+        assert!(e.contains("simple ring"), "{e}");
+        // its closed form, as the verifier sent it, too
+        let mut closed = ring.clone();
+        closed.push(ring[0]);
+        assert!(parse_polygon(&wkt(&closed))
+            .unwrap_err()
+            .contains("simple ring"));
+    }
+
+    #[test]
+    fn polygon_rejects_edges_that_meet() {
+        let simple = |pts: &[Pt]| {
+            parse_polygon(&wkt(pts))
+                .err()
+                .is_some_and(|e| e.contains("simple ring"))
+        };
+        // bowtie: two edges cross
+        assert!(simple(&[(0.0, 0.0), (2.0, 2.0), (2.0, 0.0), (0.0, 2.0)]));
+        // a vertex on another edge (T junction)
+        assert!(simple(&[
+            (0.0, 0.0),
+            (4.0, 0.0),
+            (4.0, 4.0),
+            (2.0, 0.0),
+            (0.0, 4.0)
+        ]));
+        // two lobes that share a vertex
+        assert!(simple(&[
+            (0.0, 0.0),
+            (2.0, 0.0),
+            (1.0, 1.0),
+            (2.0, 2.0),
+            (0.0, 2.0),
+            (1.0, 1.0),
+        ]));
+        // non-adjacent edges overlapping along y=0
+        assert!(simple(&[
+            (0.0, 0.0),
+            (4.0, 0.0),
+            (5.0, 3.0),
+            (3.0, 0.0),
+            (1.0, 0.0),
+            (1.0, -3.0)
+        ]));
+        // adjacent edges doubling back over each other (a spike)
+        assert!(simple(&[(0.0, 0.0), (4.0, 0.0), (2.0, 0.0), (2.0, 3.0)]));
+        // the same spike across the closing vertex
+        assert!(simple(&[(2.0, 0.0), (2.0, 3.0), (0.0, 0.0), (4.0, 0.0)]));
+        // collinear decimals that are not bit for bit on the line still touch
+        assert!(simple(&[
+            (0.1, 0.1),
+            (0.3, 0.3),
+            (0.5, 0.1),
+            (0.2, 0.2),
+            (0.2, 0.5),
+        ]));
+    }
+
+    #[test]
+    fn polygon_rejects_degenerate_rings() {
+        for (c, want) in [
+            ("POLYGON((0 0,1 1,2 2,0 0))", "no area"),
+            ("POLYGON((0 0,0 0,0 0,0 0))", "3 distinct vertices"),
+            ("POLYGON((0 0,1 0,0 0))", "3 distinct vertices"),
+            ("POLYGON((0 0,1 0))", "3 distinct vertices"),
+            ("POLYGON(())", "Invalid polygon vertex"),
+        ] {
+            let e = parse_polygon(c).unwrap_err();
+            assert!(e.contains(want), "{c}: {e}");
+        }
+    }
+
+    #[test]
+    fn polygon_rejects_holes_and_trailing_text() {
+        let hole = "POLYGON((0 0,10 0,10 10,0 10,0 0),(2 2,4 2,4 4,2 4,2 2))";
+        let e = parse_polygon(hole).unwrap_err();
+        assert!(e.contains("holes are not supported"), "{e}");
+        // a second polygon part is not smuggled through either
+        assert!(parse_polygon("POLYGON((0 0,1 0,1 1,0 0)),((5 5,6 5,6 6,5 5))").is_err());
+        for c in [
+            "POLYGON((0 0,4 0,4 4,0 4,0 0)) junk",
+            "POLYGON((0 0,4 0,4 4,0 4,0 0)",
+            "POLYGON(((0 0,4 0,4 4,0 4,0 0)))",
+            "POLYGON(0 0,4 0,4 4,0 4,0 0)",
+        ] {
+            assert!(parse_polygon(c).is_err(), "{c}");
+        }
+    }
+
+    #[test]
+    fn polygon_rejects_the_antimeridian() {
+        let e = parse_polygon("POLYGON((179 56,-179 56,-179 58,179 58,179 56))").unwrap_err();
+        assert!(e.contains("antimeridian"), "{e}");
+        // one long edge is enough, and 180.5 degrees is over the line
+        let e = parse_polygon("POLYGON((-90.5 0,90 0,90 10,-90.5 10))").unwrap_err();
+        assert!(e.contains("antimeridian"), "{e}");
+        // each half on its own side is fine
+        assert!(parse_polygon("POLYGON((179 56,180 56,180 58,179 58,179 56))").is_ok());
+        assert!(parse_polygon("POLYGON((-180 56,-179 56,-179 58,-180 58))").is_ok());
+    }
+
+    #[test]
+    fn polygon_vertex_cap_counts_vertices_not_the_closing_repeat() {
+        let ring = circle(MAX_POLYGON_VERTICES, (-100.0, 40.0), 5.0, true);
+        assert!(parse_polygon(&wkt(&ring)).is_ok(), "500 vertices");
+        let mut closed = ring.clone();
+        closed.push(ring[0]);
+        assert!(
+            parse_polygon(&wkt(&closed)).is_ok(),
+            "500 vertices, closed by the caller"
+        );
+        let e = parse_polygon(&wkt(&circle(
+            MAX_POLYGON_VERTICES + 1,
+            (-100.0, 40.0),
+            5.0,
+            true,
+        )))
+        .unwrap_err();
+        assert!(e.contains("more than 500 vertices"), "{e}");
+        // far past the cap it stops reading rather than building a huge ring
+        let e = parse_polygon(&wkt(&circle(5000, (-100.0, 40.0), 5.0, true))).unwrap_err();
+        assert!(e.contains("more than 500 vertices"), "{e}");
+    }
+
+    /// The pairwise check is quadratic: the biggest ring, and the one with the most overlapping
+    /// boxes (a spiky star, whose long edges all cross the middle), still validate quickly. The
+    /// bound is far above the few milliseconds it takes, so a slow runner cannot fail it.
+    #[test]
+    fn polygon_validation_of_the_biggest_ring_is_fast() {
+        let star: Vec<Pt> = (0..MAX_POLYGON_VERTICES)
+            .map(|i| {
+                let a = std::f64::consts::TAU * i as f64 / MAX_POLYGON_VERTICES as f64;
+                let r = if i % 2 == 0 { 5.0 } else { 0.5 };
+                (-100.0 + r * a.cos(), 40.0 + r * a.sin())
+            })
+            .collect();
+        for ring in [
+            star,
+            circle(MAX_POLYGON_VERTICES, (-100.0, 40.0), 5.0, false),
+        ] {
+            let start = std::time::Instant::now();
+            parse_polygon(&wkt(&ring)).unwrap();
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(5),
+                "took {:?}",
+                start.elapsed()
+            );
+        }
     }
 
     #[test]

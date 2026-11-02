@@ -686,3 +686,103 @@ async fn test_alerts_are_hidden_by_default_and_cap_status_is_exposed() {
     assert_eq!(st, 200, "{f}");
     assert_eq!(f["properties"]["cap_status"], "Test");
 }
+
+/// `n` random points (1 decimal, lon -120..-70, lat 25..48) from a fixed seed, as the `coords`
+/// of an `/area` request: a self-intersecting ring like the one that took the live service
+/// minutes to answer.
+fn scribble_coords(n: usize) -> String {
+    let mut state = 1u64;
+    let mut next = |lo: f64, hi: f64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let unit = (state >> 11) as f64 / (1u64 << 53) as f64;
+        ((lo + unit * (hi - lo)) * 10.0).round() / 10.0
+    };
+    let mut pts: Vec<String> = (0..n)
+        .map(|_| format!("{}%20{}", next(-120.0, -70.0), next(25.0, 48.0)))
+        .collect();
+    pts.push(pts[0].clone());
+    format!("POLYGON(({}))", pts.join(","))
+}
+
+/// `/area` turns away the rings that would make PostGIS grind or that mean something else than
+/// they say, with a 400 and a message, before touching the database; ordinary rings still work.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn area_rejects_rings_that_are_expensive_or_ambiguous_and_answers_ordinary_ones() {
+    let e = env().await;
+    e.load().await;
+
+    // 200 random vertices: ~2.7 KB of URL, and minutes of ST_MakeValid if it got that far
+    let started = std::time::Instant::now();
+    let (st, h, v, _) = e
+        .get(&format!(
+            "/edr/collections/nws-alerts/area?coords={}&geometry=false&datetime={AT}",
+            scribble_coords(200)
+        ))
+        .await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(h["content-type"], "application/json");
+    assert!(v["detail"].as_str().unwrap().contains("simple ring"), "{v}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "answered in {:?}",
+        started.elapsed()
+    );
+
+    let area =
+        |coords: &str| format!("/edr/collections/nws-alerts/area?coords={coords}&datetime={AT}");
+    let rejected = [
+        // bowtie
+        ("POLYGON((-108%2037,-106%2039,-106%2037,-108%2039))", "simple ring"),
+        // hole
+        (
+            "POLYGON((-109%2036,-105%2036,-105%2040,-109%2040,-109%2036),(-108%2037,-107%2037,-107%2038,-108%2037))",
+            "holes are not supported",
+        ),
+        // 179E to 179W
+        (
+            "POLYGON((179%2056,-179%2056,-179%2058,179%2058,179%2056))",
+            "antimeridian",
+        ),
+        // zero area
+        ("POLYGON((-108%2037,-107%2037,-106%2037,-108%2037))", "no area"),
+    ];
+    for (coords, want) in rejected {
+        let (st, _, v, _) = e.get(&area(coords)).await;
+        assert_eq!(st, 400, "{coords}: {v}");
+        assert!(
+            v["detail"].as_str().unwrap().contains(want),
+            "{coords}: {v}"
+        );
+    }
+    // 501 vertices
+    let ring: Vec<String> = (0..501)
+        .map(|i| {
+            let a = std::f64::consts::TAU * i as f64 / 501.0;
+            format!("{:.4}%20{:.4}", -107.0 + a.cos(), 38.0 + a.sin())
+        })
+        .collect();
+    let (st, _, v, _) = e
+        .get(&area(&format!("POLYGON(({}))", ring.join(","))))
+        .await;
+    assert_eq!(st, 400, "{v}");
+    assert!(
+        v["detail"].as_str().unwrap().contains("500 vertices"),
+        "{v}"
+    );
+
+    // ordinary rings, in both windings, find the Colorado alert
+    for coords in [
+        "POLYGON((-108%2037,-106%2037,-106%2038.5,-108%2038.5,-108%2037))",
+        "POLYGON((-108%2037,-108%2038.5,-106%2038.5,-106%2037,-108%2037))",
+    ] {
+        let (st, _, v, _) = e.get(&area(coords)).await;
+        assert_eq!(st, 200, "{coords}: {v}");
+        assert!(
+            events(&v).contains(&"Winter Storm Warning".to_string()),
+            "{coords}"
+        );
+    }
+}
