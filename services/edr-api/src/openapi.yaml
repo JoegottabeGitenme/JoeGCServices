@@ -208,7 +208,9 @@ paths:
         edges crossing, touching or overlapping, no edge spanning more than 180 degrees of
         longitude (a polygon over the antimeridian is a 400: split it into two requests), and
         not all on one line. Anything else is a 400 with the reason. `datetime` is read as on
-        `/position`. See docs/nws-alerts-api.md.
+        `/position`. `geometry=true` is simplified by default for the polygon's extent (like
+        `/items` for its bbox); `simplify=<degrees>` sets the tolerance, `0` returns full
+        resolution. See docs/nws-alerts-api.md.
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -291,8 +293,9 @@ paths:
         Sample data within a radius of a point.
 
         **`nws-alerts`**: the alerts within `within` (default unit km, at most 500 km) of the point,
-        in the same compact GeoJSON as `/position`; `datetime` is read as on `/position`. The
-        distance is geodetic, so a radius across the antimeridian finds the alerts on both sides of
+        in the same compact GeoJSON as `/position`; `datetime` is read as on `/position`.
+        `geometry=true` is simplified by default for the circle's extent (like `/items` for its
+        bbox; `simplify=0` returns full resolution). The distance is geodetic, so a radius across the antimeridian finds the alerts on both sides of
         +-180 (NWS splits zones there), and one that reaches a pole sees every longitude. See
         docs/nws-alerts-api.md.
       parameters:

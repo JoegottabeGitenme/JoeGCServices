@@ -31,6 +31,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
+use storage::nws_alerts::catalog::radius_boxes;
 use storage::{AlertRegion, AlertSearch, FeedStatus, StoredAlert};
 use wms_common::WmsError;
 
@@ -417,6 +418,11 @@ pub fn parse_point(coords: &str) -> Result<(f64, f64), String> {
 /// overlapping. Anything else PostGIS would have to repair, at a cost the request should not get
 /// to choose.
 pub fn parse_polygon(coords: &str) -> Result<String, String> {
+    parse_polygon_with_bbox(coords).map(|(wkt, _)| wkt)
+}
+
+/// [`parse_polygon`], and the ring's `[west, south, east, north]` box as well.
+pub fn parse_polygon_with_bbox(coords: &str) -> Result<(String, [f64; 4]), String> {
     const SHAPE: &str = "Invalid coords. Use POLYGON((lon lat, lon lat, ...))";
     let c = coords.trim();
     if !c
@@ -494,7 +500,12 @@ pub fn parse_polygon(coords: &str) -> Result<String, String> {
         ));
     }
     let body: Vec<String> = pts.iter().map(|(x, y)| format!("{x} {y}")).collect();
-    Ok(format!("POLYGON(({}))", body.join(", ")))
+    let bbox = pts
+        .iter()
+        .fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, &(x, y)| {
+            [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)]
+        });
+    Ok((format!("POLYGON(({}))", body.join(", ")), bbox))
 }
 
 type Pt = (f64, f64);
@@ -737,8 +748,9 @@ pub fn parse_within(within: Option<&str>, units: Option<&str>) -> Result<f64, St
     Ok(meters)
 }
 
-/// Default simplification tolerance (degrees) for `/items` geometry: about one
-/// pixel of a 1500 px wide view of the bbox, capped at ~5 km.
+/// Default simplification tolerance (degrees) for returned geometry: about one pixel of a 1500 px
+/// wide view of the bbox (of `/items`, the polygon of `/area`, the circle of `/radius`), capped at
+/// ~5 km.
 pub fn default_simplify(bbox: &[f64; 4]) -> f64 {
     // west > east is a box across the antimeridian
     let width = (bbox[2] - bbox[0]).rem_euclid(360.0);
@@ -1096,11 +1108,17 @@ pub async fn position(state: Arc<AppState>, q: NwsQuery) -> Response {
 
 /// `GET /collections/nws-alerts/area?coords=POLYGON((...))`.
 pub async fn area(state: Arc<AppState>, q: NwsQuery) -> Response {
-    let wkt = match parse_polygon(q.coords.as_deref().unwrap_or("")) {
-        Ok(w) => w,
+    let (wkt, bbox) = match parse_polygon_with_bbox(q.coords.as_deref().unwrap_or("")) {
+        Ok(p) => p,
         Err(e) => return bad_request(e),
     };
-    nearby(state, q, AlertRegion::Polygon { wkt }).await
+    nearby(
+        state,
+        q,
+        AlertRegion::Polygon { wkt },
+        default_simplify(&bbox),
+    )
+    .await
 }
 
 /// `GET /collections/nws-alerts/radius?coords=POINT(lon lat)&within=50&within-units=km`.
@@ -1113,10 +1131,27 @@ pub async fn radius(state: Arc<AppState>, q: NwsQuery) -> Response {
         Ok(m) => m,
         Err(e) => return bad_request(e),
     };
-    nearby(state, q, AlertRegion::Radius { lon, lat, meters }).await
+    // the circle's extent: what `/items` would call its bbox
+    let boxes = radius_boxes(lon, lat, meters);
+    let width: f64 = boxes.iter().map(|b| b[2] - b[0]).sum();
+    let extent = [0.0, boxes[0][1], width, boxes[0][3]];
+    nearby(
+        state,
+        q,
+        AlertRegion::Radius { lon, lat, meters },
+        default_simplify(&extent),
+    )
+    .await
 }
 
-async fn nearby(state: Arc<AppState>, q: NwsQuery, region: AlertRegion) -> Response {
+/// `/area` and `/radius`: `default_tolerance` is the geometry simplification when the request gives
+/// no `simplify` (it only matters with `geometry=true`), scaled by the query's extent like `/items`.
+async fn nearby(
+    state: Arc<AppState>,
+    q: NwsQuery,
+    region: AlertRegion,
+    default_tolerance: f64,
+) -> Response {
     let at = match active_time(&q) {
         Ok(t) => t,
         Err(e) => return bad_request(e),
@@ -1133,10 +1168,12 @@ async fn nearby(state: Arc<AppState>, q: NwsQuery, region: AlertRegion) -> Respo
         Ok(l) => l,
         Err(e) => return bad_request(e),
     };
-    let search = match base_search(region, &q, Utc::now(), limit, geometry, include_non_actual) {
+    let mut search = match base_search(region, &q, Utc::now(), limit, geometry, include_non_actual)
+    {
         Ok(s) => s,
         Err(e) => return bad_request(e),
     };
+    search.simplify = Some(search.simplify.unwrap_or(default_tolerance));
     respond(
         &state,
         at_instant(search, at),
@@ -1879,6 +1916,18 @@ mod tests {
         assert!(parse_bbox("170,50,190,60").is_err());
         let e = parse_bbox("-100,50,-100,60").unwrap_err();
         assert!(e.contains("antimeridian"), "{e}");
+    }
+
+    #[test]
+    fn a_polygon_comes_with_its_bbox() {
+        let (wkt, bbox) = parse_polygon_with_bbox("POLYGON((-106 39,-105 39,-105.5 41))").unwrap();
+        assert_eq!(wkt, "POLYGON((-106 39, -105 39, -105.5 41, -106 39))");
+        assert_eq!(bbox, [-106.0, 39.0, -105.0, 41.0]);
+        assert_eq!(
+            parse_polygon("POLYGON((-106 39,-105 39,-105.5 41))").unwrap(),
+            wkt
+        );
+        assert!(parse_polygon_with_bbox("POLYGON((0 0,1 1,2 2,0 0))").is_err());
     }
 
     #[test]

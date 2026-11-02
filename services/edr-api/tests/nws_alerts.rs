@@ -1081,6 +1081,38 @@ async fn response_sizes_and_simplification() {
         ))
         .await;
     assert!(close > 0);
+
+    // /area and /radius with geometry=true are simplified by default too, for the extent of the
+    // polygon / circle, and simplify=0 turns that off
+    let area = "coords=POLYGON((-110%2028,-90%2028,-90%2048,-110%2048,-110%2028))";
+    let radius = "coords=POINT(-100%2038)&within=500";
+    for (route, qs) in [("area", area), ("radius", radius)] {
+        let base = format!("/edr/collections/nws-alerts/{route}?{qs}&datetime={AT}&geometry=true");
+        let (st, _, d, dflt) = e.get(&base).await;
+        assert_eq!(st, 200, "{route}: {d}");
+        let (_, _, _, raw) = e.get(&format!("{base}&simplify=0")).await;
+        let (_, _, _, coarse) = e.get(&format!("{base}&simplify=1")).await;
+        println!("{route}: simplify=0 {raw} B; default {dflt} B; simplify=1 {coarse} B");
+        assert!(
+            dflt * 5 < raw,
+            "{route}: the default must shrink a 20k-vertex geometry a lot ({dflt} vs {raw})"
+        );
+        assert!(
+            coarse <= dflt,
+            "{route}: an explicit tolerance still applies"
+        );
+        assert!(
+            feature(&d, "Flood Watch")["geometry"]["coordinates"].is_array(),
+            "{route}: still a polygon"
+        );
+        // geometry is still opt-in
+        let (_, _, ng, _) = e
+            .get(&format!(
+                "/edr/collections/nws-alerts/{route}?{qs}&datetime={AT}"
+            ))
+            .await;
+        assert!(feature(&ng, "Flood Watch")["geometry"].is_null(), "{route}");
+    }
 }
 
 /// The feed's "Test Message" (CAP status Test) is stored, but not served unless asked for.
