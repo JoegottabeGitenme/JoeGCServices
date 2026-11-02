@@ -37,9 +37,9 @@ items), `datetime=<instant>` (the alerts in force at that moment; default now, s
 [`datetime` instants](#datetime-instants)), `simplify=<degrees>` (the geometry tolerance, `0`
 disables). Without `simplify`, `/items`, `/area` and `/radius` simplify the geometry they return to
 about a pixel of a 1500 px wide view of the query's extent (the bbox, the polygon's bounding box, the
-circle), at most 0.05 degrees, so a CONUS view or a continent-sized area stays small (a few hundred
-KB for every alert in the country, instead of tens of MB); `/position` returns the full geometry
-unless you give a `simplify`.
+circle), at most 0.05 degrees, so a CONUS view or a continent-sized area stays small (every alert
+in the country is 1-2 MB, instead of tens); `/position` returns the full geometry unless you give a
+`simplify`.
 `/items` also takes `status=active|all` (with `all`, `datetime=from/to` returns history,
 default window the last 24 h; superseded messages hidden unless `include_superseded=true`),
 `limit` (default 500, max 2000; `"truncated": true` when cut).
