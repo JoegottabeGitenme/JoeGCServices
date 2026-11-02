@@ -32,6 +32,20 @@ items), `datetime=<instant>` (the alerts in force at that moment; default now, s
 default window the last 24 h; superseded messages hidden unless `include_superseded=true`),
 `limit` (default 500, max 2000; `"truncated": true` when cut).
 
+**Errors.** A mistake in the request is a `4xx` with the JSON exception body (`type`, `title`,
+`status`, `detail`; `application/json`), on every route, never a plain-text body or a `5xx`:
+
+- a query string that does not parse: `limit=abc`, `limit=`, `simplify=abc`, a parameter given
+  twice (`detail` carries the reason);
+- `limit` below 1 (`limit=0`, `limit=-5`). Above the maximum it is cut to 2000, not refused;
+- `simplify` negative or not a finite number (`-1`, `NaN`, `inf`, `1e999`). `0` is how to ask for no
+  simplification;
+- a control character (a NUL, a newline, ...) in `severity` or `event`, or in the alert id;
+- a `datetime` interval that ends before it starts.
+
+A `+` in a UTC offset has to be sent as `%2B` (`datetime=2026-11-01T18:00:00%2B00:00`); a bare `+`
+reaches the server as a space, and the datetime is refused.
+
 ### `datetime` instants
 
 `datetime=<instant>` on `/position`, `/area`, `/radius` and `/items` (`status=active`) answers

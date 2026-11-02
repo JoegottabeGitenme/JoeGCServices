@@ -19,9 +19,9 @@
 //! outage as "no alerts".
 
 use axum::{
-    extract::{Extension, Path, Query, RawQuery},
+    extract::{rejection::QueryRejection, Extension, Path, Query, RawQuery},
     http::{header, HeaderMap, StatusCode},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use edr_protocol::collections::geojson_output_formats;
@@ -625,10 +625,17 @@ pub fn parse_when(dt: Option<&str>, now: DateTime<Utc>) -> Result<When, String> 
         return Ok(When::None);
     };
     if let Some((a, b)) = dt.split_once('/') {
-        return Ok(When::Interval(
-            parse_instant(a, now)?,
-            parse_instant(b, now)?,
-        ));
+        let (from, to) = (parse_instant(a, now)?, parse_instant(b, now)?);
+        if let (Some(from), Some(to)) = (from, to) {
+            if from > to {
+                return Err(format!(
+                    "Invalid datetime interval: it starts at {} but ends at {} (use from/to)",
+                    ts(from),
+                    ts(to)
+                ));
+            }
+        }
+        return Ok(When::Interval(from, to));
     }
     Ok(match parse_instant(dt, now)? {
         Some(t) => When::Instant(t),
@@ -644,6 +651,37 @@ pub fn csv(s: Option<&str>) -> Vec<String> {
             .collect()
     })
     .unwrap_or_default()
+}
+
+/// A `severity=` / `event=` list: [`csv`], but a control character in an item is an error (a NUL
+/// cannot be sent to Postgres at all, and none belongs in an event or severity name).
+pub fn filter_list(name: &str, s: Option<&str>) -> Result<Vec<String>, String> {
+    let items = csv(s);
+    if items.iter().any(|t| t.chars().any(char::is_control)) {
+        return Err(format!("{name}: control characters are not allowed"));
+    }
+    Ok(items)
+}
+
+/// `limit=`: 1 up to [`MAX_ITEMS_LIMIT`] (more is cut to it, as documented), default `default`.
+/// Zero or less is a mistake, not a request for one alert.
+pub fn parse_limit(limit: Option<i64>, default: i64) -> Result<i64, String> {
+    match limit {
+        None => Ok(default),
+        Some(l) if l < 1 => Err(format!("limit must be at least 1 (got {l})")),
+        Some(l) => Ok(l.min(MAX_ITEMS_LIMIT)),
+    }
+}
+
+/// `simplify=` in degrees: `0` (no simplification) or more. Negative and non-finite values are
+/// errors rather than another way to say `0`.
+pub fn parse_simplify(simplify: Option<f64>) -> Result<Option<f64>, String> {
+    match simplify {
+        Some(t) if !t.is_finite() || t < 0.0 => Err(format!(
+            "simplify must be a number of degrees, 0 or more (got {t})"
+        )),
+        other => Ok(other),
+    }
 }
 
 pub fn parse_bool(s: Option<&str>, default: bool) -> Result<bool, String> {
@@ -778,15 +816,19 @@ pub fn query_from_raw(raw: Option<&str>) -> Result<NwsQuery, Response> {
         .map_err(|_| bad_request("Malformed query string"))?;
     Query::<NwsQuery>::try_from_uri(&uri)
         .map(|q| q.0)
-        .map_err(|e| bad_request(e.to_string()))
+        .map_err(|e| bad_request(e.body_text()))
 }
 
 /// `GET /collections/:collection_id/position`: alerts at the point for
 /// `nws-alerts`, otherwise the grid position query.
+///
+/// The generic parameters are taken as a `Result` so that a query string `nws-alerts` can read
+/// but the grid struct cannot (`limit=abc`, a duplicated `coords`) reaches [`query_from_raw`] and
+/// its JSON error, instead of axum's plain-text rejection. Other collections still get that.
 pub async fn position_route(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
-    Query(params): Query<super::position::PositionQueryParams>,
+    params: Result<Query<super::position::PositionQueryParams>, QueryRejection>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
 ) -> Response {
@@ -796,20 +838,25 @@ pub async fn position_route(
             Err(r) => r,
         };
     }
-    super::position::position_handler(
-        Extension(state),
-        Path(collection_id),
-        Query(params),
-        headers,
-    )
-    .await
+    match params {
+        Ok(params) => {
+            super::position::position_handler(
+                Extension(state),
+                Path(collection_id),
+                params,
+                headers,
+            )
+            .await
+        }
+        Err(rejection) => rejection.into_response(),
+    }
 }
 
 /// `GET /collections/:collection_id/area`, `nws-alerts` aware.
 pub async fn area_route(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
-    Query(params): Query<super::area::AreaQueryParams>,
+    params: Result<Query<super::area::AreaQueryParams>, QueryRejection>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
 ) -> Response {
@@ -819,20 +866,19 @@ pub async fn area_route(
             Err(r) => r,
         };
     }
-    super::area::area_handler(
-        Extension(state),
-        Path(collection_id),
-        Query(params),
-        headers,
-    )
-    .await
+    match params {
+        Ok(params) => {
+            super::area::area_handler(Extension(state), Path(collection_id), params, headers).await
+        }
+        Err(rejection) => rejection.into_response(),
+    }
 }
 
 /// `GET /collections/:collection_id/radius`, `nws-alerts` aware.
 pub async fn radius_route(
     Extension(state): Extension<Arc<AppState>>,
     Path(collection_id): Path<String>,
-    Query(params): Query<super::radius::RadiusQueryParams>,
+    params: Result<Query<super::radius::RadiusQueryParams>, QueryRejection>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
 ) -> Response {
@@ -842,13 +888,34 @@ pub async fn radius_route(
             Err(r) => r,
         };
     }
-    super::radius::radius_handler(
-        Extension(state),
-        Path(collection_id),
-        Query(params),
-        headers,
-    )
-    .await
+    match params {
+        Ok(params) => {
+            super::radius::radius_handler(Extension(state), Path(collection_id), params, headers)
+                .await
+        }
+        Err(rejection) => rejection.into_response(),
+    }
+}
+
+/// `GET /collections/:collection_id/items`, `nws-alerts` aware (see [`position_route`]).
+pub async fn items_route(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(collection_id): Path<String>,
+    params: Result<Query<super::items::ItemsQueryParams>, QueryRejection>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    if is_nws_collection(&state, &collection_id).await {
+        return match query_from_raw(raw.as_deref()) {
+            Ok(q) => items(state, q).await,
+            Err(r) => r,
+        };
+    }
+    match params {
+        Ok(params) => {
+            super::items::items_handler(Extension(state), Path(collection_id), params).await
+        }
+        Err(rejection) => rejection.into_response(),
+    }
 }
 
 /// True when `collection_id` is configured with `observation_source: nws_alerts`.
@@ -908,19 +975,19 @@ fn base_search(
     limit: i64,
     geometry: bool,
     include_non_actual: bool,
-) -> AlertSearch {
-    AlertSearch {
+) -> Result<AlertSearch, String> {
+    Ok(AlertSearch {
         region,
         now,
         window: None,
         include_superseded: false,
-        severities: csv(q.severity.as_deref()),
-        events: csv(q.event.as_deref()),
+        severities: filter_list("severity", q.severity.as_deref())?,
+        events: filter_list("event", q.event.as_deref())?,
         limit,
         with_geometry: geometry,
-        simplify: q.simplify,
+        simplify: parse_simplify(q.simplify)?,
         include_non_actual,
-    }
+    })
 }
 
 /// Scope an "active at" search to an explicit `datetime`: the alerts in force at that instant,
@@ -971,14 +1038,17 @@ pub async fn position(state: Arc<AppState>, q: NwsQuery) -> Response {
         Ok(g) => g,
         Err(e) => return bad_request(e),
     };
-    let search = base_search(
+    let search = match base_search(
         AlertRegion::Point { lon, lat },
         &q,
         Utc::now(),
         NEARBY_LIMIT,
         geometry,
         include_non_actual,
-    );
+    ) {
+        Ok(s) => s,
+        Err(e) => return bad_request(e),
+    };
     respond(&state, at_instant(search, at), vec![]).await
 }
 
@@ -1017,11 +1087,14 @@ async fn nearby(state: Arc<AppState>, q: NwsQuery, region: AlertRegion) -> Respo
         Ok(g) => g,
         Err(e) => return bad_request(e),
     };
-    let limit = q
-        .limit
-        .unwrap_or(DEFAULT_ITEMS_LIMIT)
-        .clamp(1, MAX_ITEMS_LIMIT);
-    let search = base_search(region, &q, Utc::now(), limit, geometry, include_non_actual);
+    let limit = match parse_limit(q.limit, DEFAULT_ITEMS_LIMIT) {
+        Ok(l) => l,
+        Err(e) => return bad_request(e),
+    };
+    let search = match base_search(region, &q, Utc::now(), limit, geometry, include_non_actual) {
+        Ok(s) => s,
+        Err(e) => return bad_request(e),
+    };
     respond(
         &state,
         at_instant(search, at),
@@ -1066,20 +1139,23 @@ pub async fn items(state: Arc<AppState>, q: NwsQuery) -> Response {
         Ok(w) => w,
         Err(e) => return bad_request(e),
     };
-    let limit = q
-        .limit
-        .unwrap_or(DEFAULT_ITEMS_LIMIT)
-        .clamp(1, MAX_ITEMS_LIMIT);
+    let limit = match parse_limit(q.limit, DEFAULT_ITEMS_LIMIT) {
+        Ok(l) => l,
+        Err(e) => return bad_request(e),
+    };
 
-    let mut search = base_search(
+    let mut search = match base_search(
         AlertRegion::Bbox(bbox),
         &q,
         wall,
         limit,
         geometry,
         include_non_actual,
-    );
-    search.simplify = Some(q.simplify.unwrap_or_else(|| default_simplify(&bbox)));
+    ) {
+        Ok(s) => s,
+        Err(e) => return bad_request(e),
+    };
+    search.simplify = Some(search.simplify.unwrap_or_else(|| default_simplify(&bbox)));
     match (all, when) {
         (false, When::None) => {}
         // `datetime=now` is the wall clock, not an instant of its own
@@ -1113,6 +1189,10 @@ pub async fn items(state: Arc<AppState>, q: NwsQuery) -> Response {
 
 /// `GET /collections/nws-alerts/items/{id}`: one alert in full, in any state.
 pub async fn item(state: Arc<AppState>, id: String, q: NwsQuery) -> Response {
+    // (a NUL, which no id has, cannot be sent to Postgres at all)
+    if id.chars().any(char::is_control) {
+        return bad_request("Invalid alert id: control characters are not allowed");
+    }
     let geometry = match parse_bool(q.geometry.as_deref(), true) {
         Ok(g) => g,
         Err(e) => return bad_request(e),
@@ -1136,7 +1216,7 @@ pub async fn item(state: Arc<AppState>, id: String, q: NwsQuery) -> Response {
 pub async fn item_route_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path((collection_id, feature_id)): Path<(String, String)>,
-    Query(q): Query<NwsQuery>,
+    RawQuery(raw): RawQuery,
 ) -> Response {
     if !is_nws_collection(&state, &collection_id).await {
         return error(
@@ -1146,7 +1226,10 @@ pub async fn item_route_handler(
             )),
         );
     }
-    item(state, feature_id, q).await
+    match query_from_raw(raw.as_deref()) {
+        Ok(q) => item(state, feature_id, q).await,
+        Err(r) => r,
+    }
 }
 
 /// The data-age sentence of the collection description, from [`feed_meta`]'s block.
@@ -1904,6 +1987,115 @@ mod tests {
         assert!(parse_within(None, None).is_err());
         assert!(default_simplify(&[-125.0, 24.0, -66.0, 50.0]) <= 0.05);
         assert!(default_simplify(&[-105.3, 39.9, -105.2, 40.0]) < 0.0001);
+    }
+
+    #[test]
+    fn filters_reject_control_characters_but_not_ordinary_names() {
+        assert_eq!(
+            filter_list("event", Some("Tornado Warning, Flash Flood Warning,,")).unwrap(),
+            vec!["Tornado Warning", "Flash Flood Warning"]
+        );
+        assert!(filter_list("event", None).unwrap().is_empty());
+        for bad in [
+            "a\0b",
+            "\0",
+            "Severe,a\0",
+            "x\u{7f}",
+            "a\tb",
+            "a\nb",
+            "\u{1b}[0m",
+        ] {
+            let e = filter_list("severity", Some(bad)).unwrap_err();
+            assert!(
+                e.starts_with("severity: control characters"),
+                "{bad:?}: {e}"
+            );
+        }
+        // padding is trimmed away like any other, and non-ASCII names are fine
+        assert_eq!(
+            filter_list("event", Some("\tTornado Warning\n")).unwrap(),
+            vec!["Tornado Warning"]
+        );
+        assert_eq!(filter_list("event", Some("Ouragan, ñ")).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn limit_is_one_or_more_and_cut_to_the_maximum() {
+        assert_eq!(parse_limit(None, 500), Ok(500));
+        assert_eq!(parse_limit(Some(1), 500), Ok(1));
+        assert_eq!(parse_limit(Some(2000), 500), Ok(2000));
+        assert_eq!(parse_limit(Some(2001), 500), Ok(2000));
+        assert_eq!(parse_limit(Some(i64::MAX), 500), Ok(2000));
+        for bad in [0, -1, -5, i64::MIN] {
+            let e = parse_limit(Some(bad), 500).unwrap_err();
+            assert!(e.contains("at least 1"), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn simplify_is_zero_or_a_positive_finite_number_of_degrees() {
+        assert_eq!(parse_simplify(None), Ok(None));
+        assert_eq!(parse_simplify(Some(0.0)), Ok(Some(0.0)));
+        assert_eq!(parse_simplify(Some(0.01)), Ok(Some(0.01)));
+        for bad in [-1.0, -0.000001, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(parse_simplify(Some(bad)).is_err(), "{bad}");
+        }
+        // "1e999" is infinity once parsed, so it is refused like `inf`
+        let q = query_from_raw(Some("simplify=1e999")).unwrap();
+        assert!(parse_simplify(q.simplify).is_err());
+    }
+
+    #[test]
+    fn a_reversed_datetime_interval_is_an_error() {
+        let now = t0();
+        let e = parse_when(Some("2026-11-02T00:00:00Z/2026-11-01T00:00:00Z"), now).unwrap_err();
+        assert!(
+            e.contains("starts at 2026-11-02T00:00:00Z but ends at 2026-11-01T00:00:00Z"),
+            "{e}"
+        );
+        assert!(parse_when(Some("now/2026-11-01T00:00:00Z"), now).is_err());
+        // equal ends are an instant-long window; open ends cannot be reversed
+        let t = Utc.with_ymd_and_hms(2026, 11, 1, 18, 0, 0).unwrap();
+        assert_eq!(
+            parse_when(Some("2026-11-01T18:00:00Z/2026-11-01T18:00:00Z"), now).unwrap(),
+            When::Interval(Some(t), Some(t))
+        );
+        assert!(parse_when(Some("../2026-11-01T00:00:00Z"), now).is_ok());
+        assert!(parse_when(Some("2026-11-01T00:00:00Z/.."), now).is_ok());
+    }
+
+    /// A rejected query string is the handler's JSON exception, with the reason, not axum's text.
+    #[tokio::test]
+    async fn a_query_string_that_does_not_parse_is_a_json_400_with_the_reason() {
+        for qs in [
+            "limit=abc",
+            "limit=",
+            "limit=99999999999999999999",
+            "simplify=abc",
+            "simplify=",
+            "coords=1,2&coords=3,4",
+        ] {
+            let r = query_from_raw(Some(qs)).unwrap_err();
+            assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{qs}");
+            assert_eq!(
+                r.headers()[header::CONTENT_TYPE],
+                "application/json",
+                "{qs}"
+            );
+            let body = axum::body::to_bytes(r.into_body(), 1 << 16).await.unwrap();
+            let v: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(v["status"], 400, "{qs}");
+            let detail = v["detail"].as_str().unwrap();
+            assert!(
+                detail.starts_with("Failed to deserialize query string:"),
+                "{qs}: {detail}"
+            );
+            assert!(
+                detail.len() > "Failed to deserialize query string:".len() + 5,
+                "reason kept: {detail}"
+            );
+        }
+        assert!(query_from_raw(Some("limit=5&simplify=0.1&event=Flood%20Watch")).is_ok());
     }
 
     #[test]
