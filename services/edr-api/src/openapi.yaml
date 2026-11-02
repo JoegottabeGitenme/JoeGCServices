@@ -58,14 +58,27 @@ paths:
     get:
       operationId: getApiDefinition
       summary: OpenAPI definition
-      description: Returns the OpenAPI 3.0 definition for this API
+      description: |
+        Returns the OpenAPI 3.0 definition for this API: JSON
+        (`application/vnd.oai.openapi+json;version=3.0`), or with `f=yaml` the YAML source
+        (`application/vnd.oai.openapi;version=3.0`).
+      parameters:
+        - name: f
+          in: query
+          required: false
+          description: "`yaml` (or `yml`) for the YAML source; anything else is JSON."
+          schema:
+            type: string
       responses:
         '200':
           description: OpenAPI definition
           content:
-            application/openapi+json;version=3.0:
+            application/vnd.oai.openapi+json;version=3.0:
               schema:
                 type: object
+            application/vnd.oai.openapi;version=3.0:
+              schema:
+                type: string
 
   /conformance:
     get:
@@ -97,7 +110,13 @@ paths:
     get:
       operationId: getCollection
       summary: Get collection metadata
-      description: Returns metadata about a specific collection
+      description: |
+        Returns metadata about a specific collection.
+
+        **`nws-alerts`**: advertises GeoJSON only (`application/geo+json`; there is no
+        CoverageJSON), an `items` link to `/collections/nws-alerts/items` and no `instances` or
+        `locations` links. The `description` ends with the live data age (the cached
+        `/collections` list has none). `Cache-Control: public, max-age=60`.
       parameters:
         - $ref: '#/components/parameters/collectionId'
       responses:
@@ -114,7 +133,54 @@ paths:
     get:
       operationId: getPosition
       summary: Position query
-      description: Sample data at a single point location
+      description: |
+        Sample data at a single point location.
+
+        **`nws-alerts`**: the NWS alerts in force at the point, worst first (CAP severity, then
+        warning / watch / advisory / statement, then urgency, certainty and the newest
+        `effective`), as a compact
+        GeoJSON FeatureCollection (`geometry` null unless `geometry=true`). Each feature has
+        `headline` (NWS' broadcast text when it gave one, in which `TODAY` / `TONIGHT` are
+        relative to the day it was `sent`) and `formal_headline` (NWS' own, dated). Extra parameters:
+        `severity=Severe,Extreme` and `event=Tornado Warning,...` (comma lists, case-insensitive),
+        `geometry=true|false`; `datetime` must be a single instant. Only CAP `status: Actual`
+        alerts are returned; `include_non_actual=true` adds the Test,
+        Exercise, System and Draft ones (every feature carries `cap_status`).
+        Alerts whose onset is still ahead are included with `status: upcoming`. `ends` is the end
+        time NWS gave the hazard and is `null` when it gave none; `expires` (always present) is when
+        the message expires, and an alert with no `ends` is treated as over then. The body has a
+        top-level `meta` (`source`, `last_success_at`, `data_age_seconds`, `stale`). Responses are
+        cached for up to 60 s (`Cache-Control: public, max-age=60`), so `timeStamp` and `meta`
+        describe when the body was generated: the data's true age is `data_age_seconds` plus the
+        time since `timeStamp` (on the client's clock; not the `Age` header, which leaves out the
+        time in the browser's cache).
+        `/area` and `/radius` answer the same way for a polygon / `within` distance. Returned
+        geometry is a `MultiPolygon` (or `null`) rounded to 5 decimals and valid as returned, also
+        after `simplify`. See docs/nws-alerts-api.md.
+
+        **`datetime` on `nws-alerts`** (`/position`, `/area`, `/radius` and `/items` with
+        `status=active`): without it, or with `datetime=now`, the alerts in force now. With an instant, the alerts that
+        were in force at that moment: issued by then (`effective`, else `sent`), not yet replaced
+        by a newer message (over from the moment the replacement was issued; of several the first
+        issued), not yet ended (the poll that stopped listing it; a cancellation is over the moment
+        it is issued and is never returned) and before their end time (NWS' `ends`, else
+        `expires`; exclusive). An alert issued after the instant is not returned; one since superseded or
+        ended is, if it was in force then. Each feature's `status` is as of the instant:
+        `upcoming` while its onset is still ahead, otherwise `active`. History goes back only as
+        far as retention keeps ended and replaced alerts (7 days by default); an older instant
+        returns what is still stored, not an error.
+
+        **Output format on `nws-alerts`** is GeoJSON only (`application/geo+json`) on this and
+        every other `nws-alerts` query: `f=GeoJSON` (or `json`) is accepted, any other `f`
+        (`CoverageJSON`, `png`, ...) is a 400, and without `f` an `Accept` that excludes
+        `application/geo+json` and `application/json` (`Accept: application/vnd.cov+json` alone)
+        is a 406.
+
+        **Errors on `nws-alerts`** are 4xx with the JSON exception body (`status`, `detail`),
+        never plain text or a 5xx: a query string that does not parse (`limit=abc`, a repeated
+        parameter), `limit` below 1, `simplify` negative or not finite, a control character in
+        `severity` or `event`, and a `datetime` interval that ends before it starts are all 400
+        (as is an alert id that is not UTF-8 once unescaped, on `/items/{featureId}`).
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -137,6 +203,17 @@ paths:
           description: Invalid request parameters
         '404':
           description: Collection not found
+        '406':
+          description: |
+            `nws-alerts`: no `f` was given and the `Accept` header excludes both
+            `application/geo+json` and `application/json`. JSON exception body.
+        '503':
+          description: |
+            `nws-alerts` only: the query did not finish within the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s, time spent waiting for a lock included)
+            and was cancelled. JSON exception body (`status: 503`) and `Retry-After: 5`. The
+            database may only have been busy: try again shortly; a large area that keeps failing
+            needs to be smaller or simpler.
 
   /collections/{collectionId}/area:
     get:
@@ -154,6 +231,16 @@ paths:
         
         PNG output requires exactly one parameter (use parameter-name to select).
         Metadata is embedded in PNG tEXt chunks and returned in response headers.
+
+        **`nws-alerts`**: the alerts intersecting the polygon, in the same compact GeoJSON as
+        `/position`. `coords` is one `POLYGON((lon lat, ...))` ring, either winding, closed for
+        you, and must be a simple ring: at most 500 vertices, no inner rings (holes), no two
+        edges crossing, touching or overlapping, no edge spanning more than 180 degrees of
+        longitude (a polygon over the antimeridian is a 400: split it into two requests), and
+        not all on one line. Anything else is a 400 with the reason. `datetime` is read as on
+        `/position`. `geometry=true` is simplified by default for the polygon's extent (like
+        `/items` for its bbox); `simplify=<degrees>` sets the tolerance, `0` returns full
+        resolution. See docs/nws-alerts-api.md.
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -168,6 +255,9 @@ paths:
             Feature collections only (`trails`, storm events) and point-observation collections:
             maximum features returned (trails: clamped to 1-5000, default 1000). Ignored by
             gridded collections. Detect truncation with `numberReturned == limit`.
+            `nws-alerts`: default 500, at most 2000 (more is cut to it, `truncated: true` says
+            when the list was cut, by this limit or by the 50 MB the geometry of an answer may
+            come to), 0 or less is a 400.
           schema:
             type: integer
             minimum: 1
@@ -220,12 +310,31 @@ paths:
           description: Invalid request parameters
         '404':
           description: Collection not found, or (instance path) a run or time the instance does not hold
+        '406':
+          description: |
+            `nws-alerts`: no `f` was given and the `Accept` header excludes both
+            `application/geo+json` and `application/json`. JSON exception body.
+        '503':
+          description: |
+            `nws-alerts` only: the query did not finish within the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s, time spent waiting for a lock included)
+            and was cancelled. JSON exception body (`status: 503`) and `Retry-After: 5`. The
+            database may only have been busy: try again shortly; a large area that keeps failing
+            needs to be smaller or simpler.
 
   /collections/{collectionId}/radius:
     get:
       operationId: getRadius
       summary: Radius query
-      description: Sample data within a radius of a point
+      description: |
+        Sample data within a radius of a point.
+
+        **`nws-alerts`**: the alerts within `within` (default unit km, at most 500 km) of the point,
+        in the same compact GeoJSON as `/position`; `datetime` is read as on `/position`.
+        `geometry=true` is simplified by default for the circle's extent (like `/items` for its
+        bbox; `simplify=0` returns full resolution). The distance is geodetic, so a radius across the antimeridian finds the alerts on both sides of
+        +-180 (NWS splits zones there), and one that reaches a pole sees every longitude. See
+        docs/nws-alerts-api.md.
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -257,6 +366,9 @@ paths:
             Feature collections only (`trails`, storm events) and point-observation collections:
             maximum features returned (trails: clamped to 1-5000, default 1000). Ignored by
             gridded collections. Detect truncation with `numberReturned == limit`.
+            `nws-alerts`: default 500, at most 2000 (more is cut to it, `truncated: true` says
+            when the list was cut, by this limit or by the 50 MB the geometry of an answer may
+            come to), 0 or less is a 400.
           schema:
             type: integer
             minimum: 1
@@ -286,6 +398,17 @@ paths:
           description: Invalid request parameters
         '404':
           description: Collection not found
+        '406':
+          description: |
+            `nws-alerts`: no `f` was given and the `Accept` header excludes both
+            `application/geo+json` and `application/json`. JSON exception body.
+        '503':
+          description: |
+            `nws-alerts` only: the query did not finish within the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s, time spent waiting for a lock included)
+            and was cancelled. JSON exception body (`status: 503`) and `Retry-After: 5`. The
+            database may only have been busy: try again shortly; a large area that keeps failing
+            needs to be smaller or simpler.
 
   /collections/{collectionId}/trajectory:
     get:
@@ -500,6 +623,77 @@ paths:
           description: Invalid request parameters, or the collection does not support /items
         '404':
           description: Collection not found
+        '406':
+          description: |
+            `nws-alerts`: no `f` was given and the `Accept` header excludes both
+            `application/geo+json` and `application/json`. JSON exception body.
+        '503':
+          description: |
+            `nws-alerts` only: the query did not finish within the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s, time spent waiting for a lock included)
+            and was cancelled. JSON exception body (`status: 503`) and `Retry-After: 5`. The
+            database may only have been busy: try again shortly; a large area that keeps failing
+            needs to be smaller or simpler.
+
+  /collections/{collectionId}/items/{featureId}:
+    get:
+      operationId: getItem
+      summary: One feature in full (nws-alerts)
+      description: |
+        `nws-alerts` only: one alert in any state (active, upcoming, ended, superseded) with all
+        text (`description`, `instruction`, raw originals), `sections`, `vtec`, `parameters`
+        (NWS' without `BLOCKCHANNEL`, `EAS-ORG`, `CMAMtext`, `CMAMlongtext`), `ugc`, `zones`,
+        `references`, `message_type`, `category`, `response`, `is_marine` and lifecycle
+        (`superseded_by`, `superseded_at`, `ended_at` (set when NWS stops listing the alert),
+        `first_seen_at`, `last_seen_at` (the last poll that listed the alert), `updated_at`
+        (when the message last changed)). `featureId` is the NWS URN (`urn:oid:2.49.0.1.840.0....`), URL-encoded
+        or raw. `geometry=false` omits the geometry.
+
+        `/items` for `nws-alerts` takes `bbox` (`west,south,east,north`; west greater than east is
+        a box across the antimeridian, e.g. `170,50,-170,60`, 20 degrees wide; no width or no
+        height is a 400), `datetime` (instant: the alerts in force then, as
+        on `/position`; interval needs `status=all`), `status=active|all` (default active),
+        `include_superseded=true` (`status=all` only: also messages a newer one replaced),
+        `severity`, `event`, `limit`
+        (default 500, max 2000, 0 or less is a 400; `truncated: true` when cut, also when the
+        geometry of the answer would pass `max_response_size_mb`, 50 MB: the alerts beyond it are
+        left out), `geometry`
+        (default true), `simplify` (degrees; default scales with the bbox, `0` disables, negative
+        or not finite is a 400) and
+        `include_non_actual=true` (also Test/Exercise/System/Draft alerts; default Actual only).
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - name: featureId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: urn:oid:2.49.0.1.840.0.0123456789abcdef.001.1
+      responses:
+        '200':
+          description: The alert as a GeoJSON Feature
+          content:
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+        '400':
+          description: |
+            `nws-alerts`: a `featureId` with a control character or that is not UTF-8 once
+            unescaped, a query string that does not parse, `geometry` that is not a boolean, or
+            an `f` other than GeoJSON. JSON exception body.
+        '404':
+          description: Collection or alert not found
+        '406':
+          description: |
+            `nws-alerts`: no `f` was given and the `Accept` header excludes both
+            `application/geo+json` and `application/json`. JSON exception body.
+        '503':
+          description: |
+            `nws-alerts` only: the query did not finish within the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s, time spent waiting for a lock included)
+            and was cancelled. JSON exception body (`status: 503`) and `Retry-After: 5`. The
+            database may only have been busy: try again shortly; a large area that keeps failing
+            needs to be smaller or simpler.
 
   /collections/{collectionId}/items/{featureId}/conditions:
     get:

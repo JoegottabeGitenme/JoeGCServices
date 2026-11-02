@@ -107,6 +107,16 @@ pub struct SourceConfig {
     /// First year to backfill (for storm_events_csv sources).
     #[serde(default)]
     pub backfill_start_year: Option<i32>,
+    /// NWS alerts (`nws_alerts`): `User-Agent` sent to api.weather.gov (NWS requires a
+    /// descriptive one with contact details).
+    #[serde(default)]
+    pub user_agent: Option<String>,
+    /// NWS alerts: zone geometry fetches in flight at once (default 4).
+    #[serde(default)]
+    pub zone_fetch_concurrency: Option<usize>,
+    /// NWS alerts: pause after each zone request, per lane (default 100 ms).
+    #[serde(default)]
+    pub zone_request_delay_ms: Option<u64>,
     /// GLM-specific (`aws_s3_glm`): the platform id in the file names, e.g. `G19`.
     #[serde(default)]
     pub satellite: Option<String>,

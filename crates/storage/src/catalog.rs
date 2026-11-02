@@ -210,6 +210,88 @@ impl Catalog {
         Ok(())
     }
 
+    /// Run database migrations for NWS alerts (requires PostGIS).
+    ///
+    /// Creates `nws_zones`, `nws_alerts` and `nws_alerts_status`. Call after
+    /// `migrate_observations()` (which enables PostGIS).
+    pub async fn migrate_nws_alerts(&self) -> WmsResult<()> {
+        for statement in NWS_ALERTS_SCHEMA_SQL.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        WmsError::DatabaseError(format!("NWS alerts migration failed: {}", e))
+                    })?;
+            }
+        }
+        self.add_nws_alerts_columns().await
+    }
+
+    /// Add the [`NWS_ALERTS_ADDED_COLUMNS`] a table made by an older release lacks.
+    ///
+    /// `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` takes an `ACCESS EXCLUSIVE` lock before it looks
+    /// whether the column is there, and the EDR API's reads queue behind a waiting lock request:
+    /// run at every start, it would stall them whenever a transaction on `nws_alerts` is still
+    /// open (they run under a time limit, so they would fail). So the columns are looked up first
+    /// and the `ALTER` runs only for one that is missing, under a `lock_timeout` short enough that
+    /// the queue behind it never builds up, and is tried again.
+    async fn add_nws_alerts_columns(&self) -> WmsResult<()> {
+        let failed =
+            |e: sqlx::Error| WmsError::DatabaseError(format!("NWS alerts migration failed: {}", e));
+        let names: Vec<&str> = NWS_ALERTS_ADDED_COLUMNS.iter().map(|(n, _)| *n).collect();
+        let present: Vec<String> = sqlx::query_scalar(
+            "SELECT attname::text FROM pg_attribute \
+             WHERE attrelid = to_regclass('nws_alerts') AND attname = ANY($1) AND NOT attisdropped",
+        )
+        .bind(&names)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(failed)?;
+        for (name, sql_type) in NWS_ALERTS_ADDED_COLUMNS {
+            if present.iter().any(|p| p == name) {
+                continue;
+            }
+            for attempt in 1.. {
+                let mut tx = self.pool.begin().await.map_err(failed)?;
+                let added = async {
+                    sqlx::query(&format!(
+                        "SET LOCAL lock_timeout = {NWS_ALERTS_ALTER_LOCK_TIMEOUT_MS}"
+                    ))
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query(&format!(
+                        "ALTER TABLE nws_alerts ADD COLUMN IF NOT EXISTS {name} {sql_type}"
+                    ))
+                    .execute(&mut *tx)
+                    .await
+                };
+                match added.await {
+                    Ok(_) => {
+                        tx.commit().await.map_err(failed)?;
+                        break;
+                    }
+                    // 55P03: the lock was not granted in time; whoever holds it will let go
+                    Err(sqlx::Error::Database(d))
+                        if d.code().as_deref() == Some("55P03")
+                            && attempt < NWS_ALERTS_ALTER_ATTEMPTS =>
+                    {
+                        tracing::warn!(
+                            column = name,
+                            attempt,
+                            "NWS alerts migration: nws_alerts is locked; trying again"
+                        );
+                        drop(tx);
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                    Err(e) => return Err(failed(e)),
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Get a reference to the underlying connection pool.
     ///
     /// This allows creating an `ObservationCatalog` that shares the same pool.
@@ -2874,3 +2956,124 @@ mod tests {
         assert!(stats.oldest.is_none());
     }
 }
+
+/// Columns of `nws_alerts` that a table made by an older release lacks, with their types.
+/// `CREATE TABLE IF NOT EXISTS` leaves such a table as it is; see `Catalog::migrate_nws_alerts`.
+const NWS_ALERTS_ADDED_COLUMNS: [(&str, &str); 2] =
+    [("content_hash", "TEXT"), ("hashed_seen_at", "TIMESTAMPTZ")];
+/// How long the `ALTER TABLE` that adds one waits for its lock (ms), and how many times it is tried.
+const NWS_ALERTS_ALTER_LOCK_TIMEOUT_MS: u32 = 2000;
+const NWS_ALERTS_ALTER_ATTEMPTS: u32 = 5;
+
+/// NWS alerts (api.weather.gov). See `storage::nws_alerts`.
+///
+/// Statements are split on `;`, so no statement body may contain one.
+pub const NWS_ALERTS_SCHEMA_SQL: &str = r#"
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Polygonal-only, valid, multi: the one shape every geometry column here holds.
+-- (OFFSET 0 keeps the planner from pulling the subquery up, which would write ST_MakeValid out
+-- twice, once for the CASE and once for its value, and run it twice: half the time of every call.)
+CREATE OR REPLACE FUNCTION nws_clean_geom(g geometry) RETURNS geometry
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT CASE WHEN ST_IsEmpty(m) THEN NULL ELSE m END
+    FROM (SELECT ST_Multi(ST_CollectionExtract(ST_MakeValid(g), 3)) AS m OFFSET 0) s
+$$;
+
+-- Zone geometry cache, filled lazily as alerts reference zones.
+CREATE TABLE IF NOT EXISTS nws_zones (
+    zone_key TEXT PRIMARY KEY,                 -- 'forecast/KSZ001' (URL path under /zones/)
+    zone_type TEXT NOT NULL,                   -- URL type: forecast | county | fire
+    zone_id TEXT NOT NULL,                     -- 'KSZ001' (the UGC code)
+    name TEXT,
+    state TEXT,
+    kind TEXT,                                 -- NWS properties.type: public, coastal, offshore, county, fire ...
+    geom GEOMETRY(MultiPolygon, 4326),         -- NULL when the zone has none / 404
+    fetch_status TEXT NOT NULL,                -- 'ok' | 'not_found' | 'no_geometry' | 'error' (transient, retried in 15 min) | 'invalid_geometry'
+    fetched_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_nws_zones_geom ON nws_zones USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_nws_zones_id ON nws_zones(zone_id);
+
+-- One row per NWS message id (an Update is a new id, and the message it replaces gets superseded_by).
+CREATE TABLE IF NOT EXISTS nws_alerts (
+    id TEXT PRIMARY KEY,                       -- 'urn:oid:2.49.0.1.840.0.<hash>.001.1'
+    event TEXT NOT NULL,                       -- 'Winter Storm Warning'
+    severity TEXT,                             -- Extreme | Severe | Moderate | Minor | Unknown
+    urgency TEXT,
+    certainty TEXT,
+    category TEXT,
+    status TEXT,                               -- Actual | Test | ...
+    message_type TEXT NOT NULL,                -- Alert | Update | Cancel
+    response TEXT,
+    headline TEXT,
+    nws_headline TEXT,                         -- parameters.NWSheadline
+    description TEXT,                          -- raw, hard-wrapped
+    instruction TEXT,
+    description_text TEXT,                     -- same, wraps collapsed into paragraphs
+    instruction_text TEXT,
+    area_desc TEXT,
+    sender TEXT,
+    sender_name TEXT,
+    web TEXT,
+    sent TIMESTAMPTZ,
+    effective TIMESTAMPTZ,
+    onset TIMESTAMPTZ,
+    expires TIMESTAMPTZ,                       -- message expiry
+    ends TIMESTAMPTZ,                          -- hazard end
+    end_time TIMESTAMPTZ GENERATED ALWAYS AS (COALESCE(ends, expires)) STORED,
+    ugc TEXT[] NOT NULL DEFAULT '{}',          -- geocode.UGC ('KSZ001', 'KSC045', 'PZZ455')
+    same TEXT[] NOT NULL DEFAULT '{}',         -- geocode.SAME
+    zone_keys TEXT[] NOT NULL DEFAULT '{}',    -- affectedZones as 'forecast/KSZ001' (join to nws_zones)
+    is_marine BOOLEAN NOT NULL DEFAULT FALSE,
+    vtec JSONB NOT NULL DEFAULT '[]',          -- every parsed VTEC string
+    vtec_event_key TEXT,                       -- first VTEC: 'KTOP.WS.W.0012' (groups the messages of one event)
+    vtec_office TEXT,
+    vtec_phenomenon TEXT,                      -- WS, SV, TO, FF, SC ...
+    vtec_significance CHAR(1),                 -- W warning, A watch, Y advisory, S statement
+    vtec_action TEXT,                          -- NEW CON EXT EXA EXB UPG CAN EXP COR ROU
+    vtec_etn INTEGER,
+    sections JSONB NOT NULL DEFAULT '{}',      -- what/where/when/impacts/hazard/source/impact/... + narrative[]
+    parameters JSONB NOT NULL DEFAULT '{}',    -- NWS parameters (VTEC, NWSheadline, maxWindGust, ...)
+    color TEXT NOT NULL,                       -- '#RRGGBB' NWS hazard-map colour
+    references_ids TEXT[] NOT NULL DEFAULT '{}',  -- earlier messages this one replaces
+    superseded_by TEXT,                        -- id of the message that replaced this one
+    superseded_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,                      -- dropped from the feed / Cancel / VTEC CAN (EXP waits for end_time)
+    geom GEOMETRY(MultiPolygon, 4326),         -- effective geometry (own polygon, else union of zones)
+    geometry_source TEXT NOT NULL DEFAULT 'pending',  -- polygon | zones | pending | none
+    first_seen_at TIMESTAMPTZ NOT NULL,
+    last_seen_at TIMESTAMPTZ NOT NULL,         -- last poll that listed it (not indexed, see below)
+    updated_at TIMESTAMPTZ NOT NULL,           -- last time its content changed (ETag seed)
+    content_hash TEXT,                         -- what the row was derived from: NWS feature and derivation version, hashed. NULL = unknown, so the next poll rewrites the row
+    hashed_seen_at TIMESTAMPTZ                 -- last_seen_at as the writer that knows content_hash set it, which any other writer leaves behind (then content_hash no longer describes the row)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nws_alerts_geom ON nws_alerts USING GIST(geom);
+CREATE INDEX IF NOT EXISTS idx_nws_alerts_geom_live ON nws_alerts USING GIST(geom)
+    WHERE superseded_by IS NULL AND ended_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_nws_alerts_end_time ON nws_alerts(end_time);
+CREATE INDEX IF NOT EXISTS idx_nws_alerts_effective ON nws_alerts(effective);
+CREATE INDEX IF NOT EXISTS idx_nws_alerts_event ON nws_alerts(event);
+CREATE INDEX IF NOT EXISTS idx_nws_alerts_ugc ON nws_alerts USING GIN(ugc);
+CREATE INDEX IF NOT EXISTS idx_nws_alerts_zone_keys ON nws_alerts USING GIN(zone_keys);
+CREATE INDEX IF NOT EXISTS idx_nws_alerts_vtec_event ON nws_alerts(vtec_event_key);
+CREATE INDEX IF NOT EXISTS idx_nws_alerts_pending ON nws_alerts(geometry_source)
+    WHERE geometry_source = 'pending';
+-- last_seen_at is not indexed: every poll sets it on every alert, and an indexed column rules out a HOT update.
+-- Only the retention sweep read that index, and a scan of the retained rows does as well. CONCURRENTLY, so no lock queues readers.
+DROP INDEX CONCURRENTLY IF EXISTS idx_nws_alerts_last_seen;
+
+-- Single row: poll health, for a data-age indicator.
+CREATE TABLE IF NOT EXISTS nws_alerts_status (
+    id SMALLINT PRIMARY KEY CHECK (id = 1),
+    last_attempt_at TIMESTAMPTZ,
+    last_success_at TIMESTAMPTZ,               -- last 200-applied or 304
+    last_change_at TIMESTAMPTZ,                -- last 200
+    feed_updated_at TIMESTAMPTZ,               -- NWS 'updated' of the last 200
+    last_alert_count INTEGER,
+    last_error TEXT,
+    last_error_at TIMESTAMPTZ
+)
+"#;

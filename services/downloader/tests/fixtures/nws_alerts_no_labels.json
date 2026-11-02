@@ -1,0 +1,620 @@
+{
+ "type": "FeatureCollection",
+ "title": "Current watches, warnings, and advisories (8 saved on 2026-11-02 whose text has no WHAT or HAZARD labels: Alaska coastal-water forecasts and free-text statements)",
+ "updated": "2026-11-02T15:42:05+00:00",
+ "features": [
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.a25ea9354438a92a49f68851db56d6954ed4e123.003.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.a25ea9354438a92a49f68851db56d6954ed4e123.003.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.a25ea9354438a92a49f68851db56d6954ed4e123.003.1",
+    "areaDesc": "Gravel Point to Cape Cleare out to 15 NM",
+    "geocode": {
+     "SAME": [
+      "058711"
+     ],
+     "UGC": [
+      "PKZ711"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/PKZ711"
+    ],
+    "references": [],
+    "sent": "2026-11-02T03:20:00-09:00",
+    "effective": "2026-11-02T03:20:00-09:00",
+    "onset": "2026-11-02T17:00:00-09:00",
+    "expires": "2026-11-02T15:45:00-09:00",
+    "ends": "2026-11-03T17:00:00-09:00",
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Moderate",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Gale Warning",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Anchorage AK",
+    "headline": "Gale Warning issued November 2 at 3:20AM AKST until November 3 at 5:00PM AKST by NWS Anchorage AK",
+    "description": "Coastal Waters Forecast for the Northern Gulf of Alaska Coast\nup to 100 nm out including Kodiak Island and Cook Inlet.\n\nWind forecasts reflect the predominant speed and direction\nexpected. Sea forecasts represent an average of the highest\none-third of the combined wind wave and swell height.\n\n.TODAY...E wind 25 kt. Seas 7 ft. Isolated thunderstorms.\n.TONIGHT...SE wind 25 kt becoming E 35 kt after midnight. Seas 9\nft. Rain.\n.TUE...E wind 45 kt. Seas 18 ft. Rain.\n.TUE NIGHT...SE wind 50 kt. Seas 20 ft.\n.WED...E wind 25 kt. Seas 11 ft.\n.THU...NE wind 35 kt. Seas 15 ft.\n.FRI...E wind 30 kt. Seas 15 ft.",
+    "instruction": null,
+    "response": "Avoid",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "CWFAER"
+     ],
+     "WMOidentifier": [
+      "FZAK51 PAFC 021220"
+     ],
+     "NWSheadline": [
+      "GALE WARNING TONIGHT AND TUESDAY"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "VTEC": [
+      "/O.NEW.PAFC.GL.W.2523.261103T0200Z-261104T0200Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-03T17:00:00-09:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "GLW"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.fff5e1b0f92f6da6dc5b4ac706fd0614810dc730.008.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.fff5e1b0f92f6da6dc5b4ac706fd0614810dc730.008.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.fff5e1b0f92f6da6dc5b4ac706fd0614810dc730.008.1",
+    "areaDesc": "Northwest Prince William Sound",
+    "geocode": {
+     "SAME": [
+      "058724"
+     ],
+     "UGC": [
+      "PKZ724"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/PKZ724"
+    ],
+    "references": [],
+    "sent": "2026-11-01T15:43:00-09:00",
+    "effective": "2026-11-01T15:43:00-09:00",
+    "onset": "2026-11-02T17:00:00-09:00",
+    "expires": "2026-11-02T04:30:00-09:00",
+    "ends": "2026-11-03T05:00:00-09:00",
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Minor",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Small Craft Advisory",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Anchorage AK",
+    "headline": "Small Craft Advisory issued November 1 at 3:43PM AKST until November 3 at 5:00AM AKST by NWS Anchorage AK",
+    "description": "Coastal Waters Forecast for the Northern Gulf of Alaska Coast\nup to 100 nm out including Kodiak Island and Cook Inlet.\n\nWind forecasts reflect the predominant speed and direction\nexpected. Sea forecasts represent an average of the highest\none-third of the combined wind wave and swell height.\n\n.TONIGHT...NE wind 15 kt. Seas 3 ft. Widespread rain showers.\nIsolated thunderstorms.\n.MON...NE wind 20 kt. Seas 4 ft. Widespread rain showers. Isolated\nthunderstorms.\n.MON NIGHT...E wind 25 kt. Seas 4 ft building to 6 ft after\nmidnight. Rain.\n.TUE AND TUE NIGHT...NE wind 25 kt. Seas 5 ft.\n.WED...NE wind 20 kt. Seas 4 ft.\n.THU...N wind 20 kt. Seas 4 ft.\n.FRI...NE wind 15 kt. Seas 3 ft.",
+    "instruction": null,
+    "response": "Avoid",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "CWFAER"
+     ],
+     "WMOidentifier": [
+      "FZAK51 PAFC 020043"
+     ],
+     "NWSheadline": [
+      "SMALL CRAFT ADVISORY MONDAY NIGHT"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "VTEC": [
+      "/O.NEW.PAFC.SC.Y.4226.261103T0200Z-261103T1400Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-03T05:00:00-09:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "SCY"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.162187892b6ae1193599d2b163711e2464d36a4f.016.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.162187892b6ae1193599d2b163711e2464d36a4f.016.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.162187892b6ae1193599d2b163711e2464d36a4f.016.1",
+    "areaDesc": "Kwemeluk Pass to Kwikpak Pass from 15 to 90 NM",
+    "geocode": {
+     "SAME": [
+      "058853"
+     ],
+     "UGC": [
+      "PKZ853"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/PKZ853"
+    ],
+    "references": [],
+    "sent": "2026-11-02T03:46:00-09:00",
+    "effective": "2026-11-02T03:46:00-09:00",
+    "onset": "2026-11-02T03:00:00-09:00",
+    "expires": "2026-11-02T18:00:00-09:00",
+    "ends": "2026-11-03T05:00:00-09:00",
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Minor",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Small Craft Advisory",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Fairbanks AK",
+    "headline": "Small Craft Advisory issued November 2 at 3:46AM AKST until November 3 at 5:00AM AKST by NWS Fairbanks AK",
+    "description": "Northwestern Alaska Coastal Waters out 100 NM\n\nWind forecasts reflect the predominant speed and direction\nexpected. Sea forecasts represent the average of the highest one-\nthird of the combined wind-wave and swell height.\n\n.TODAY...E winds 25 kt. Seas 7 ft.\n.TONIGHT...E winds 30 kt. Seas 9 ft.\n.TUE...E winds 25 kt. Seas 9 ft.\n.TUE NIGHT...E winds 20 kt. Seas 5 ft.\n.WED...E winds 20 kt. Seas 5 ft.\n.WED NIGHT...E winds 15 kt. Seas 5 ft.\n.THU...E winds 15 kt. Seas 4 ft.\n.FRI...N winds 20 kt. Seas 4 ft.",
+    "instruction": null,
+    "response": "Avoid",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "CWFWCZ"
+     ],
+     "WMOidentifier": [
+      "FZAK52 PAFG 021246"
+     ],
+     "NWSheadline": [
+      "SMALL CRAFT ADVISORY IN EFFECT THROUGH LATE TONIGHT"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "VTEC": [
+      "/O.NEW.PAFG.SC.Y.1533.261102T1200Z-261103T1400Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-03T05:00:00-09:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "SCY"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.96c49dd88d7632999fd64da2086d58a5449608c1.002.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.96c49dd88d7632999fd64da2086d58a5449608c1.002.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.96c49dd88d7632999fd64da2086d58a5449608c1.002.1",
+    "areaDesc": "Dixon Entrance to Cape Decision out to 15 NM",
+    "geocode": {
+     "SAME": [
+      "058641"
+     ],
+     "UGC": [
+      "PKZ641"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/PKZ641"
+    ],
+    "references": [],
+    "sent": "2026-11-01T12:12:00-09:00",
+    "effective": "2026-11-01T12:12:00-09:00",
+    "onset": "2026-11-01T12:00:00-09:00",
+    "expires": "2026-11-02T06:15:00-09:00",
+    "ends": "2026-11-02T17:00:00-09:00",
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Minor",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Small Craft Advisory",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Juneau AK",
+    "headline": "Small Craft Advisory issued November 1 at 12:12PM AKST until November 2 at 5:00PM AKST by NWS Juneau AK",
+    "description": "Southeast Alaska Coastal Waters from Dixon Entrance to\nCape Suckling out 100 NM\n\nWind forecasts reflect the predominant speed and direction\nexpected. Seas forecasts represent the average of the highest\none-third of the combined windwave and swell height.\n\nUPDATED\n\n...SMALL CRAFT ADVISORY THROUGH MONDAY...\n\n.REST OF TODAY...SW wind 25 kt. Seas 16 ft.\n.TONIGHT...SE wind 10 kt. Seas 11 ft. SW swell.\n.MON...S wind 10 kt. Seas 9 ft. SW swell.\n.MON NIGHT...SE wind 20 kt. Seas 8 ft. SW swell.\n.TUE...SE gale to 35 kt. Seas 14 ft.\n.WED...SE gale to 35 kt. Seas 17 ft.\n.THU...SE gale to 45 kt. Seas 24 ft.",
+    "instruction": null,
+    "response": "Avoid",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "CWFAEG"
+     ],
+     "WMOidentifier": [
+      "FZAK52 PAJK 012112"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "VTEC": [
+      "/O.NEW.PAJK.SC.Y.7597.261101T2100Z-261103T0200Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-02T17:00:00-09:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "SCY"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.4b6083c8e9573f79dacbeaf1ceb4d805c6484f08.002.2",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.4b6083c8e9573f79dacbeaf1ceb4d805c6484f08.002.2",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.4b6083c8e9573f79dacbeaf1ceb4d805c6484f08.002.2",
+    "areaDesc": "Bering Sea Offshore  West of 180 and East of the International Date Line",
+    "geocode": {
+     "SAME": [
+      "058411"
+     ],
+     "UGC": [
+      "PKZ411"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/PKZ411"
+    ],
+    "references": [],
+    "sent": "2026-11-01T03:06:00-09:00",
+    "effective": "2026-11-01T03:06:00-09:00",
+    "onset": "2026-11-02T05:00:00-09:00",
+    "expires": "2026-11-01T18:00:00-09:00",
+    "ends": "2026-11-02T17:00:00-09:00",
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Moderate",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Gale Warning",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Anchorage AK",
+    "headline": "Gale Warning issued November 1 at 3:06AM AKST until November 2 at 5:00PM AKST by NWS Anchorage AK",
+    "description": "Offshore Waters Forecast for the Bering Sea\n\nWind forecasts reflect the predominant speed and direction\nexpected. Sea forecasts represent an average of the highest\none-third of the combined wind wave and swell height.\n\n.TODAY...S wind 25 to 40 kt. Seas 12 to 18 ft. Rain.\n.TONIGHT...S wind 15 to 30 kt. Seas 13 to 20 ft.\n.MON...N wind 10 to 25 kt becoming NW 25 to 40 kt in the afternoon.\nSeas 12 to 17 ft.\n.MON NIGHT...NW wind 25 to 40 kt. Seas 13 to 21 ft.\n.TUE THROUGH THU...NW wind 20 to 35 kt. Seas 12 to 20 ft.",
+    "instruction": null,
+    "response": "Avoid",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "OFFALU"
+     ],
+     "WMOidentifier": [
+      "FZAK62 PAFC 011206"
+     ],
+     "NWSheadline": [
+      "GALE WARNING TODAY AND MONDAY"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "VTEC": [
+      "/O.NEW.PAFC.GL.W.9520.261102T1400Z-261103T0200Z/"
+     ],
+     "eventEndingTime": [
+      "2026-11-02T17:00:00-09:00"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "GLW"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.fbe361d815ad8b5cbe48e94009ea8b4a3d6e4557.001.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.fbe361d815ad8b5cbe48e94009ea8b4a3d6e4557.001.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.fbe361d815ad8b5cbe48e94009ea8b4a3d6e4557.001.1",
+    "areaDesc": "Lower Columbia Basin of Washington",
+    "geocode": {
+     "SAME": [
+      "053005",
+      "053021",
+      "053039",
+      "053071"
+     ],
+     "UGC": [
+      "WAZ028"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/WAZ028"
+    ],
+    "references": [],
+    "sent": "2026-11-02T07:20:00-08:00",
+    "effective": "2026-11-02T07:20:00-08:00",
+    "onset": "2026-11-02T07:20:00-08:00",
+    "expires": "2026-11-02T09:30:00-08:00",
+    "ends": null,
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Moderate",
+    "certainty": "Observed",
+    "urgency": "Expected",
+    "event": "Special Weather Statement",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Pendleton OR",
+    "headline": "Special Weather Statement issued November 2 at 7:20AM PST by NWS Pendleton OR",
+    "description": "Patchy dense fog has been observed around the Tri Cities this morning.\nWithin fog, visibilities as low as one-quarter mile are expected\nto persist through mid morning.  Use extra caution while traveling as\nvisibility can change quickly. If fog is encountered, use low- beam headlights\nand keep plenty of space between you and other vehicles.",
+    "instruction": null,
+    "response": "Execute",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "SPSPDT"
+     ],
+     "WMOidentifier": [
+      "WWUS86 KPDT 021520"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "EAS-ORG": [
+      "WXR"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "SPS"
+     ],
+     "NationalWeatherService": [
+      "SPS"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.bf14378ae7641cdcfc291f96b94e6839cc02dacc.001.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.bf14378ae7641cdcfc291f96b94e6839cc02dacc.001.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.bf14378ae7641cdcfc291f96b94e6839cc02dacc.001.1",
+    "areaDesc": "Linn, MO; Livingston, MO",
+    "geocode": {
+     "SAME": [
+      "029115",
+      "029117"
+     ],
+     "UGC": [
+      "MOC115",
+      "MOC117"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/county/MOC115",
+     "https://api.weather.gov/zones/county/MOC117"
+    ],
+    "references": [],
+    "sent": "2026-11-02T09:09:00-06:00",
+    "effective": "2026-11-02T09:09:00-06:00",
+    "onset": "2026-11-02T09:09:00-06:00",
+    "expires": "2026-11-03T09:15:00-06:00",
+    "ends": null,
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Unknown",
+    "certainty": "Possible",
+    "urgency": "Future",
+    "event": "Hydrologic Outlook",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Kansas City/Pleasant Hill MO",
+    "headline": "Hydrologic Outlook issued November 2 at 9:09AM CST by NWS Kansas City/Pleasant Hill MO",
+    "description": "ESFEAX\n\nGrand River near Chillicothe\n\nThis hydrologic outlook is based on the forecast rainfall for the\nnext 48 hours and estimated runoff from earlier rainfall. Crests may\nvary if actual rainfall or runoff is greater or less than\nanticipated.\n\nLocation: Grand River near Chillicothe\nFlood stage: 24.0 feet\nLatest stage: 5.8 feet at 8 AM Monday\nMaximum Forecast Stage: 27.7 feet at 12 AM Wednesday Nov 04\n\n\nFld   Obs             Forecasts\nLocation        Stg   Stg   Day/Time  Mon   Tue   Wed\n12pm  12pm  12pm\nGrand River\nChillicothe     24.0  5.8   Mon 8am   5.7   19.3  18.8\n\n\nLater statements, possibly warnings, may be issued as additional\ninformation becomes available.",
+    "instruction": null,
+    "response": "Monitor",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "ESFEAX"
+     ],
+     "WMOidentifier": [
+      "FGUS73 KEAX 021509"
+     ],
+     "NWSheadline": [
+      "The National Weather Service in Pleasant Hill MO has issued a Hydrologic Outlook for the following rivers"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "NWS"
+     ],
+     "NationalWeatherService": [
+      "ESF"
+     ]
+    }
+   }
+  },
+  {
+   "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.ee7bd64001aa55badb519e350ae3ec252be49c32.001.1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.ee7bd64001aa55badb519e350ae3ec252be49c32.001.1",
+    "@type": "wx:Alert",
+    "id": "urn:oid:2.49.0.1.840.0.ee7bd64001aa55badb519e350ae3ec252be49c32.001.1",
+    "areaDesc": "Towner; Cavalier; Pembina; Ramsey; Eastern Walsh County; Nelson; Western Walsh County",
+    "geocode": {
+     "SAME": [
+      "038095",
+      "038019",
+      "038067",
+      "038071",
+      "038099",
+      "038063"
+     ],
+     "UGC": [
+      "NDZ006",
+      "NDZ007",
+      "NDZ008",
+      "NDZ015",
+      "NDZ016",
+      "NDZ026",
+      "NDZ054"
+     ]
+    },
+    "affectedZones": [
+     "https://api.weather.gov/zones/forecast/NDZ006",
+     "https://api.weather.gov/zones/forecast/NDZ007",
+     "https://api.weather.gov/zones/forecast/NDZ008",
+     "https://api.weather.gov/zones/forecast/NDZ015",
+     "https://api.weather.gov/zones/forecast/NDZ016",
+     "https://api.weather.gov/zones/forecast/NDZ026",
+     "https://api.weather.gov/zones/forecast/NDZ054"
+    ],
+    "references": [],
+    "sent": "2026-11-02T09:12:00-06:00",
+    "effective": "2026-11-02T09:12:00-06:00",
+    "onset": "2026-11-02T09:12:00-06:00",
+    "expires": "2026-11-02T12:00:00-06:00",
+    "ends": null,
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Moderate",
+    "certainty": "Observed",
+    "urgency": "Expected",
+    "event": "Special Weather Statement",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Grand Forks ND",
+    "headline": "Special Weather Statement issued November 2 at 9:12AM CST by NWS Grand Forks ND",
+    "description": "Localized areas of fog reducing visibility to around one-quarter\nmile have developed across portions of northeast ND, especially\nnear the Pembina Escarpment. Travelers should be prepared for\nrapidly deteriorating visibility, and to use extra caution at\nintersections, railroad crossings, and school bus stops. The fog\nis expected to start improving early this afternoon.",
+    "instruction": null,
+    "response": "Execute",
+    "note": null,
+    "parameters": {
+     "AWIPSidentifier": [
+      "SPSFGF"
+     ],
+     "WMOidentifier": [
+      "WWUS83 KFGF 021512"
+     ],
+     "NWSheadline": [
+      "AREAS OF FOG ACROSS PORTIONS OF NORTHEAST ND"
+     ],
+     "BLOCKCHANNEL": [
+      "EAS",
+      "NWEM",
+      "CMAS"
+     ],
+     "EAS-ORG": [
+      "WXR"
+     ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "eventCode": {
+     "SAME": [
+      "SPS"
+     ],
+     "NationalWeatherService": [
+      "SPS"
+     ]
+    }
+   }
+  }
+ ]
+}

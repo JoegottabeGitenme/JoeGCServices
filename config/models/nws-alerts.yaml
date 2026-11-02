@@ -1,0 +1,55 @@
+# NWS watches, warnings and advisories - api.weather.gov /alerts/active
+#
+# Every alert NWS has in force, all areas (CONUS, AK, HI, PR, Guam, marine).
+# Polled every 60 s with If-None-Match (a 304 costs almost nothing). The
+# ingester stores the alerts, parses VTEC / description sections, and resolves
+# each alert's geometry: its own polygon, else the union of its zones, which are
+# fetched lazily from /zones/{type}/{id} and cached (refreshed after 30 days).
+# 7 days of history are kept (NWS_ALERTS_RETENTION_HOURS on the ingester).
+#
+# NWS requires a descriptive User-Agent with contact details.
+# Exposed via EDR as the alerts collection (phase B).
+
+model:
+  id: nws-alerts
+  name: "NWS Alerts (watches/warnings/advisories)"
+  description: "Active National Weather Service alerts from api.weather.gov"
+  enabled: true
+
+dimensions:
+  type: observation
+  run: false
+  forecast: false
+  time: true
+  elevation: false
+
+source:
+  type: nws_alerts
+  base_url: "https://api.weather.gov"
+  user_agent: "FolkWeather (folkweather.com, support@folkweather.com)"
+  zone_fetch_concurrency: 4     # zone geometry fetches in flight
+  zone_request_delay_ms: 100    # pause after each zone request, per lane
+  format: geojson
+
+grid:
+  projection: geographic
+  resolution: "polygon"
+  bbox:
+    min_lon: -180.0
+    min_lat: -90.0
+    max_lon: 180.0
+    max_lat: 90.0
+
+schedule:
+  type: observation
+  poll_interval_secs: 60
+  lookback_minutes: 0
+
+retention:
+  hours: 168  # history kept by the ingester (NWS_ALERTS_RETENTION_HOURS)
+
+parameters:
+  - name: alert
+    description: "Active NWS alert (event, severity, VTEC, sections, geometry)"
+    units: "none"
+    display_units: "none"

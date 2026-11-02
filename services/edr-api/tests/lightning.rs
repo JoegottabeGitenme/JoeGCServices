@@ -81,6 +81,7 @@ async fn env() -> Env {
         linear_feature_catalog: Arc::new(LinearFeatureCatalog::new(catalog.pool_clone())),
         segment_conditions_catalog: Arc::new(SegmentConditionsCatalog::new(catalog.pool_clone())),
         lightning_catalog: Arc::new(LightningCatalog::new(catalog.pool_clone())),
+        nws_alert_catalog: Arc::new(storage::NwsAlertCatalog::new(catalog.pool_clone())),
         collections_snapshot: Arc::new(edr_api::snapshot_cache::SnapshotCache::new(
             std::time::Duration::from_secs(60),
         )),
