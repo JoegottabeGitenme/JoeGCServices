@@ -1077,6 +1077,7 @@
             font-weight: 600;
             color: var(--ink);
             margin-bottom: 0.3rem;
+            scroll-margin-top: 5rem;
         }
 
         .sc-readout p {
@@ -1182,7 +1183,7 @@
             text-decoration: underline;
         }
 
-        .sc-afull:disabled {
+        .sc-afull[aria-disabled="true"] {
             color: var(--ink-3);
             cursor: default;
             text-decoration: none;
@@ -1212,8 +1213,6 @@
             border-top: 1px solid var(--paper-card-edge);
             display: grid;
             gap: 0.1rem;
-            max-height: 11rem;
-            overflow-y: auto;
         }
 
         .sc-alist button {
@@ -2296,6 +2295,9 @@
                     picked: false, last: null,
                     enter() {
                         this.picked = false; this.last = null;
+                        // The centre button is made once, so a redrawn hint keeps keyboard focus on it
+                        setHint('<span id="sc-hint-text"></span> <button type="button" id="sc-centre">Or query the map centre</button>');
+                        el.hint.querySelector('#sc-centre').addEventListener('click', () => { this.picked = 'user'; this.pick(map.getCenter().toArray()); });
                         this.note(this.hint);
                         setReadout('<p class="sc-muted">Loading alerts…</p>');
                         removeMapStuff(['sc-alert-sel', 'sc-alert-line', 'sc-alert-fill', 'sc-alerts']);
@@ -2308,11 +2310,8 @@
                         map.addLayer({ id: 'sc-alert-sel', type: 'line', source: 'sc-alerts', filter: ['in', ['get', 'aid'], ['literal', []]], layout: { 'line-join': 'round' },
                             paint: { 'line-color': '#2e2818', 'line-width': 2.5 } }, before);
                     },
-                    // The hint line, with a way to query the map centre for anyone who can't click the map
-                    note(html) {
-                        setHint(html + ' <button type="button" id="sc-centre">Or query the map centre</button>');
-                        el.hint.querySelector('#sc-centre').addEventListener('click', () => { this.picked = 'user'; this.pick(map.getCenter().toArray()); });
-                    },
+                    // The hint line's text, in front of the button that queries the map centre for anyone who can't click the map
+                    note(html) { const t = el.hint.querySelector('#sc-hint-text'); if (t) t.innerHTML = html; },
                     async moveend() {
                         const url = `/edr/collections/nws-alerts/items?bbox=${viewBbox()}&limit=1000`;
                         setRequest(url);
@@ -2381,8 +2380,9 @@
                     // The alert at index i in full, the others at the spot as a list to switch to (user: picked from that list)
                     show(i, user) {
                         const { fs, meta, lng, lat } = this.last;
-                        // The answer may have sat in a cache, so the data's age counts from the last poll, not from meta.data_age_seconds as sent
-                        const ls = Date.parse(meta.last_success_at), age = isNaN(ls) ? meta.data_age_seconds : Math.max(0, (Date.now() - ls) / 1000), stale = isNaN(ls) ? meta.stale : age > 300;
+                        // The answer may have sat in a cache (60 s at most), so add the time since NWS's data was read. Capped, as a wrong clock must not make a fresh feed look stale
+                        const lag = Math.min(90, Math.max(0, (Date.now() - Date.parse(this.last.d.timeStamp)) / 1000)) || 0;
+                        const age = meta.data_age_seconds == null ? null : meta.data_age_seconds + lag, stale = !!meta.stale || (age != null && age > 300);
                         const foot = `<p class="sc-muted sc-afoot">From api.weather.gov${age != null ? `, checked ${age < 90 ? fmt(age) + ' s' : fmt(age / 60) + ' min'} ago` : ''}${stale ? ' <span class="sc-err">(feed is stale)</span>' : ''}.</p>`;
                         if (!fs.length) { setReadout(`<h3>No alerts here</h3><p>NWS has nothing in force at ${where(lng, lat)}.</p>` + foot); return; }
                         // Switching alerts drops a Full alert still loading and puts the Request and Response boxes back on this spot's query
@@ -2408,16 +2408,20 @@
                                 return `<li><button type="button" data-ai="${j}" title="${esc(area)}"><i class="sc-sw" style="background:${alertColor(q.color)}"></i>` +
                                     `<span>${esc(q.event || 'Alert')}<span class="sc-adet">${[span(q), esc(area)].filter(Boolean).join(' &middot; ')}</span></span></button></li>`;
                             }).join('') + '</ul>' : '') + foot);
+                        el.readout.scrollTop = 0;
                         el.readout.querySelectorAll('[data-ai]').forEach((b) => b.addEventListener('click', () => this.show(Number(b.dataset.ai), true)));
                         const full = el.readout.querySelector('.sc-afull');
                         full.addEventListener('click', () => this.full(full));
-                        if (user) full.focus();
+                        // The new alert's name goes in view, clear of the sticky header (the list was below it)
+                        if (user) { full.focus({ preventScroll: true }); el.readout.querySelector('h3').scrollIntoView({ block: 'nearest' }); }
                     },
                     // One alert's text as NWS wrote it, from /items/{id} (the map already has the outline, so no geometry)
                     async full(btn) {
                         const url = `/edr/collections/nws-alerts/items/${encodeURIComponent(btn.dataset.id)}?geometry=false`, box = btn.nextElementSibling;
+                        // aria-disabled, not disabled, so a focused button keeps the focus while it loads and after a failure
+                        if (btn.getAttribute('aria-disabled') === 'true') return;
                         setRequest(url);
-                        btn.disabled = true; btn.textContent = 'Loading…';
+                        btn.setAttribute('aria-disabled', 'true'); btn.textContent = 'Loading…';
                         try {
                             const d = await getJson('obs', url);
                             if (!live('alerts') || !btn.isConnected) return;
@@ -2428,7 +2432,7 @@
                             box.focus({ preventScroll: true }); box.scrollIntoView({ block: 'nearest' });
                         } catch (err) {
                             if (err.name === 'AbortError' || !live('alerts') || !btn.isConnected) return;
-                            btn.disabled = false; btn.textContent = err.message + '. Try again';
+                            btn.removeAttribute('aria-disabled'); btn.textContent = err.message + '. Try again';
                         }
                     },
                     leave() { clearPin(); removeMapStuff(['sc-alert-sel', 'sc-alert-line', 'sc-alert-fill', 'sc-alerts']); }
