@@ -21,6 +21,22 @@ items), `datetime=<instant>` (alerts active at that time; default now), `simplif
 default window the last 24 h; superseded messages hidden unless `include_superseded=true`),
 `limit` (default 500, max 2000; `"truncated": true` when cut).
 
+**`/area` polygons.** `coords` is one `POLYGON((lon lat, lon lat, ...))` ring in either winding
+order (lon -180..180, lat -90..90; the closing vertex is optional). Rings PostGIS would have to
+repair are refused with a `400` and the reason instead of being tried, because repairing a ring
+that crosses itself costs the database seconds to minutes, so the ring must:
+
+- have at most 500 vertices (the repeat of the first one that closes it is not counted) and not
+  all lie on one line;
+- be simple: no two edges cross, touch or overlap each other (a bowtie, a vertex on another edge,
+  two lobes sharing a vertex and an edge doubling back over the previous one are all refused;
+  collinear edges that stay apart are fine);
+- have no inner rings (holes are not supported; subtract the hole on the client);
+- have no edge spanning more than 180 degrees of longitude, so a polygon over the antimeridian is
+  refused: split it into two requests, one with longitudes up to 180 and one from -180.
+
+The polygon is read as planar lon/lat. Text after the closing parentheses is a `400` too.
+
 **Test alerts.** NWS' feed also carries messages whose CAP status is not `Actual` (`Test`,
 `Exercise`, `System`, `Draft`; e.g. the periodic "Test Message"). They are all stored, but every
 list query (`/position`, `/items`, `/area`, `/radius`, history windows included) returns only

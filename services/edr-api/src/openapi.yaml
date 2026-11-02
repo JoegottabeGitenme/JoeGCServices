@@ -166,6 +166,13 @@ paths:
         
         PNG output requires exactly one parameter (use parameter-name to select).
         Metadata is embedded in PNG tEXt chunks and returned in response headers.
+
+        **`nws-alerts`**: the alerts intersecting the polygon, in the same compact GeoJSON as
+        `/position`. `coords` is one `POLYGON((lon lat, ...))` ring, either winding, closed for
+        you, and must be a simple ring: at most 500 vertices, no inner rings (holes), no two
+        edges crossing, touching or overlapping, no edge spanning more than 180 degrees of
+        longitude (a polygon over the antimeridian is a 400: split it into two requests), and
+        not all on one line. Anything else is a 400 with the reason. See docs/nws-alerts-api.md.
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
