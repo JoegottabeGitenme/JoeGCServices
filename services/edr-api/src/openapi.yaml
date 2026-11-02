@@ -133,8 +133,9 @@ paths:
         time NWS gave the hazard and is `null` when it gave none; `expires` (always present) is when
         the message expires, and an alert with no `ends` is treated as over then. The body has a
         top-level `meta` (`source`, `last_success_at`, `data_age_seconds`, `stale`).
-        `/area` and `/radius` answer the same way for a polygon / `within` distance. See
-        docs/nws-alerts-api.md.
+        `/area` and `/radius` answer the same way for a polygon / `within` distance. Returned
+        geometry is a `MultiPolygon` (or `null`) rounded to 5 decimals and valid as returned, also
+        after `simplify`. See docs/nws-alerts-api.md.
 
         **`datetime` on `nws-alerts`** (`/position`, `/area`, `/radius` and `/items` with
         `status=active`): without it, or with `datetime=now`, the alerts in force now. With an instant, the alerts that

@@ -288,12 +288,43 @@ fn actual_only(include_non_actual: bool) -> &'static str {
     }
 }
 
-fn geom_col(with_geometry: bool) -> &'static str {
-    if with_geometry {
-        "ST_AsGeoJSON(a.geom, 5)"
-    } else {
-        "NULL::text"
+/// Returned coordinates are multiples of this many degrees (about a metre), printed with
+/// [`GEOJSON_DIGITS`] decimals.
+const GEOJSON_GRID: &str = "0.00001";
+const GEOJSON_DIGITS: u8 = 5;
+
+/// The SQL expression for an alert's geometry as GeoJSON text (`NULL` unless `with_geometry`),
+/// simplified by `simplify` degrees when that is a positive number. The stored geometry is valid,
+/// but a plain `ST_AsGeoJSON(geom, 5)` is not what a client reads back:
+///
+/// - rounding to a metre can push two edges of a thin zone through each other (two NWS zones,
+///   AMZ364 and PZZ745, come out self-intersecting);
+/// - `ST_SimplifyPreserveTopology` keeps edges from crossing but, before GEOS 3.12, lets a
+///   simplified shell edge skip past a whole island or hole, which then lies outside the shell
+///   ("Hole lies outside shell", nested shells), common on coastal and offshore zone unions.
+///
+/// So the simplified geometry is made valid first (`nws_clean_geom`), then snapped to the grid;
+/// if the snapped geometry is no longer valid it is rebuilt with `ST_ReducePrecision`, which
+/// rounds to the grid and repairs what the rounding broke. The snap and the validity check cost
+/// a few milliseconds even for a 100 000-vertex zone; `ST_ReducePrecision` alone would be ten
+/// times that for every alert. The result is always a MultiPolygon, or NULL for a shape that
+/// collapses at this precision. The `OFFSET 0`s keep the planner from evaluating the inner
+/// expressions once per use.
+fn geometry_json_sql(with_geometry: bool, simplify: Option<f64>) -> String {
+    if !with_geometry {
+        return "NULL::text".to_string();
     }
+    let source = match simplify.filter(|t| t.is_finite() && *t > 0.0) {
+        Some(tol) => format!("nws_clean_geom(ST_SimplifyPreserveTopology(a.geom, {tol}))"),
+        None => "a.geom".to_string(),
+    };
+    format!(
+        "(SELECT ST_AsGeoJSON(CASE WHEN ST_IsEmpty(s.snapped) THEN NULL \
+                WHEN ST_IsValid(s.snapped) THEN s.snapped \
+                ELSE nws_clean_geom(ST_ReducePrecision(s.src, {GEOJSON_GRID})) END, {GEOJSON_DIGITS}) \
+         FROM (SELECT t.src, ST_SnapToGrid(t.src, {GEOJSON_GRID}) AS snapped \
+               FROM (SELECT {source} AS src OFFSET 0) t OFFSET 0) s)"
+    )
 }
 
 /// `ORDER BY` that puts the worst, most recent alerts first.
@@ -732,7 +763,7 @@ impl NwsAlertCatalog {
                AND a.geom && ST_SetSRID(ST_MakePoint($1, $2), 4326) \
                AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)) \
              ORDER BY {SEVERITY_ORDER}",
-            geom = geom_col(with_geometry),
+            geom = geometry_json_sql(with_geometry, None),
             active = active_predicate("$3"),
             actual = actual_only(false),
         );
@@ -777,7 +808,7 @@ impl NwsAlertCatalog {
                AND ST_Intersects(a.geom, ST_MakeEnvelope($1, $2, $3, $4, 4326)) \
                AND {overlap} \
              ORDER BY {SEVERITY_ORDER} LIMIT $8",
-            geom = geom_col(with_geometry),
+            geom = geometry_json_sql(with_geometry, None),
             actual = actual_only(false),
             overlap = life_overlaps("$5", "$6"),
         );
@@ -835,7 +866,7 @@ impl NwsAlertCatalog {
     pub async fn get(&self, id: &str, with_geometry: bool) -> WmsResult<Option<StoredAlert>> {
         let sql = format!(
             "SELECT {COLS}, {geom} AS geometry_geojson FROM nws_alerts a WHERE a.id = $1",
-            geom = geom_col(with_geometry),
+            geom = geometry_json_sql(with_geometry, None),
         );
         let mut tx = self.read_tx().await?;
         let alert = sqlx::query_as(&sql)
@@ -852,12 +883,7 @@ impl NwsAlertCatalog {
 /// `$2`/`$3` the window, `$4` severities, `$5` events, `$6` the limit, `$7..` the region). Public
 /// so plan checks can ask Postgres how it would run it.
 pub fn search_sql(q: &AlertSearch) -> String {
-    let geom = match q.simplify.filter(|t| t.is_finite() && *t > 0.0) {
-        Some(tol) if q.with_geometry => {
-            format!("ST_AsGeoJSON(ST_SimplifyPreserveTopology(a.geom, {tol}), 5)")
-        }
-        _ => geom_col(q.with_geometry).to_string(),
-    };
+    let geom = geometry_json_sql(q.with_geometry, q.simplify);
     let time = time_predicate(q);
     // A polygon is parsed and made valid once, in a CTE the planner may not fold back into
     // the predicates, not once per candidate row in each of them.
