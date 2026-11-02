@@ -2733,12 +2733,76 @@ const THIN_HOLE: &str = r#"{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[
 /// than the bump's height, the shell edge skips over the island, which GEOS before 3.12 allows.
 const BUMP_AND_ISLAND: &str = r#"{"type":"Polygon","coordinates":[[[10,0],[20,0],[20,10],[15,10.1],[10,10],[10,0]],[[14.99,10.04],[15.01,10.04],[15.01,10.06],[14.99,10.06],[14.99,10.04]]]}"#;
 
+/// Valid as GEOS 3.10 and later, and every client built on them (shapely, JTS, GEOS in
+/// PostGIS 3.5), judge it, whatever GEOS this database runs: `ST_IsValid`, and no part inside
+/// another. The `ST_IsValid` of GEOS 3.9 (the PostGIS 3.4 image) does not see nested shells, so
+/// they are looked for as an area covered twice: the parts' areas add up to more than their union.
 async fn is_valid_geojson(env: &Env, geometry: &str) -> bool {
-    sqlx::query_scalar("SELECT ST_IsValid(ST_GeomFromGeoJSON($1))")
-        .bind(geometry)
-        .fetch_one(env.catalog.pool())
-        .await
+    sqlx::query_scalar(
+        "SELECT ST_IsValid(g) AND CASE WHEN ST_IsValid(g) THEN \
+         COALESCE((SELECT sum(ST_Area(d.geom)) FROM ST_Dump(g) d), 0) - ST_Area(ST_UnaryUnion(g)) < 1e-12 \
+         ELSE false END FROM (SELECT ST_GeomFromGeoJSON($1) AS g) q",
+    )
+    .bind(geometry)
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap()
+}
+
+/// The area a MultiPolygon covers twice (see [`is_valid_geojson`]): 0 when no part lies in another.
+async fn overlap_area(env: &Env, geometry: &str) -> f64 {
+    sqlx::query_scalar(
+        "SELECT COALESCE((SELECT sum(ST_Area(d.geom)) FROM ST_Dump(g) d), 0) - ST_Area(ST_UnaryUnion(g)) \
+         FROM (SELECT ST_GeomFromGeoJSON($1) AS g) q",
+    )
+    .bind(geometry)
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap()
+}
+
+/// The signed area of a GeoJSON ring (shoelace, from its first vertex so the sum stays accurate
+/// for tiny rings far from the origin): positive when it runs counter-clockwise.
+fn ring_area(ring: &Value) -> f64 {
+    let pts: Vec<(f64, f64)> = ring
+        .as_array()
         .unwrap()
+        .iter()
+        .map(|p| (p[0].as_f64().unwrap(), p[1].as_f64().unwrap()))
+        .collect();
+    let (x0, y0) = pts[0];
+    pts.windows(2)
+        .map(|w| (w[0].0 - x0) * (w[1].1 - y0) - (w[1].0 - x0) * (w[0].1 - y0))
+        .sum::<f64>()
+        / 2.0
+}
+
+/// RFC 7946 section 3.1.6, the right-hand rule: every exterior ring counter-clockwise, every hole
+/// clockwise. Returns (exterior rings, holes) checked. A ring whose area is lost in the rounding
+/// to a metre (a part simplification squeezed to a line) has no winding and is not counted.
+fn assert_right_hand_rule(geometry: &str, what: &str) -> (usize, usize) {
+    let v: Value = serde_json::from_str(geometry).unwrap();
+    assert_eq!(v["type"], "MultiPolygon", "{what}");
+    let (mut shells, mut holes) = (0, 0);
+    for (n, polygon) in v["coordinates"].as_array().unwrap().iter().enumerate() {
+        for (i, ring) in polygon.as_array().unwrap().iter().enumerate() {
+            let a = ring_area(ring);
+            if a.abs() < 1e-12 {
+                continue;
+            }
+            if i == 0 {
+                shells += 1;
+                assert!(a > 0.0, "{what}: part {n} runs clockwise (area {a})");
+            } else {
+                holes += 1;
+                assert!(
+                    a < 0.0,
+                    "{what}: hole {i} of part {n} runs counter-clockwise ({a})"
+                );
+            }
+        }
+    }
+    (shells, holes)
 }
 
 /// What the SQL says a plain rendering of the stored geometry is worth.
@@ -2846,6 +2910,7 @@ async fn returned_geometry_is_valid_after_rounding_and_simplification() {
         ("search", None),
         ("search simplify=0.2", Some(0.2)),
         ("search simplify=0.00001", Some(0.00001)),
+        ("search simplify=0.00002", Some(0.00002)),
         ("search simplify=3", Some(3.0)),
     ] {
         let q = with_geometry(
@@ -2930,6 +2995,403 @@ async fn returned_geometry_is_valid_after_rounding_and_simplification() {
     .await
     .unwrap();
     assert!((stored - served).abs() < 1e-4, "{stored} vs {served}");
+}
+
+/// Every way of reading alerts with geometry that the API has, at each of `simplify`. The first
+/// entry of each pair names the read for a failure message.
+async fn geometry_reads(
+    env: &Env,
+    bbox: [f64; 4],
+    now: DateTime<Utc>,
+    simplify: &[Option<f64>],
+) -> Vec<(String, Vec<storage::StoredAlert>)> {
+    let mut reads = Vec::new();
+    for t in simplify {
+        let mut q = search(AlertRegion::Bbox(bbox), now);
+        q.with_geometry = true;
+        q.simplify = *t;
+        reads.push((
+            format!("search simplify={t:?}"),
+            env.nws.search(&q).await.unwrap(),
+        ));
+    }
+    reads.push((
+        "in_bbox".into(),
+        env.nws
+            .in_bbox(bbox, now, now, true, false, now, 100, true)
+            .await
+            .unwrap(),
+    ));
+    reads
+}
+
+/// RFC 7946 section 3.1.6: the geometry of a `application/geo+json` answer has its exterior rings
+/// counter-clockwise and its holes clockwise, however NWS drew the polygon (it sends either) and
+/// however GEOS built the zone union (clockwise shells), simplified or not, on every read.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn returned_rings_follow_the_right_hand_rule() {
+    let env = env().await;
+    let ring = |pts: &[(f64, f64)]| -> Value {
+        let mut r: Vec<Value> = pts.iter().map(|(x, y)| json!([x, y])).collect();
+        r.push(r[0].clone());
+        Value::Array(r)
+    };
+    // clockwise and counter-clockwise squares around (x, y), 1 degree wide
+    let cw = |x: f64, y: f64| ring(&[(x, y), (x, y + 1.0), (x + 1.0, y + 1.0), (x + 1.0, y)]);
+    let ccw = |x: f64, y: f64| ring(&[(x, y), (x + 1.0, y), (x + 1.0, y + 1.0), (x, y + 1.0)]);
+    // half the width of the square, so that it is still a hole at a tolerance of 0.2
+    let hole_cw = |x: f64, y: f64| {
+        ring(&[
+            (x + 0.25, y + 0.25),
+            (x + 0.25, y + 0.75),
+            (x + 0.75, y + 0.75),
+            (x + 0.75, y + 0.25),
+        ])
+    };
+    let hole_ccw = |x: f64, y: f64| {
+        ring(&[
+            (x + 0.25, y + 0.25),
+            (x + 0.75, y + 0.25),
+            (x + 0.75, y + 0.75),
+            (x + 0.25, y + 0.75),
+        ])
+    };
+    let polygon = |rings: Vec<Value>| json!({"type": "Polygon", "coordinates": rings});
+    let alerts = vec![
+        alert_with_geometry("urn:test:wind-cw", polygon(vec![cw(40.0, 40.0)])),
+        alert_with_geometry("urn:test:wind-ccw", polygon(vec![ccw(42.0, 40.0)])),
+        // a hole drawn the way the shell is, and the way against it
+        alert_with_geometry(
+            "urn:test:wind-cw-hole-ccw",
+            polygon(vec![cw(44.0, 40.0), hole_ccw(44.0, 40.0)]),
+        ),
+        alert_with_geometry(
+            "urn:test:wind-cw-hole-cw",
+            polygon(vec![cw(46.0, 40.0), hole_cw(46.0, 40.0)]),
+        ),
+        alert_with_geometry(
+            "urn:test:wind-ccw-hole-ccw",
+            polygon(vec![ccw(48.0, 40.0), hole_ccw(48.0, 40.0)]),
+        ),
+        alert_with_geometry(
+            "urn:test:wind-ccw-hole-cw",
+            polygon(vec![ccw(50.0, 40.0), hole_cw(50.0, 40.0)]),
+        ),
+        // two parts wound against each other
+        alert_with_geometry(
+            "urn:test:wind-multi",
+            json!({"type": "MultiPolygon", "coordinates": [
+                [cw(52.0, 40.0), hole_ccw(52.0, 40.0)],
+                [ccw(54.0, 40.0)]
+            ]}),
+        ),
+    ];
+    // a union of zones, which GEOS builds: two squares that share an edge, one with a hole
+    let mut union = alert_with_geometry("urn:test:wind-union", polygon(vec![ccw(0.0, 0.0)]));
+    union.geometry_json = None;
+    union.zone_keys = vec!["forecast/WND001".into(), "forecast/WND002".into()];
+    env.nws
+        .apply_feed(&[alerts, vec![union]].concat(), Some(at(10, 1)), at(10, 1))
+        .await
+        .unwrap();
+    env.nws
+        .upsert_zones(
+            &[
+                zone(
+                    "forecast/WND001",
+                    ZoneStatus::Ok,
+                    Some(polygon(vec![cw(56.0, 40.0), hole_ccw(56.0, 40.0)]).to_string()),
+                ),
+                zone(
+                    "forecast/WND002",
+                    ZoneStatus::Ok,
+                    Some(polygon(vec![ccw(57.0, 40.0)]).to_string()),
+                ),
+            ],
+            at(10, 2),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        source_of(&env, "urn:test:wind-union").await,
+        ("zones".into(), true)
+    );
+    let now = at(12, 0);
+
+    let reads = geometry_reads(
+        &env,
+        [39.0, 39.0, 60.0, 42.0],
+        now,
+        &[
+            None,
+            Some(0.0),
+            Some(0.00001),
+            Some(0.00002),
+            Some(0.2),
+            Some(5.0),
+        ],
+    )
+    .await;
+    let mut checked = 0;
+    for (name, rows) in &reads {
+        assert_eq!(rows.len(), 8, "{name}: {:?}", ids(rows));
+        for a in rows {
+            let g = a
+                .geometry_geojson
+                .as_deref()
+                .unwrap_or_else(|| panic!("{name}: {} has a geometry", a.id));
+            let what = format!("{name} {}", a.id);
+            let (shells, holes) = assert_right_hand_rule(g, &what);
+            assert!(shells > 0, "{what}: no exterior ring was checked");
+            // the holes are 0.5 degrees wide: gone at a tolerance of 5, where Douglas-Peucker
+            // takes a hole narrower than the tolerance out of the shape
+            let wants_hole =
+                a.id.contains("hole") || a.id.ends_with("multi") || a.id.ends_with("union");
+            if wants_hole && !matches!(name.as_str(), n if n.ends_with("Some(5.0)")) {
+                assert!(
+                    holes > 0,
+                    "{what}: lost its hole, so the winding of holes was not checked"
+                );
+            }
+            assert!(is_valid_geojson(&env, g).await, "{what}: {g}");
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, reads.len() * 8);
+    // the single-alert read and the point read, which take no simplification
+    let one = env
+        .nws
+        .get("urn:test:wind-cw-hole-ccw", true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        assert_right_hand_rule(one.geometry_geojson.as_deref().unwrap(), "get"),
+        (1, 1)
+    );
+    let at_point = env
+        .nws
+        .active_at_point(44.1, 40.1, now, true)
+        .await
+        .unwrap();
+    assert_eq!(at_point.len(), 1);
+    assert_right_hand_rule(
+        at_point[0].geometry_geojson.as_deref().unwrap(),
+        "active_at_point",
+    );
+    // and the shape is what it was, only turned around: the union keeps its hole and its two squares' area
+    let union_g: Value = serde_json::from_str(
+        reads[0]
+            .1
+            .iter()
+            .find(|a| a.id == "urn:test:wind-union")
+            .unwrap()
+            .geometry_geojson
+            .as_deref()
+            .unwrap(),
+    )
+    .unwrap();
+    let area: f64 = union_g["coordinates"][0]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            if i == 0 {
+                ring_area(r)
+            } else {
+                -ring_area(r).abs()
+            }
+        })
+        .sum();
+    assert!((area - (2.0 - 0.25)).abs() < 1e-9, "{area}");
+}
+
+/// The real geometries behind the nested shells that production served at the default tolerance:
+/// the unions of NWS Miami's coastal zones (an island of the Florida coast near 26.45N 80.06W) and
+/// of NWS Los Angeles' beach zones (33.76N 118.18W), from `items?simplify=0`. Simplified they come
+/// out with a part inside another part, which GEOS 3.9's `ST_IsValid` (the PostGIS 3.4 image) calls
+/// valid and shapely calls "Nested shells".
+const NESTED_SHELL_UNIONS: &str = include_str!("fixtures/nws_nested_shell_unions.json");
+
+/// `ST_AsGeoJSON` of the previous read path (`ST_SimplifyPreserveTopology`, made valid, snapped to
+/// the grid) for one stored alert, to show the fixture is sensitive: the area it covers twice.
+async fn previous_read_overlap(env: &Env, id: &str, tolerance: f64) -> f64 {
+    let g: String = sqlx::query_scalar(&format!(
+        "SELECT ST_AsGeoJSON(ST_SnapToGrid(nws_clean_geom(ST_SimplifyPreserveTopology(geom, {tolerance})), 0.00001), 5) \
+         FROM nws_alerts WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap();
+    overlap_area(env, &g).await
+}
+
+/// A default-simplified answer is valid for GEOS 3.10 and later even on a database that runs GEOS
+/// 3.9, whose `ST_IsValid` does not see nested shells: at every tolerance from a continent view to
+/// a street, for the fixtures above, on every read.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn simplified_coastal_unions_have_no_nested_shells() {
+    let env = env().await;
+    let fixtures: Value = serde_json::from_str(NESTED_SHELL_UNIONS).unwrap();
+    let alerts: Vec<ParsedAlert> = ["miami_coastal_zones", "los_angeles_beach_zones"]
+        .iter()
+        .map(|k| alert_with_geometry(&format!("urn:test:{k}"), fixtures[k]["geometry"].clone()))
+        .collect();
+    env.nws
+        .apply_feed(&alerts, Some(at(10, 1)), at(10, 1))
+        .await
+        .unwrap();
+    let now = at(12, 0);
+
+    // the fixtures are sensitive: the old path covers an island twice at the default tolerance
+    // (not on a GEOS that has fixed ST_SimplifyPreserveTopology)
+    if geos_before_3_12(&env).await {
+        for k in ["miami_coastal_zones", "los_angeles_beach_zones"] {
+            let covered_twice = previous_read_overlap(&env, &format!("urn:test:{k}"), 0.05).await;
+            assert!(
+                covered_twice > 1e-9,
+                "{k}: the previous path no longer shows the defect ({covered_twice})"
+            );
+        }
+    }
+
+    let tolerances = [
+        // the default for a world view, a CONUS view, a state, a metro area, a city
+        0.05, 0.0393, 0.01, 0.004, 0.0039, 0.0008, 0.000133, 0.00002, 0.00001, 0.2, 3.0,
+    ];
+    let simplify: Vec<Option<f64>> = tolerances.iter().map(|t| Some(*t)).collect();
+    let reads = geometry_reads(&env, [-125.0, 24.0, -70.0, 36.0], now, &simplify).await;
+    for (n, (name, rows)) in reads.iter().enumerate() {
+        assert_eq!(rows.len(), 2, "{name}: {:?}", ids(rows));
+        // the tolerance of this read; the last read, in_bbox, has none
+        let tolerance = tolerances.get(n).copied().unwrap_or(0.0);
+        for a in rows {
+            let g = a
+                .geometry_geojson
+                .as_deref()
+                .unwrap_or_else(|| panic!("{name}: {} vanished", a.id));
+            let what = format!("{name} {}", a.id);
+            assert!(is_valid_geojson(&env, g).await, "{what}: {g}");
+            assert!(
+                overlap_area(&env, g).await < 1e-12,
+                "{what}: a part lies inside another"
+            );
+            assert_right_hand_rule(g, &what);
+            // the shape is still this alert's, to the tolerance. These are strips of zones about
+            // as wide as the default tolerance, so up to 0.01 degrees the area is within 10%, at
+            // the world-view default of 0.05 within 60% (the shape is 3 pixels wide), beyond
+            // that it is only the right order of magnitude.
+            let stored: f64 =
+                sqlx::query_scalar("SELECT ST_Area(geom) FROM nws_alerts WHERE id = $1")
+                    .bind(&a.id)
+                    .fetch_one(env.catalog.pool())
+                    .await
+                    .unwrap();
+            let served: f64 = sqlx::query_scalar("SELECT ST_Area(ST_GeomFromGeoJSON($1))")
+                .bind(g)
+                .fetch_one(env.catalog.pool())
+                .await
+                .unwrap();
+            let allowed = match tolerance {
+                t if t <= 0.01 => 0.1,
+                t if t <= 0.05 => 0.6,
+                _ => 3.0,
+            };
+            assert!(
+                (served / stored - 1.0).abs() < allowed,
+                "{what}: area {served} against {stored}"
+            );
+        }
+    }
+    for k in ["miami_coastal_zones", "los_angeles_beach_zones"] {
+        let a = env
+            .nws
+            .get(&format!("urn:test:{k}"), true)
+            .await
+            .unwrap()
+            .unwrap();
+        let g = a.geometry_geojson.unwrap();
+        assert!(is_valid_geojson(&env, &g).await, "get {k}");
+        assert_right_hand_rule(&g, &format!("get {k}"));
+    }
+}
+
+/// A small alert does not vanish into the simplification: whatever the tolerance, an alert whose
+/// shape is smaller than it (a tornado warning on a continent view, a sliver of a zone) still has a
+/// geometry, and so has every part of it, and what is returned is valid.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_small_alert_survives_every_simplification() {
+    let env = env().await;
+    let alerts = vec![
+        // 40 m square
+        alert_with_geometry(
+            "urn:test:dot",
+            serde_json::from_str(&square(30.0, 30.0, 30.0004, 30.0004)).unwrap(),
+        ),
+        // 3 km by 2 m
+        alert_with_geometry(
+            "urn:test:bar",
+            serde_json::from_str(&square(32.0, 32.0, 32.03, 32.00002)).unwrap(),
+        ),
+        // 1 km triangle
+        alert_with_geometry(
+            "urn:test:triangle",
+            json!({"type": "Polygon", "coordinates": [[[34.0, 34.0], [34.01, 34.0], [34.005, 34.009], [34.0, 34.0]]]}),
+        ),
+        // 5 km square with a 100 m hole in a corner
+        alert_with_geometry(
+            "urn:test:holed",
+            json!({"type": "Polygon", "coordinates": [
+                [[36.0, 36.0], [36.05, 36.0], [36.05, 36.05], [36.0, 36.05], [36.0, 36.0]],
+                [[36.04, 36.005], [36.041, 36.005], [36.041, 36.006], [36.04, 36.006], [36.04, 36.005]]
+            ]}),
+        ),
+        // a 100 km square and, 50 km away, an island of 30 m
+        alert_with_geometry(
+            "urn:test:island",
+            json!({"type": "MultiPolygon", "coordinates": [
+                [[[38.0, 38.0], [39.0, 38.0], [39.0, 39.0], [38.0, 39.0], [38.0, 38.0]]],
+                [[[39.5, 38.0], [39.5003, 38.0], [39.5003, 38.0003], [39.5, 38.0003], [39.5, 38.0]]]
+            ]}),
+        ),
+    ];
+    env.nws
+        .apply_feed(&alerts, Some(at(10, 1)), at(10, 1))
+        .await
+        .unwrap();
+    let now = at(12, 0);
+    let tolerances = [0.05, 0.0393, 0.004, 0.0039, 0.0005, 0.00002, 0.00001, 3.0];
+    let simplify: Vec<Option<f64>> = tolerances.iter().map(|t| Some(*t)).collect();
+    for (name, rows) in &geometry_reads(&env, [29.0, 29.0, 41.0, 41.0], now, &simplify).await {
+        assert_eq!(rows.len(), 5, "{name}: {:?}", ids(rows));
+        for a in rows {
+            let g = a
+                .geometry_geojson
+                .as_deref()
+                .unwrap_or_else(|| panic!("{name}: {} vanished", a.id));
+            let what = format!("{name} {}", a.id);
+            assert!(is_valid_geojson(&env, g).await, "{what}: {g}");
+            let v: Value = serde_json::from_str(g).unwrap();
+            let parts = v["coordinates"].as_array().unwrap().len();
+            // the island is a part of its own, 50 km from the rest: it is not merged or dropped
+            assert_eq!(
+                parts,
+                if a.id.ends_with("island") { 2 } else { 1 },
+                "{what}: {g}"
+            );
+            let area: f64 = sqlx::query_scalar("SELECT ST_Area(ST_GeomFromGeoJSON($1))")
+                .bind(g)
+                .fetch_one(env.catalog.pool())
+                .await
+                .unwrap();
+            assert!(area > 0.0, "{what}: no area left: {g}");
+        }
+    }
 }
 
 // --- a poll rewrites only what changed -----------------------------------------------------------

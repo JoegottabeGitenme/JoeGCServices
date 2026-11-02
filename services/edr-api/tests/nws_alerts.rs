@@ -488,6 +488,7 @@ async fn one_alert_in_full_by_raw_or_encoded_urn() {
         assert_eq!(f["type"], "Feature");
         assert_eq!(f["id"], id.as_str());
         assert!(f["geometry"]["type"].is_string());
+        assert_right_hand_rule(&f["geometry"], &path);
         let p = &f["properties"];
         assert!(p["description"].as_str().unwrap().contains("thunderstorm"));
         assert!(p["description_raw"].is_string() && p["instruction_raw"].is_string());
@@ -601,6 +602,44 @@ async fn only_geojson_is_offered_and_asking_for_anything_else_is_refused() {
     assert_eq!(st, 406);
 }
 
+/// The signed area of a GeoJSON ring (shoelace from its first vertex): positive counter-clockwise.
+fn ring_area(ring: &Value) -> f64 {
+    let pts: Vec<(f64, f64)> = ring
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| (p[0].as_f64().unwrap(), p[1].as_f64().unwrap()))
+        .collect();
+    let (x0, y0) = pts[0];
+    pts.windows(2)
+        .map(|w| (w[0].0 - x0) * (w[1].1 - y0) - (w[1].0 - x0) * (w[0].1 - y0))
+        .sum::<f64>()
+        / 2.0
+}
+
+/// RFC 7946 section 3.1.6 for an answer in `application/geo+json`: exterior rings counter-clockwise,
+/// holes clockwise. A ring with no area (a part squeezed to a line) has no winding.
+fn assert_right_hand_rule(geometry: &Value, what: &str) {
+    assert_eq!(geometry["type"], "MultiPolygon", "{what}");
+    for (n, polygon) in geometry["coordinates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+    {
+        for (i, ring) in polygon.as_array().unwrap().iter().enumerate() {
+            let a = ring_area(ring);
+            if a.abs() < 1e-12 {
+                continue;
+            }
+            assert!(
+                (i == 0) == (a > 0.0),
+                "{what}: ring {i} of part {n} runs the wrong way (signed area {a})"
+            );
+        }
+    }
+}
+
 /// A zone valid at full precision whose hole is 4e-6 degrees inside the shell, so rounding to
 /// 5 decimals would put the hole's edge on the shell's (as for NWS zones AMZ364 and PZZ745).
 const THIN_HOLE_ZONE: &str = r#"{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]],[[0.000004,0.3],[0.5,0.3],[0.5,0.5],[0.000004,0.5],[0.000004,0.3]]]}"#;
@@ -661,6 +700,7 @@ async fn the_geometry_of_a_union_of_zones_is_valid_as_returned() {
                 .await
                 .unwrap();
             assert!(ok, "{uri}: {} has invalid geometry {g}", f["id"]);
+            assert_right_hand_rule(g, &format!("{uri}: {}", f["id"]));
         }
     }
     let encoded = handlers::nws_alerts::encode_id(&id);
@@ -671,6 +711,8 @@ async fn the_geometry_of_a_union_of_zones_is_valid_as_returned() {
         "&simplify=0",
         "&simplify=0.2",
         "&simplify=0.00001",
+        "&simplify=0.00002",
+        "&simplify=0.003",
         "&simplify=5",
     ] {
         valid(
@@ -750,6 +792,7 @@ async fn bbox_and_radius_queries_cross_the_antimeridian() {
         .await;
     for f in v["features"].as_array().unwrap() {
         assert!(f["geometry"]["coordinates"].is_array(), "{f}");
+        assert_right_hand_rule(&f["geometry"], &f["id"].to_string());
     }
     // each half alone, and a box the ordinary way round that misses both
     let (_, _, v, _) = e

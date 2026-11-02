@@ -309,7 +309,24 @@ fn actual_only(include_non_actual: bool) -> &'static str {
 /// Returned coordinates are multiples of this many degrees (about a metre), printed with
 /// [`GEOJSON_DIGITS`] decimals.
 const GEOJSON_GRID: &str = "0.00001";
+/// [`GEOJSON_GRID`] as a number.
+const GEOJSON_GRID_DEGREES: f64 = 0.000_01;
 const GEOJSON_DIGITS: u8 = 5;
+
+/// From this tolerance (degrees) up, [`geometry_json_sql`] simplifies with plain Douglas-Peucker;
+/// below it, with `ST_SimplifyPreserveTopology`. Douglas-Peucker costs next to nothing and leaves
+/// little, so the repair after it is cheap; the cost of `ST_SimplifyPreserveTopology` follows the
+/// input, the full-resolution union of zones. Measured on the real alerts in force (459 features,
+/// 1.4 M vertices, PostGIS 3.4 on GEOS 3.9), the median of five runs of the whole expression,
+/// previous -> Douglas-Peucker: a CONUS view at its default
+/// tolerance 0.64 s -> 0.24 s, the world at 0.05 1.7 s -> 0.33 s, the 181 Small Craft Advisories
+/// at 1 degree 0.81 s -> 0.08 s. The two meet at about this tolerance (the world at 0.005:
+/// 1.9 s -> 1.5 s, at 0.002: 2.3 s -> 2.8 s); below it Douglas-Peucker leaves too much of an
+/// intricate coast, most of it crossing itself, for the repair to be cheap. There
+/// `ST_SimplifyPreserveTopology` stays, and the repair that makes its result valid costs a third
+/// more to twice as much again than it did (10 big Alaska alerts at 0.0008: 0.84 s -> 1.1 s;
+/// NWS Miami's zones at 0.0017: 0.18 s -> 0.34 s; four alerts in a city view: 45 -> 104 ms).
+const DOUGLAS_PEUCKER_FROM: f64 = 0.004;
 
 /// The SQL expression for an alert's geometry as GeoJSON text (`NULL` unless `with_geometry`),
 /// simplified by `simplify` degrees when that is a positive number. The stored geometry is valid,
@@ -317,32 +334,80 @@ const GEOJSON_DIGITS: u8 = 5;
 ///
 /// - rounding to a metre can push two edges of a thin zone through each other (two NWS zones,
 ///   AMZ364 and PZZ745, come out self-intersecting);
-/// - `ST_SimplifyPreserveTopology` keeps edges from crossing but, before GEOS 3.12, lets a
-///   simplified shell edge skip past a whole island or hole, which then lies outside the shell
-///   ("Hole lies outside shell", nested shells), common on coastal and offshore zone unions.
+/// - simplification breaks a valid shape in more ways than one. Douglas-Peucker lets an edge cross
+///   another (a fjord narrower than the tolerance). `ST_SimplifyPreserveTopology` keeps edges from
+///   crossing but, before GEOS 3.12, lets a simplified shell edge skip past a whole island or hole
+///   ("Hole lies outside shell"). An island swallowed by a shell edge is a part nested inside
+///   another part ("Nested shells"), common on coastal and offshore zone unions: the unions of NWS
+///   Miami's coastal zones near 26.45N 80.06W come out that way at the default tolerance.
 ///
-/// So the simplified geometry is made valid first (`nws_clean_geom`), then snapped to the grid;
-/// if the snapped geometry is no longer valid it is rebuilt with `ST_ReducePrecision`, which
-/// rounds to the grid and repairs what the rounding broke. The snap and the validity check cost
-/// a few milliseconds even for a 100 000-vertex zone; `ST_ReducePrecision` alone would be ten
-/// times that for every alert. The result is always a MultiPolygon, or NULL for a shape that
-/// collapses at this precision. The `OFFSET 0`s keep the planner from evaluating the inner
-/// expressions once per use.
+/// The nested shells are the trap. The `ST_IsValid` of the GEOS this runs on (3.9: PostGIS 3.4 on
+/// bullseye) does not see them, so neither it nor `ST_MakeValid` repairs them, and the answer is
+/// invalid to GEOS 3.10 and later, shapely and every client built on them. Nor does
+/// `ST_ReducePrecision` dissolve them, and `ST_MakeValid` of the whole geometry takes an island
+/// inside a shell for an even-odd hole. What does is `ST_UnaryUnion` of valid parts: the parts go
+/// in, one valid MultiPolygon without an island inside a shell comes out. So a simplified geometry
+/// is:
+///
+/// - from [`DOUGLAS_PEUCKER_FROM`]: `ST_Simplify(..., true)` (`true` keeps a part that collapses,
+///   as a triangle, so a small alert never vanishes; a hole smaller than the tolerance goes), each
+///   part made valid on its own (the crossings Douglas-Peucker made, where a whole-geometry
+///   `ST_MakeValid` costs ten times as much and reads overlapping parts as even-odd holes), the
+///   parts dissolved;
+/// - below it: `ST_SimplifyPreserveTopology`, made valid, dissolved if it has several parts (a
+///   single polygon cannot nest);
+///
+/// and then rounded to the grid by `ST_ReducePrecision`, a fixed-precision overlay whose result is
+/// valid on the grid: shapes less than a metre apart that `ST_SnapToGrid` would push into each
+/// other, by an amount GEOS 3.9 does not see and GEOS 3.10 and later call a self-intersection,
+/// stay apart or share a vertex. (It adds a quarter to a third to the time of the answer; the snap
+/// and a validity check would be free.) A part smaller than a metre is dropped.
+///
+/// With no simplification (none asked for, or a tolerance of the grid or less, which the rounding
+/// does anyway) the stored geometry is only rounded: snapped to the grid, which costs next to
+/// nothing even for a 100 000-vertex zone, and if the snapped geometry is no longer valid rebuilt
+/// with `ST_ReducePrecision`, which would be ten times the price for every alert.
+///
+/// Rings follow RFC 7946 (exterior counter-clockwise, holes clockwise), whatever order GEOS and
+/// the feed left them in: `ST_ForcePolygonCCW` goes last, and only turns rings around. The result
+/// is always a MultiPolygon, or NULL for a shape that collapses at this precision. The `OFFSET 0`s
+/// keep the planner from evaluating the inner expressions once per use.
 fn geometry_json_sql(with_geometry: bool, simplify: Option<f64>) -> String {
     if !with_geometry {
         return "NULL::text".to_string();
     }
-    let source = match simplify.filter(|t| t.is_finite() && *t > 0.0) {
-        Some(tol) => format!("nws_clean_geom(ST_SimplifyPreserveTopology(a.geom, {tol}))"),
-        None => "a.geom".to_string(),
+    // A query for the valid geometry on the grid: one row, one column `g`. A tolerance of the grid
+    // or less asks for nothing the rounding does not do: it is no simplification, and costs none.
+    let valid = match simplify.filter(|t| t.is_finite() && *t > GEOJSON_GRID_DEGREES) {
+        Some(tol) => {
+            let source = if tol >= DOUGLAS_PEUCKER_FROM {
+                format!(
+                    "(SELECT ST_Multi(ST_CollectionExtract(ST_UnaryUnion(\
+                        ST_Collect(ST_CollectionExtract(ST_MakeValid(d.geom), 3))), 3)) \
+                      FROM ST_Dump(ST_Simplify(a.geom, {tol}, true)) d)"
+                )
+            } else {
+                format!(
+                    "(SELECT CASE WHEN ST_NumGeometries(n.g) > 1 \
+                        THEN ST_Multi(ST_CollectionExtract(ST_UnaryUnion(n.g), 3)) ELSE n.g END \
+                      FROM (SELECT nws_clean_geom(ST_SimplifyPreserveTopology(a.geom, {tol})) AS g \
+                            OFFSET 0) n)"
+                )
+            };
+            format!(
+                "SELECT nws_clean_geom(ST_ReducePrecision(t.src, {GEOJSON_GRID})) AS g \
+                 FROM (SELECT {source} AS src OFFSET 0) t OFFSET 0"
+            )
+        }
+        None => format!(
+            "SELECT CASE WHEN ST_IsEmpty(s.snapped) THEN NULL \
+                    WHEN ST_IsValid(s.snapped) THEN s.snapped \
+                    ELSE nws_clean_geom(ST_ReducePrecision(s.src, {GEOJSON_GRID})) END AS g \
+             FROM (SELECT t.src, ST_SnapToGrid(t.src, {GEOJSON_GRID}) AS snapped \
+                   FROM (SELECT a.geom AS src OFFSET 0) t OFFSET 0) s"
+        ),
     };
-    format!(
-        "(SELECT ST_AsGeoJSON(CASE WHEN ST_IsEmpty(s.snapped) THEN NULL \
-                WHEN ST_IsValid(s.snapped) THEN s.snapped \
-                ELSE nws_clean_geom(ST_ReducePrecision(s.src, {GEOJSON_GRID})) END, {GEOJSON_DIGITS}) \
-         FROM (SELECT t.src, ST_SnapToGrid(t.src, {GEOJSON_GRID}) AS snapped \
-               FROM (SELECT {source} AS src OFFSET 0) t OFFSET 0) s)"
-    )
+    format!("(SELECT ST_AsGeoJSON(ST_ForcePolygonCCW(v.g), {GEOJSON_DIGITS}) FROM ({valid}) v)")
 }
 
 /// `ORDER BY` that puts the worst, most recent alerts first.
@@ -1564,6 +1629,79 @@ mod tests {
 
     fn t() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 11, 1, 12, 0, 0).unwrap()
+    }
+
+    /// The geometry expression is the one place every returned alert geometry goes through.
+    #[test]
+    fn geometry_sql_simplifies_repairs_and_orients_in_one_place() {
+        assert_eq!(geometry_json_sql(false, Some(0.05)), "NULL::text");
+        // no simplification: the stored geometry, snapped, checked, turned the right way round
+        assert_eq!(GEOJSON_GRID.parse::<f64>().unwrap(), GEOJSON_GRID_DEGREES);
+        for tol in [
+            None,
+            Some(0.0),
+            Some(f64::NAN),
+            Some(-1.0),
+            Some(GEOJSON_GRID_DEGREES),
+            Some(1e-7),
+        ] {
+            let sql = geometry_json_sql(true, tol);
+            assert!(!sql.contains("Simplify"), "{tol:?}: {sql}");
+            assert!(!sql.contains("UnaryUnion"), "{tol:?}: {sql}");
+            assert!(
+                sql.contains("(SELECT a.geom AS src OFFSET 0) t"),
+                "{tol:?}: {sql}"
+            );
+            assert!(
+                sql.contains("ST_SnapToGrid(t.src, 0.00001)"),
+                "{tol:?}: {sql}"
+            );
+            assert!(
+                sql.contains("WHEN ST_IsValid(s.snapped) THEN s.snapped"),
+                "{tol:?}: {sql}"
+            );
+        }
+        // from DOUGLAS_PEUCKER_FROM up: Douglas-Peucker that keeps what collapses, each part made
+        // valid on its own, then dissolved
+        let wide = geometry_json_sql(true, Some(DOUGLAS_PEUCKER_FROM));
+        assert!(wide.contains("ST_Simplify(a.geom, 0.004, true)"), "{wide}");
+        assert!(!wide.contains("SimplifyPreserveTopology"), "{wide}");
+        assert!(wide.contains("FROM ST_Dump("), "{wide}");
+        assert!(wide.contains("ST_MakeValid(d.geom)"), "{wide}");
+        // below it: topology-preserving, dissolved only when there is more than one part
+        let narrow = geometry_json_sql(true, Some(0.0039));
+        assert!(
+            narrow.contains("ST_SimplifyPreserveTopology(a.geom, 0.0039)"),
+            "{narrow}"
+        );
+        assert!(narrow.contains("ST_NumGeometries(n.g) > 1"), "{narrow}");
+        assert!(!narrow.contains("ST_Simplify("), "{narrow}");
+        // every simplified geometry is dissolved (the nested shells GEOS 3.9's ST_IsValid cannot
+        // see) and rounded by a fixed-precision overlay, not by a snap
+        for tol in [Some(0.05), Some(0.0039), Some(0.00002)] {
+            let sql = geometry_json_sql(true, tol);
+            assert!(sql.contains("ST_UnaryUnion("), "{tol:?}: {sql}");
+            assert!(
+                sql.contains("SELECT nws_clean_geom(ST_ReducePrecision(t.src, 0.00001)) AS g"),
+                "{tol:?}: {sql}"
+            );
+            assert!(!sql.contains("ST_SnapToGrid"), "{tol:?}: {sql}");
+            assert!(
+                sql.contains(" AS src OFFSET 0) t OFFSET 0"),
+                "{tol:?}: {sql}"
+            );
+        }
+        // whatever the path, the rings are turned last and printed to 5 decimals
+        for tol in [None, Some(0.05), Some(0.0039)] {
+            let sql = geometry_json_sql(true, tol);
+            assert!(
+                sql.starts_with("(SELECT ST_AsGeoJSON(ST_ForcePolygonCCW(v.g), 5) FROM ("),
+                "{tol:?}: {sql}"
+            );
+        }
+        // a tolerance is written as a plain decimal, never 2e-5
+        assert!(geometry_json_sql(true, Some(2e-5))
+            .contains("ST_SimplifyPreserveTopology(a.geom, 0.00002)"));
     }
 
     fn point_search() -> AlertSearch {
