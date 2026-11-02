@@ -759,7 +759,10 @@ pub fn parse_within(within: Option<&str>, units: Option<&str>) -> Result<f64, St
 /// ~5 km.
 pub fn default_simplify(bbox: &[f64; 4]) -> f64 {
     // west > east is a box across the antimeridian
-    let width = (bbox[2] - bbox[0]).rem_euclid(360.0);
+    let width = match bbox[2] - bbox[0] {
+        w if w < 0.0 => w + 360.0,
+        w => w,
+    };
     (width.max(bbox[3] - bbox[1]) / 1500.0).clamp(0.0, 0.05)
 }
 
@@ -2141,6 +2144,8 @@ mod tests {
             default_simplify(&[0.0, 50.0, 2.0, 51.0])
         );
         assert!(default_simplify(&[179.0, 50.0, -179.0, 51.0]) < 0.002);
+        // the whole width of the world is 360 wide, even when the box is thin
+        assert_eq!(default_simplify(&[-180.0, 10.0, 180.0, 11.0]), 0.05);
         assert!(default_simplify(&[-105.3, 39.9, -105.2, 40.0]) < 0.0001);
     }
 
