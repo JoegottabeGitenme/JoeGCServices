@@ -108,6 +108,8 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   `superseded` (a newer message replaced it; only seen via `/items/{id}` or `include_superseded`).
   As of now, or as of the request's `datetime` instant (see above). This is the lifecycle status;
   the CAP one (`Actual`, `Test`, ...) is `cap_status`.
+- `color` is the NWS hazard-map colour of the event (`Test Message` has the map's Test colour,
+  `#F0FFFF`); an event the map does not list gets one by `significance`.
 - `significance`: `warning` / `watch` / `advisory` / `statement` / `other`. Group updates of one
   event by `vtec_event` (NEW, CON, EXT, UPG share it).
 - `summary` has only the keys present (`what`, `where`, `when`, `impacts`, `hazard`, `source`,
