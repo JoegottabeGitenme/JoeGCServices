@@ -162,6 +162,23 @@ mod tests {
     }
 
     #[test]
+    fn spec_documents_nws_alerts() {
+        for needle in [
+            "/collections/{collectionId}/items/{featureId}:",
+            "operationId: getItem",
+            "urn:oid:2.49.0.1.840.0",
+            "severity=Severe,Extreme",
+            "status=active|all",
+        ] {
+            assert!(
+                OPENAPI_SPEC.contains(needle),
+                "openapi.yaml is missing `{}`",
+                needle
+            );
+        }
+    }
+
+    #[test]
     fn spec_is_valid_yaml_with_a_paths_section() {
         let value: serde_yaml::Value =
             serde_yaml::from_str(OPENAPI_SPEC).expect("openapi.yaml must parse");

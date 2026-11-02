@@ -17,6 +17,7 @@ pub mod light_pollution;
 pub mod lightning;
 pub mod linear_features;
 pub mod locations;
+pub mod nws_alerts;
 pub mod observations;
 pub mod position;
 pub mod radius;

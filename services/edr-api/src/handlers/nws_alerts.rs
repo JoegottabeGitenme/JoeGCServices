@@ -1,0 +1,1273 @@
+//! The `nws-alerts` feature collection: National Weather Service watches,
+//! warnings and advisories, served from the `nws_alerts` PostGIS tables that the
+//! downloader/ingester keep current (see `storage::nws_alerts`).
+//!
+//! The question the app asks is "what alerts are active at my location right
+//! now?", so the primary query is `/position`. It answers with a compact
+//! FeatureCollection, worst alert first, each feature carrying just what a small
+//! card needs (event, severity, colour, headline, when, what/impacts/instruction).
+//! `/items/{id}` returns one alert in full; `/items`, `/area` and `/radius` serve
+//! maps and nearby-alert lists.
+//!
+//! The wire shape is built by pure functions at the top of this file
+//! ([`compact_feature`], [`full_feature`], [`feed_meta`], ...) so it is unit
+//! tested without a database.
+//!
+//! Every list response carries a top-level `meta` with the age of the data
+//! (`stale` once the last successful poll of api.weather.gov is over
+//! [`STALE_AFTER_SECS`] old) so a client can say so rather than present an
+//! outage as "no alerts".
+
+use axum::{
+    extract::{Extension, Path, Query, RawQuery},
+    http::{header, HeaderMap, StatusCode},
+    response::Response,
+};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use edr_protocol::responses::ExceptionResponse;
+use edr_protocol::{Collection, DataQueries, Extent, Parameter};
+use serde::Deserialize;
+use serde_json::{json, Map, Value};
+use std::sync::Arc;
+
+use storage::{AlertRegion, AlertSearch, FeedStatus, StoredAlert};
+
+use crate::state::AppState;
+
+/// `observation_source` value in `config/edr/nws-alerts.yaml`.
+pub const OBSERVATION_SOURCE: &str = "nws_alerts";
+
+/// Data older than this (since the last successful poll) is flagged `stale`.
+pub const STALE_AFTER_SECS: i64 = 300;
+
+const CACHE_CONTROL: &str = "public, max-age=60";
+const DEFAULT_ITEMS_LIMIT: i64 = 500;
+const MAX_ITEMS_LIMIT: i64 = 2000;
+/// Upper bound for position/area/radius answers (a point is never under this many alerts).
+const NEARBY_LIMIT: i64 = 500;
+const MAX_RADIUS_M: f64 = 500_000.0;
+const MAX_POLYGON_VERTICES: usize = 2000;
+/// Compact-mode text caps.
+const INSTRUCTION_MAX: usize = 600;
+const SUMMARY_MAX: usize = 500;
+const SUMMARY_KEYS: [&str; 7] = [
+    "what", "where", "when", "impacts", "hazard", "source", "impact",
+];
+
+// =============================================================================
+// Pure mapping
+// =============================================================================
+
+fn ts(t: DateTime<Utc>) -> String {
+    t.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn opt_ts(t: Option<DateTime<Utc>>) -> Value {
+    t.map(|t| json!(ts(t))).unwrap_or(Value::Null)
+}
+
+/// Percent-encode an alert id for use as one URL path segment (`:` becomes `%3A`).
+pub fn encode_id(id: &str) -> String {
+    let mut out = String::with_capacity(id.len() + 8);
+    for b in id.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Trim whitespace and cap at `max` characters, cutting at a word boundary and
+/// ending with an ellipsis when something was dropped.
+pub fn trim_text(s: &str, max: usize) -> String {
+    let s = s.trim();
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let cut: String = s.chars().take(max).collect();
+    let cut = match cut.rfind(char::is_whitespace) {
+        // keep a word boundary unless that would throw away most of the budget
+        Some(i) if i > max / 2 => &cut[..i],
+        _ => cut.as_str(),
+    };
+    format!(
+        "{}…",
+        cut.trim_end_matches(|c: char| c.is_whitespace() || ",;:-".contains(c))
+    )
+}
+
+/// `active` | `upcoming` | `ended` | `superseded`, as of `now`.
+///
+/// NWS lists an alert as active from the moment it is issued, even when the
+/// hazard starts hours later, so `upcoming` is "onset (else effective) is still
+/// ahead".
+pub fn alert_status(a: &StoredAlert, now: DateTime<Utc>) -> &'static str {
+    if a.superseded_by.is_some() {
+        "superseded"
+    } else if a.ended_at.is_some() || a.end_time.is_some_and(|e| e <= now) {
+        "ended"
+    } else if a.onset.or(a.effective).is_some_and(|s| s > now) {
+        "upcoming"
+    } else {
+        "active"
+    }
+}
+
+fn first_vtec(a: &StoredAlert) -> Option<&Value> {
+    a.vtec.as_array().and_then(|v| v.first())
+}
+
+/// `warning` | `watch` | `advisory` | `statement` | `other`.
+///
+/// From the first VTEC code's significance letter (W/A/Y/S), else from the
+/// event name (`... Warning`).
+pub fn significance(a: &StoredAlert) -> &'static str {
+    let letter = first_vtec(a)
+        .and_then(|v| v["significance"].as_str())
+        .and_then(|s| s.chars().next());
+    match letter {
+        Some('W') => return "warning",
+        Some('A') => return "watch",
+        Some('Y') => return "advisory",
+        Some('S') => return "statement",
+        _ => {}
+    }
+    let e = a.event.to_lowercase();
+    if e.ends_with("warning") {
+        "warning"
+    } else if e.ends_with("watch") {
+        "watch"
+    } else if e.ends_with("advisory") {
+        "advisory"
+    } else if e.ends_with("statement") {
+        "statement"
+    } else {
+        "other"
+    }
+}
+
+fn headline(a: &StoredAlert) -> Option<&str> {
+    a.nws_headline
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .or(a.headline.as_deref())
+}
+
+fn api_url(id: &str) -> String {
+    format!("https://api.weather.gov/alerts/{id}")
+}
+
+fn links(a: &StoredAlert, base_url: &str) -> Value {
+    let mut l = vec![
+        json!({"rel": "self", "type": "application/geo+json",
+               "href": format!("{}/collections/nws-alerts/items/{}", base_url.trim_end_matches('/'), encode_id(&a.id))}),
+        json!({"rel": "alternate", "type": "application/geo+json", "href": api_url(&a.id)}),
+    ];
+    if let Some(w) = a.web.as_deref().filter(|w| !w.is_empty()) {
+        l.push(json!({"rel": "related", "type": "text/html", "href": w}));
+    }
+    Value::Array(l)
+}
+
+/// What / where / when / impacts ... as plain strings, only the keys present.
+fn summary(a: &StoredAlert, cap: Option<usize>) -> Value {
+    let mut m = Map::new();
+    for k in SUMMARY_KEYS {
+        if let Some(t) = a.sections.get(k).and_then(|v| v.as_str()) {
+            let t = t.trim();
+            if !t.is_empty() {
+                m.insert(
+                    k.to_string(),
+                    json!(match cap {
+                        Some(n) => trim_text(t, n),
+                        None => t.to_string(),
+                    }),
+                );
+            }
+        }
+    }
+    Value::Object(m)
+}
+
+fn instruction_text(a: &StoredAlert) -> Option<&str> {
+    a.instruction_text
+        .as_deref()
+        .or(a.instruction.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+fn common_properties(
+    a: &StoredAlert,
+    now: DateTime<Utc>,
+    base_url: &str,
+    compact: bool,
+) -> Map<String, Value> {
+    let vtec0 = first_vtec(a);
+    let mut p = Map::new();
+    p.insert("event".into(), json!(a.event));
+    p.insert("severity".into(), json!(a.severity));
+    p.insert("urgency".into(), json!(a.urgency));
+    p.insert("certainty".into(), json!(a.certainty));
+    p.insert("color".into(), json!(a.color));
+    p.insert("headline".into(), json!(headline(a)));
+    p.insert("area".into(), json!(a.area_desc));
+    p.insert("sender".into(), json!(a.sender_name));
+    p.insert("sent".into(), opt_ts(a.sent));
+    p.insert("effective".into(), opt_ts(a.effective));
+    p.insert("onset".into(), opt_ts(a.onset));
+    p.insert("ends".into(), opt_ts(a.end_time));
+    p.insert("expires".into(), opt_ts(a.expires));
+    p.insert("status".into(), json!(alert_status(a, now)));
+    p.insert("significance".into(), json!(significance(a)));
+    p.insert(
+        "action".into(),
+        vtec0
+            .and_then(|v| v["action"].as_str())
+            .map(|s| json!(s))
+            .unwrap_or(Value::Null),
+    );
+    p.insert("vtec_event".into(), json!(a.vtec_event_key));
+    p.insert("summary".into(), summary(a, compact.then_some(SUMMARY_MAX)));
+    let instr = instruction_text(a).map(|t| {
+        if compact {
+            trim_text(t, INSTRUCTION_MAX)
+        } else {
+            t.to_string()
+        }
+    });
+    p.insert("instruction".into(), json!(instr));
+    p.insert("geometry_source".into(), json!(a.geometry_source));
+    p.insert("links".into(), links(a, base_url));
+    p
+}
+
+fn geometry_value(a: &StoredAlert) -> Value {
+    a.geometry_geojson
+        .as_deref()
+        .and_then(|g| serde_json::from_str(g).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// The compact feature used by position / items / area / radius.
+pub fn compact_feature(a: &StoredAlert, now: DateTime<Utc>, base_url: &str) -> Value {
+    json!({
+        "type": "Feature",
+        "id": a.id,
+        "geometry": geometry_value(a),
+        "properties": common_properties(a, now, base_url, true),
+    })
+}
+
+/// The full feature served by `/items/{id}`: compact fields (untrimmed) plus all
+/// text, sections, VTEC, parameters, zones and lifecycle.
+pub fn full_feature(a: &StoredAlert, now: DateTime<Utc>, base_url: &str) -> Value {
+    let mut p = common_properties(a, now, base_url, false);
+    p.insert("message_type".into(), json!(a.message_type));
+    p.insert("category".into(), json!(a.category));
+    p.insert("response".into(), json!(a.response));
+    p.insert(
+        "description".into(),
+        json!(a.description_text.as_ref().or(a.description.as_ref())),
+    );
+    p.insert("description_raw".into(), json!(a.description));
+    p.insert("instruction_raw".into(), json!(a.instruction));
+    p.insert("sections".into(), a.sections.clone());
+    p.insert("vtec".into(), a.vtec.clone());
+    p.insert("parameters".into(), a.parameters.clone());
+    p.insert("ugc".into(), json!(a.ugc));
+    p.insert("zones".into(), json!(a.zone_keys));
+    p.insert("is_marine".into(), json!(a.is_marine));
+    p.insert("references".into(), json!(a.references_ids));
+    p.insert("superseded_by".into(), json!(a.superseded_by));
+    p.insert("ended_at".into(), opt_ts(a.ended_at));
+    p.insert("first_seen_at".into(), json!(ts(a.first_seen_at)));
+    p.insert("last_seen_at".into(), json!(ts(a.last_seen_at)));
+    p.insert("updated_at".into(), json!(ts(a.updated_at)));
+    json!({
+        "type": "Feature",
+        "id": a.id,
+        "geometry": geometry_value(a),
+        "properties": p,
+    })
+}
+
+/// Freshness block. `stale` when the feed has never been polled successfully or
+/// the last success is over [`STALE_AFTER_SECS`] old.
+pub fn feed_meta(status: Option<&FeedStatus>, now: DateTime<Utc>) -> Value {
+    let last = status.and_then(|s| s.last_success_at);
+    let age = last.map(|t| (now - t).num_seconds().max(0));
+    let mut m = json!({
+        "source": "api.weather.gov",
+        "last_success_at": opt_ts(last),
+        "data_age_seconds": age,
+        "stale": age.is_none_or(|a| a > STALE_AFTER_SECS),
+    });
+    if let Some(s) = status {
+        // A poll failing right now is worth knowing even before the data goes stale.
+        if s.last_error_at.is_some_and(|e| last.is_none_or(|l| e > l)) {
+            m["last_error"] = json!(s.last_error);
+            m["last_error_at"] = opt_ts(s.last_error_at);
+        }
+        m["feed_updated_at"] = opt_ts(s.feed_updated_at);
+    }
+    m
+}
+
+fn collection(features: Vec<Value>, now: DateTime<Utc>, meta: Value) -> Value {
+    json!({
+        "type": "FeatureCollection",
+        "numberReturned": features.len(),
+        "features": features,
+        "timeStamp": ts(now),
+        "meta": meta,
+    })
+}
+
+// =============================================================================
+// Request parsing (pure)
+// =============================================================================
+
+/// Query parameters shared by every `nws-alerts` query. Each handler reads the
+/// subset it documents.
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct NwsQuery {
+    pub coords: Option<String>,
+    pub bbox: Option<String>,
+    pub datetime: Option<String>,
+    /// Comma list, case-insensitive: `Severe,Extreme`.
+    pub severity: Option<String>,
+    /// Comma list of event names, case-insensitive.
+    pub event: Option<String>,
+    /// items only: `active` (default) or `all`.
+    pub status: Option<String>,
+    pub limit: Option<i64>,
+    pub geometry: Option<String>,
+    /// Geometry simplification tolerance in degrees; `0` disables.
+    pub simplify: Option<f64>,
+    pub within: Option<String>,
+    #[serde(rename = "within-units")]
+    pub within_units: Option<String>,
+    pub include_superseded: Option<String>,
+}
+
+fn nums(s: &str) -> Result<Vec<f64>, String> {
+    s.split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.parse::<f64>().map_err(|_| format!("Invalid number: {t}")))
+        .collect()
+}
+
+fn check_lonlat(lon: f64, lat: f64) -> Result<(), String> {
+    if lon.is_finite()
+        && lat.is_finite()
+        && (-180.0..=180.0).contains(&lon)
+        && (-90.0..=90.0).contains(&lat)
+    {
+        Ok(())
+    } else {
+        Err("Coordinates out of range (lon -180..180, lat -90..90)".into())
+    }
+}
+
+/// `POINT(lon lat)` or `lon,lat`.
+pub fn parse_point(coords: &str) -> Result<(f64, f64), String> {
+    let c = coords.trim();
+    let inner = if c.len() >= 5 && c[..5].eq_ignore_ascii_case("POINT") {
+        c[5..].trim().trim_start_matches('(').trim_end_matches(')')
+    } else {
+        c
+    };
+    let n = nums(inner)?;
+    if n.len() != 2 {
+        return Err("Invalid coords. Use POINT(lon lat) or lon,lat".into());
+    }
+    check_lonlat(n[0], n[1])?;
+    Ok((n[0], n[1]))
+}
+
+/// `POLYGON((lon lat, ...))` (outer ring only), returned as validated WKT.
+pub fn parse_polygon(coords: &str) -> Result<String, String> {
+    let c = coords.trim();
+    if c.len() < 7 || !c[..7].eq_ignore_ascii_case("POLYGON") {
+        return Err("Invalid coords. Use POLYGON((lon lat, lon lat, ...))".into());
+    }
+    let ring = c[7..]
+        .trim()
+        .trim_start_matches('(')
+        .trim_start_matches('(');
+    let ring = ring.split(')').next().unwrap_or("");
+    let mut pts = Vec::new();
+    for pair in ring.split(',') {
+        let n = nums(pair)?;
+        if n.len() != 2 {
+            return Err("Invalid polygon vertex".into());
+        }
+        check_lonlat(n[0], n[1])?;
+        pts.push((n[0], n[1]));
+    }
+    if pts.len() > MAX_POLYGON_VERTICES {
+        return Err(format!(
+            "Polygon has more than {MAX_POLYGON_VERTICES} vertices"
+        ));
+    }
+    if pts.first() != pts.last() && !pts.is_empty() {
+        pts.push(pts[0]);
+    }
+    if pts.len() < 4 {
+        return Err("A polygon needs at least 3 distinct vertices".into());
+    }
+    let body: Vec<String> = pts.iter().map(|(x, y)| format!("{x} {y}")).collect();
+    Ok(format!("POLYGON(({}))", body.join(", ")))
+}
+
+pub fn parse_bbox(s: &str) -> Result<[f64; 4], String> {
+    let n = nums(s)?;
+    if n.len() != 4 {
+        return Err("Invalid bbox. Use west,south,east,north".into());
+    }
+    check_lonlat(n[0], n[1])?;
+    check_lonlat(n[2], n[3])?;
+    if n[0] >= n[2] || n[1] >= n[3] {
+        return Err("Invalid bbox: west must be < east and south < north".into());
+    }
+    Ok([n[0], n[1], n[2], n[3]])
+}
+
+fn parse_instant(s: &str, now: DateTime<Utc>) -> Result<Option<DateTime<Utc>>, String> {
+    let s = s.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("now") {
+        return Ok(Some(now));
+    }
+    if s == ".." {
+        return Ok(None);
+    }
+    DateTime::parse_from_rfc3339(s)
+        .map(|d| Some(d.with_timezone(&Utc)))
+        .map_err(|_| format!("Invalid datetime: {s} (use RFC 3339, e.g. 2026-11-01T18:00:00Z)"))
+}
+
+/// A parsed `datetime`: nothing, one instant, or an interval (open ends allowed).
+#[derive(Debug, PartialEq)]
+pub enum When {
+    None,
+    Instant(DateTime<Utc>),
+    Interval(Option<DateTime<Utc>>, Option<DateTime<Utc>>),
+}
+
+pub fn parse_when(dt: Option<&str>, now: DateTime<Utc>) -> Result<When, String> {
+    let Some(dt) = dt.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(When::None);
+    };
+    if let Some((a, b)) = dt.split_once('/') {
+        return Ok(When::Interval(
+            parse_instant(a, now)?,
+            parse_instant(b, now)?,
+        ));
+    }
+    Ok(match parse_instant(dt, now)? {
+        Some(t) => When::Instant(t),
+        None => When::None,
+    })
+}
+
+pub fn csv(s: Option<&str>) -> Vec<String> {
+    s.map(|s| {
+        s.split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+pub fn parse_bool(s: Option<&str>, default: bool) -> Result<bool, String> {
+    match s.map(|s| s.trim().to_lowercase()).as_deref() {
+        None | Some("") => Ok(default),
+        Some("true") | Some("1") | Some("yes") => Ok(true),
+        Some("false") | Some("0") | Some("no") => Ok(false),
+        Some(other) => Err(format!("Invalid boolean: {other}")),
+    }
+}
+
+/// Radius in metres from `within` (`50`, `50km`, `30mi`) and `within-units`
+/// (default km).
+pub fn parse_within(within: Option<&str>, units: Option<&str>) -> Result<f64, String> {
+    let w = within
+        .map(|w| w.trim().to_lowercase())
+        .filter(|w| !w.is_empty())
+        .ok_or("Missing parameter: within")?;
+    let (num, unit) = match w.find(|c: char| c.is_ascii_alphabetic()) {
+        Some(i) => (w[..i].trim().to_string(), w[i..].trim().to_string()),
+        None => (
+            w.clone(),
+            units
+                .map(|u| u.trim().to_lowercase())
+                .unwrap_or_else(|| "km".into()),
+        ),
+    };
+    let n: f64 = num
+        .parse()
+        .map_err(|_| "Invalid radius value".to_string())?;
+    let meters = match unit.as_str() {
+        "km" => n * 1000.0,
+        "mi" | "mile" | "miles" => n * 1609.344,
+        "m" => n,
+        "nm" => n * 1852.0,
+        other => return Err(format!("Unsupported within-units: {other} (km, mi, m, nm)")),
+    };
+    if !meters.is_finite() || meters <= 0.0 || meters > MAX_RADIUS_M {
+        return Err(format!(
+            "Radius must be between 0 and {} km",
+            MAX_RADIUS_M / 1000.0
+        ));
+    }
+    Ok(meters)
+}
+
+/// Default simplification tolerance (degrees) for `/items` geometry: about one
+/// pixel of a 1500 px wide view of the bbox, capped at ~5 km.
+pub fn default_simplify(bbox: &[f64; 4]) -> f64 {
+    ((bbox[2] - bbox[0]).max(bbox[3] - bbox[1]) / 1500.0).clamp(0.0, 0.05)
+}
+
+// =============================================================================
+// Responses
+// =============================================================================
+
+fn error(status: StatusCode, exc: ExceptionResponse) -> Response {
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(serde_json::to_string(&exc).unwrap_or_default().into())
+        .unwrap()
+}
+
+fn bad_request(msg: impl Into<String>) -> Response {
+    error(
+        StatusCode::BAD_REQUEST,
+        ExceptionResponse::bad_request(msg.into()),
+    )
+}
+
+fn internal(msg: impl std::fmt::Display) -> Response {
+    tracing::error!("nws-alerts: {msg}");
+    error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        ExceptionResponse::internal_error("Internal error"),
+    )
+}
+
+fn geojson(value: Value) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/geo+json")
+        .header(header::CACHE_CONTROL, CACHE_CONTROL)
+        .body(serde_json::to_string(&value).unwrap_or_default().into())
+        .unwrap()
+}
+
+/// Parse the raw query string of a generic position/area/radius request.
+#[allow(clippy::result_large_err)]
+pub fn query_from_raw(raw: Option<&str>) -> Result<NwsQuery, Response> {
+    let uri: axum::http::Uri = format!("/?{}", raw.unwrap_or(""))
+        .parse()
+        .map_err(|_| bad_request("Malformed query string"))?;
+    Query::<NwsQuery>::try_from_uri(&uri)
+        .map(|q| q.0)
+        .map_err(|e| bad_request(e.to_string()))
+}
+
+/// `GET /collections/:collection_id/position`: alerts at the point for
+/// `nws-alerts`, otherwise the grid position query.
+pub async fn position_route(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(collection_id): Path<String>,
+    Query(params): Query<super::position::PositionQueryParams>,
+    RawQuery(raw): RawQuery,
+    headers: HeaderMap,
+) -> Response {
+    if is_nws_collection(&state, &collection_id).await {
+        return match query_from_raw(raw.as_deref()) {
+            Ok(q) => position(state, q).await,
+            Err(r) => r,
+        };
+    }
+    super::position::position_handler(
+        Extension(state),
+        Path(collection_id),
+        Query(params),
+        headers,
+    )
+    .await
+}
+
+/// `GET /collections/:collection_id/area`, `nws-alerts` aware.
+pub async fn area_route(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(collection_id): Path<String>,
+    Query(params): Query<super::area::AreaQueryParams>,
+    RawQuery(raw): RawQuery,
+    headers: HeaderMap,
+) -> Response {
+    if is_nws_collection(&state, &collection_id).await {
+        return match query_from_raw(raw.as_deref()) {
+            Ok(q) => area(state, q).await,
+            Err(r) => r,
+        };
+    }
+    super::area::area_handler(
+        Extension(state),
+        Path(collection_id),
+        Query(params),
+        headers,
+    )
+    .await
+}
+
+/// `GET /collections/:collection_id/radius`, `nws-alerts` aware.
+pub async fn radius_route(
+    Extension(state): Extension<Arc<AppState>>,
+    Path(collection_id): Path<String>,
+    Query(params): Query<super::radius::RadiusQueryParams>,
+    RawQuery(raw): RawQuery,
+    headers: HeaderMap,
+) -> Response {
+    if is_nws_collection(&state, &collection_id).await {
+        return match query_from_raw(raw.as_deref()) {
+            Ok(q) => radius(state, q).await,
+            Err(r) => r,
+        };
+    }
+    super::radius::radius_handler(
+        Extension(state),
+        Path(collection_id),
+        Query(params),
+        headers,
+    )
+    .await
+}
+
+/// True when `collection_id` is configured with `observation_source: nws_alerts`.
+pub async fn is_nws_collection(state: &AppState, collection_id: &str) -> bool {
+    let config = state.edr_config.read().await;
+    config
+        .find_collection(collection_id)
+        .is_some_and(|(m, _)| m.observation_source.as_deref() == Some(OBSERVATION_SOURCE))
+}
+
+async fn meta(state: &AppState, now: DateTime<Utc>) -> Value {
+    let status = state.nws_alert_catalog.status().await.ok().flatten();
+    feed_meta(status.as_ref(), now)
+}
+
+/// Run a search and build the FeatureCollection response.
+async fn respond(state: &AppState, search: AlertSearch, extra: Vec<(&str, Value)>) -> Response {
+    let wall = Utc::now();
+    let limit = search.limit;
+    let mut rows = match state
+        .nws_alert_catalog
+        .search(&AlertSearch {
+            limit: limit + 1,
+            ..search.clone()
+        })
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return internal(e),
+    };
+    let truncated = rows.len() as i64 > limit;
+    rows.truncate(limit as usize);
+    let features = rows
+        .iter()
+        .map(|a| compact_feature(a, search.now, &state.base_url))
+        .collect();
+    let mut fc = collection(features, wall, meta(state, wall).await);
+    for (k, v) in extra {
+        fc[k] = v;
+    }
+    if truncated {
+        fc["truncated"] = json!(true);
+    }
+    geojson(fc)
+}
+
+fn base_search(
+    region: AlertRegion,
+    q: &NwsQuery,
+    now: DateTime<Utc>,
+    limit: i64,
+    geometry: bool,
+) -> AlertSearch {
+    AlertSearch {
+        region,
+        now,
+        window: None,
+        include_superseded: false,
+        severities: csv(q.severity.as_deref()),
+        events: csv(q.event.as_deref()),
+        limit,
+        with_geometry: geometry,
+        simplify: q.simplify,
+    }
+}
+
+/// An instant-or-nothing `datetime` for the "active at" queries.
+fn active_time(q: &NwsQuery) -> Result<DateTime<Utc>, String> {
+    let wall = Utc::now();
+    match parse_when(q.datetime.as_deref(), wall)? {
+        When::None => Ok(wall),
+        When::Instant(t) => Ok(t),
+        When::Interval(..) => Err(
+            "datetime must be a single instant here (alerts active at that time), not an interval"
+                .into(),
+        ),
+    }
+}
+
+// =============================================================================
+// Handlers
+// =============================================================================
+
+/// `GET /collections/nws-alerts/position?coords=POINT(lon lat)`: alerts in force at a point.
+pub async fn position(state: Arc<AppState>, q: NwsQuery) -> Response {
+    let (lon, lat) = match parse_point(q.coords.as_deref().unwrap_or("")) {
+        Ok(p) => p,
+        Err(e) => return bad_request(e),
+    };
+    let now = match active_time(&q) {
+        Ok(t) => t,
+        Err(e) => return bad_request(e),
+    };
+    let geometry = match parse_bool(q.geometry.as_deref(), false) {
+        Ok(g) => g,
+        Err(e) => return bad_request(e),
+    };
+    let search = base_search(
+        AlertRegion::Point { lon, lat },
+        &q,
+        now,
+        NEARBY_LIMIT,
+        geometry,
+    );
+    respond(&state, search, vec![]).await
+}
+
+/// `GET /collections/nws-alerts/area?coords=POLYGON((...))`.
+pub async fn area(state: Arc<AppState>, q: NwsQuery) -> Response {
+    let wkt = match parse_polygon(q.coords.as_deref().unwrap_or("")) {
+        Ok(w) => w,
+        Err(e) => return bad_request(e),
+    };
+    nearby(state, q, AlertRegion::Polygon { wkt }).await
+}
+
+/// `GET /collections/nws-alerts/radius?coords=POINT(lon lat)&within=50&within-units=km`.
+pub async fn radius(state: Arc<AppState>, q: NwsQuery) -> Response {
+    let (lon, lat) = match parse_point(q.coords.as_deref().unwrap_or("")) {
+        Ok(p) => p,
+        Err(e) => return bad_request(e),
+    };
+    let meters = match parse_within(q.within.as_deref(), q.within_units.as_deref()) {
+        Ok(m) => m,
+        Err(e) => return bad_request(e),
+    };
+    nearby(state, q, AlertRegion::Radius { lon, lat, meters }).await
+}
+
+async fn nearby(state: Arc<AppState>, q: NwsQuery, region: AlertRegion) -> Response {
+    let now = match active_time(&q) {
+        Ok(t) => t,
+        Err(e) => return bad_request(e),
+    };
+    let geometry = match parse_bool(q.geometry.as_deref(), false) {
+        Ok(g) => g,
+        Err(e) => return bad_request(e),
+    };
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_ITEMS_LIMIT)
+        .clamp(1, MAX_ITEMS_LIMIT);
+    respond(
+        &state,
+        base_search(region, &q, now, limit, geometry),
+        vec![("limit", json!(limit))],
+    )
+    .await
+}
+
+/// `GET /collections/nws-alerts/items`: alerts in a bbox (default: everywhere).
+pub async fn items(state: Arc<AppState>, q: NwsQuery) -> Response {
+    let bbox = match q.bbox.as_deref().filter(|b| !b.trim().is_empty()) {
+        Some(b) => match parse_bbox(b) {
+            Ok(b) => b,
+            Err(e) => return bad_request(e),
+        },
+        None => [-180.0, -90.0, 180.0, 90.0],
+    };
+    let geometry = match parse_bool(q.geometry.as_deref(), true) {
+        Ok(g) => g,
+        Err(e) => return bad_request(e),
+    };
+    let include_superseded = match parse_bool(q.include_superseded.as_deref(), false) {
+        Ok(g) => g,
+        Err(e) => return bad_request(e),
+    };
+    let all = match q
+        .status
+        .as_deref()
+        .map(|s| s.trim().to_lowercase())
+        .as_deref()
+    {
+        None | Some("") | Some("active") => false,
+        Some("all") => true,
+        Some(other) => return bad_request(format!("Invalid status: {other} (active or all)")),
+    };
+    let wall = Utc::now();
+    let when = match parse_when(q.datetime.as_deref(), wall) {
+        Ok(w) => w,
+        Err(e) => return bad_request(e),
+    };
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_ITEMS_LIMIT)
+        .clamp(1, MAX_ITEMS_LIMIT);
+
+    let (now, window) = match (all, when) {
+        (false, When::None) => (wall, None),
+        (false, When::Instant(t)) => (t, None),
+        (false, When::Interval(..)) => {
+            return bad_request(
+                "status=active takes a single instant; use status=all for an interval",
+            )
+        }
+        (true, When::None) => (wall, Some((wall - Duration::hours(24), wall))),
+        (true, When::Instant(t)) => (t, Some((t, t))),
+        (true, When::Interval(a, b)) => (
+            wall,
+            Some((
+                a.unwrap_or(wall - Duration::days(365)),
+                b.unwrap_or(wall + Duration::days(365)),
+            )),
+        ),
+    };
+    let mut search = base_search(AlertRegion::Bbox(bbox), &q, now, limit, geometry);
+    search.window = window;
+    search.include_superseded = include_superseded;
+    search.simplify = Some(q.simplify.unwrap_or_else(|| default_simplify(&bbox)));
+    respond(&state, search, vec![("limit", json!(limit))]).await
+}
+
+/// `GET /collections/nws-alerts/items/{id}`: one alert in full, in any state.
+pub async fn item(state: Arc<AppState>, id: String, q: NwsQuery) -> Response {
+    let geometry = match parse_bool(q.geometry.as_deref(), true) {
+        Ok(g) => g,
+        Err(e) => return bad_request(e),
+    };
+    match state.nws_alert_catalog.get(&id, geometry).await {
+        Ok(Some(a)) => {
+            let wall = Utc::now();
+            let mut f = full_feature(&a, wall, &state.base_url);
+            f["meta"] = meta(&state, wall).await;
+            geojson(f)
+        }
+        Ok(None) => error(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!("Alert not found: {id}")),
+        ),
+        Err(e) => internal(e),
+    }
+}
+
+/// Route handler for `/collections/:collection_id/items/:feature_id`.
+pub async fn item_route_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Path((collection_id, feature_id)): Path<(String, String)>,
+    Query(q): Query<NwsQuery>,
+) -> Response {
+    if !is_nws_collection(&state, &collection_id).await {
+        return error(
+            StatusCode::NOT_FOUND,
+            ExceptionResponse::not_found(format!(
+                "Collection {collection_id} has no addressable items"
+            )),
+        );
+    }
+    item(state, feature_id, q).await
+}
+
+/// The `nws-alerts` collection document: position/area/radius links, extent and
+/// a data-age sentence in the description. `items` and `items/{id}` are served
+/// by dedicated routes and described in the description, like the other feature
+/// collections.
+pub async fn collection_metadata(
+    state: &AppState,
+    def_id: &str,
+    title: &str,
+    description: &str,
+) -> Collection {
+    let status = state.nws_alert_catalog.status().await.ok().flatten();
+    let m = feed_meta(status.as_ref(), Utc::now());
+    let age = match m["data_age_seconds"].as_i64() {
+        Some(s) if !m["stale"].as_bool().unwrap_or(true) => format!("Data age {s} s."),
+        Some(s) => format!("STALE: last successful poll of api.weather.gov was {s} s ago."),
+        None => "STALE: no successful poll of api.weather.gov yet.".to_string(),
+    };
+    let description = format!(
+        "{description} Also /items?bbox=&datetime=&status=active|all and /items/{{id}} \
+         (URN, URL-encoded or raw). Filters: severity=, event= (comma lists), geometry=true|false. {age}"
+    );
+    let mut c = Collection::new(def_id)
+        .with_title(title)
+        .with_description(&description);
+    c.build_links(&state.base_url);
+    c = c.with_data_queries(
+        DataQueries::with_position(&state.base_url, def_id)
+            .with_area(&state.base_url, def_id)
+            .with_radius(&state.base_url, def_id),
+    );
+    // US-centred but includes the Pacific/Alaska/territory zones NWS covers.
+    c = c.with_extent(Extent::with_spatial([-180.0, -15.0, 180.0, 72.0], None));
+    let mut params = std::collections::HashMap::new();
+    for (k, d) in [
+        (
+            "severity",
+            "Alert severity: Extreme, Severe, Moderate, Minor, Unknown",
+        ),
+        ("event", "NWS event name, e.g. Tornado Warning"),
+    ] {
+        params.insert(k.to_string(), Parameter::new(k, d));
+    }
+    c.with_parameters(params)
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+    use storage::nws_alerts::{parse_feature, ParsedAlert};
+
+    const FIXTURE: &str = include_str!("../../../downloader/tests/fixtures/nws_alerts_active.json");
+
+    fn parsed() -> Vec<ParsedAlert> {
+        let v: Value = serde_json::from_str(FIXTURE).unwrap();
+        v["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| parse_feature(f).unwrap())
+            .collect()
+    }
+
+    /// Build the row the catalog would return for a parsed alert.
+    fn stored(p: &ParsedAlert) -> StoredAlert {
+        let now = Utc.with_ymd_and_hms(2026, 11, 1, 23, 30, 0).unwrap();
+        StoredAlert {
+            id: p.id.clone(),
+            event: p.event.clone(),
+            severity: p.severity.clone(),
+            urgency: p.urgency.clone(),
+            certainty: p.certainty.clone(),
+            category: p.category.clone(),
+            status: p.status.clone(),
+            message_type: p.message_type.clone(),
+            response: p.response.clone(),
+            headline: p.headline.clone(),
+            nws_headline: p.nws_headline.clone(),
+            description: p.description.clone(),
+            instruction: p.instruction.clone(),
+            description_text: p.description_text.clone(),
+            instruction_text: p.instruction_text.clone(),
+            area_desc: p.area_desc.clone(),
+            sender_name: p.sender_name.clone(),
+            web: p.web.clone(),
+            sent: p.sent,
+            effective: p.effective,
+            onset: p.onset,
+            expires: p.expires,
+            ends: p.ends,
+            end_time: p.ends.or(p.expires),
+            ugc: p.ugc.clone(),
+            zone_keys: p.zone_keys.clone(),
+            is_marine: p.is_marine,
+            vtec: serde_json::to_value(&p.vtec).unwrap(),
+            vtec_event_key: p.vtec.first().map(|v| v.event_key()),
+            sections: p.sections.clone(),
+            parameters: p.parameters.clone(),
+            color: p.color.clone(),
+            references_ids: p.references.clone(),
+            superseded_by: None,
+            ended_at: None,
+            geometry_source: "polygon".into(),
+            first_seen_at: now,
+            updated_at: now,
+            last_seen_at: now,
+            geometry_geojson: p.geometry_json.clone(),
+        }
+    }
+
+    fn by_event(event: &str) -> StoredAlert {
+        stored(parsed().iter().find(|a| a.event == event).unwrap())
+    }
+
+    fn t0() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 11, 1, 23, 30, 0).unwrap()
+    }
+
+    #[test]
+    fn ids_are_percent_encoded_as_one_segment() {
+        assert_eq!(
+            encode_id("urn:oid:2.49.0.1.840.0.abc.001.1"),
+            "urn%3Aoid%3A2.49.0.1.840.0.abc.001.1"
+        );
+        assert_eq!(encode_id("a/b c"), "a%2Fb%20c");
+    }
+
+    #[test]
+    fn trimming_caps_at_a_word_and_marks_it() {
+        assert_eq!(trim_text("  short  ", 20), "short");
+        let t = trim_text("alpha beta gamma delta epsilon", 17);
+        assert_eq!(t, "alpha beta gamma…");
+        assert!(trim_text(&"x".repeat(50), 10).chars().count() <= 11);
+        // multi-byte text never panics
+        assert!(trim_text(&"é".repeat(30), 10).ends_with('…'));
+    }
+
+    #[test]
+    fn compact_properties_carry_what_the_card_needs() {
+        let a = by_event("Severe Thunderstorm Warning");
+        let f = compact_feature(&a, t0(), "https://x.test/edr");
+        assert_eq!(f["id"], a.id);
+        assert!(
+            f["geometry"].is_object(),
+            "fixture alert carries its polygon"
+        );
+        let p = &f["properties"];
+        assert_eq!(p["event"], "Severe Thunderstorm Warning");
+        assert_eq!(p["severity"], "Severe");
+        assert_eq!(p["color"], "#FFA500");
+        assert_eq!(p["significance"], "warning");
+        assert_eq!(p["action"], "NEW");
+        assert_eq!(p["vtec_event"], "KABQ.SV.W.0428");
+        assert_eq!(p["status"], "active");
+        assert_eq!(p["summary"]["hazard"], "60 mph wind gusts.");
+        assert_eq!(p["ends"], "2026-11-02T00:00:00Z");
+        assert!(p["instruction"].as_str().unwrap().len() <= INSTRUCTION_MAX + 3);
+        assert_eq!(
+            p["links"][0]["href"],
+            format!(
+                "https://x.test/edr/collections/nws-alerts/items/{}",
+                encode_id(&a.id)
+            )
+        );
+        assert_eq!(p["links"][1]["rel"], "alternate");
+        // compact leaves the heavy fields out
+        for k in [
+            "description",
+            "sections",
+            "vtec",
+            "parameters",
+            "ugc",
+            "references",
+        ] {
+            assert!(p.get(k).is_none(), "{k} must not be in the compact shape");
+        }
+    }
+
+    #[test]
+    fn headline_prefers_the_nws_headline() {
+        let mut a = by_event("Severe Thunderstorm Warning");
+        a.nws_headline = Some("NWS says".into());
+        a.headline = Some("Long headline".into());
+        assert_eq!(headline(&a), Some("NWS says"));
+        a.nws_headline = Some("  ".into());
+        assert_eq!(headline(&a), Some("Long headline"));
+        a.nws_headline = None;
+        a.headline = None;
+        assert_eq!(headline(&a), None);
+    }
+
+    #[test]
+    fn long_text_is_trimmed_in_compact_and_kept_in_full() {
+        let mut a = by_event("Winter Storm Warning");
+        a.instruction_text = Some("word ".repeat(400));
+        a.sections = json!({"what": "w ".repeat(600), "where": "Here."});
+        let c = compact_feature(&a, t0(), "");
+        let i = c["properties"]["instruction"].as_str().unwrap();
+        assert!(i.ends_with('…') && i.chars().count() <= INSTRUCTION_MAX + 1);
+        assert!(c["properties"]["summary"]["what"]
+            .as_str()
+            .unwrap()
+            .ends_with('…'));
+        assert_eq!(c["properties"]["summary"]["where"], "Here.");
+        assert!(c["properties"]["summary"].get("when").is_none());
+        let f = full_feature(&a, t0(), "");
+        assert_eq!(
+            f["properties"]["instruction"]
+                .as_str()
+                .unwrap()
+                .trim()
+                .len(),
+            4 * 400 + 399
+        );
+        assert!(!f["properties"]["summary"]["what"]
+            .as_str()
+            .unwrap()
+            .ends_with('…'));
+    }
+
+    #[test]
+    fn full_adds_everything_and_lifecycle() {
+        let mut a = by_event("Flash Flood Warning");
+        a.superseded_by = Some("urn:later".into());
+        let f = full_feature(&a, t0(), "");
+        let p = &f["properties"];
+        assert_eq!(p["status"], "superseded");
+        assert_eq!(p["superseded_by"], "urn:later");
+        assert!(p["description_raw"].is_string());
+        assert!(p["sections"].is_object());
+        assert!(p["vtec"].as_array().is_some_and(|v| !v.is_empty()));
+        assert!(p["parameters"].is_object());
+        assert!(p["ugc"].is_array() && p["zones"].is_array());
+        assert!(p["references"].is_array());
+        assert!(p["first_seen_at"].is_string() && p["last_seen_at"].is_string());
+        assert!(p["ended_at"].is_null());
+    }
+
+    #[test]
+    fn status_derivation() {
+        let mut a = by_event("Winter Storm Warning"); // onset 2026-11-02T00:00Z, ends 18:00Z
+        assert_eq!(alert_status(&a, t0()), "upcoming");
+        let during = Utc.with_ymd_and_hms(2026, 11, 2, 3, 0, 0).unwrap();
+        assert_eq!(alert_status(&a, during), "active");
+        let after = a.end_time.unwrap() + Duration::seconds(1);
+        assert_eq!(alert_status(&a, after), "ended");
+        a.ended_at = Some(t0());
+        assert_eq!(alert_status(&a, t0()), "ended");
+        a.superseded_by = Some("x".into());
+        assert_eq!(alert_status(&a, t0()), "superseded");
+        // no onset: effective decides
+        let mut b = by_event("Severe Thunderstorm Warning");
+        b.onset = None;
+        b.effective = Some(t0() + Duration::hours(1));
+        assert_eq!(alert_status(&b, t0()), "upcoming");
+    }
+
+    #[test]
+    fn significance_from_vtec_then_name() {
+        let expect = [
+            ("Severe Thunderstorm Warning", "warning"),
+            ("Flood Watch", "watch"),
+            ("Small Craft Advisory", "advisory"),
+            ("Special Weather Statement", "statement"),
+            ("Test Message", "other"),
+        ];
+        for (event, want) in expect {
+            let mut a = by_event(event);
+            assert_eq!(significance(&a), want, "{event} (with VTEC if any)");
+            a.vtec = json!([]);
+            assert_eq!(significance(&a), want, "{event} (name only)");
+        }
+        let mut a = by_event("Flood Watch");
+        a.vtec = json!([{"significance": "Y"}]);
+        assert_eq!(significance(&a), "advisory", "VTEC wins over the name");
+    }
+
+    #[test]
+    fn meta_flags_staleness() {
+        let now = t0();
+        let st = |ago: i64| FeedStatus {
+            last_success_at: Some(now - Duration::seconds(ago)),
+            ..Default::default()
+        };
+        let fresh = feed_meta(Some(&st(40)), now);
+        assert_eq!(fresh["data_age_seconds"], 40);
+        assert_eq!(fresh["stale"], false);
+        assert_eq!(fresh["source"], "api.weather.gov");
+        assert_eq!(feed_meta(Some(&st(301)), now)["stale"], true);
+        assert_eq!(feed_meta(Some(&st(300)), now)["stale"], false);
+        let never = feed_meta(None, now);
+        assert_eq!(
+            (never["stale"].clone(), never["last_success_at"].clone()),
+            (json!(true), Value::Null)
+        );
+        // a failing poll after the last success is surfaced
+        let mut failing = st(100);
+        failing.last_error = Some("timeout".into());
+        failing.last_error_at = Some(now - Duration::seconds(10));
+        assert_eq!(feed_meta(Some(&failing), now)["last_error"], "timeout");
+        assert!(feed_meta(Some(&st(100)), now).get("last_error").is_none());
+    }
+
+    #[test]
+    fn collection_counts_features() {
+        let a = by_event("Flood Watch");
+        let c = collection(vec![compact_feature(&a, t0(), "")], t0(), json!({}));
+        assert_eq!(c["type"], "FeatureCollection");
+        assert_eq!(c["numberReturned"], 1);
+    }
+
+    #[test]
+    fn point_and_polygon_parsing() {
+        assert_eq!(parse_point("POINT(-105.2 40.0)").unwrap(), (-105.2, 40.0));
+        assert_eq!(parse_point("point( -105.2   40 )").unwrap(), (-105.2, 40.0));
+        assert_eq!(parse_point("-105.2,40").unwrap(), (-105.2, 40.0));
+        assert!(parse_point("POINT(200 40)").is_err());
+        assert!(parse_point("POINT(1)").is_err());
+        assert!(parse_point("").is_err());
+        let w = parse_polygon("POLYGON((-106 39,-105 39,-105 40,-106 40))").unwrap();
+        assert_eq!(w, "POLYGON((-106 39, -105 39, -105 40, -106 40, -106 39))"); // closed for you
+        assert!(parse_polygon("POLYGON((-106 39,-105 39))").is_err());
+        assert!(parse_polygon("POINT(1 2)").is_err());
+        assert_eq!(
+            parse_bbox("-106,39,-105,40").unwrap(),
+            [-106.0, 39.0, -105.0, 40.0]
+        );
+        assert!(parse_bbox("-105,39,-106,40").is_err());
+        assert!(parse_bbox("1,2,3").is_err());
+    }
+
+    #[test]
+    fn datetime_and_option_parsing() {
+        let now = t0();
+        assert_eq!(parse_when(None, now).unwrap(), When::None);
+        assert_eq!(parse_when(Some("now"), now).unwrap(), When::Instant(now));
+        let t = Utc.with_ymd_and_hms(2026, 11, 1, 18, 0, 0).unwrap();
+        assert_eq!(
+            parse_when(Some("2026-11-01T18:00:00Z"), now).unwrap(),
+            When::Instant(t)
+        );
+        assert_eq!(
+            parse_when(Some("2026-11-01T18:00:00Z/.."), now).unwrap(),
+            When::Interval(Some(t), None)
+        );
+        assert!(parse_when(Some("yesterday"), now).is_err());
+        assert_eq!(csv(Some("Severe, extreme,,")), vec!["Severe", "extreme"]);
+        assert!(csv(None).is_empty());
+        assert!(parse_bool(Some("maybe"), true).is_err());
+        assert!(!parse_bool(Some("FALSE"), true).unwrap());
+        assert_eq!(parse_within(Some("50"), None).unwrap(), 50_000.0);
+        assert_eq!(parse_within(Some("10"), Some("mi")).unwrap(), 16093.44);
+        assert_eq!(parse_within(Some("5km"), Some("mi")).unwrap(), 5000.0);
+        assert!(parse_within(Some("9999"), None).is_err());
+        assert!(parse_within(None, None).is_err());
+        assert!(default_simplify(&[-125.0, 24.0, -66.0, 50.0]) <= 0.05);
+        assert!(default_simplify(&[-105.3, 39.9, -105.2, 40.0]) < 0.0001);
+    }
+
+    #[test]
+    fn active_time_rejects_intervals() {
+        let q = NwsQuery {
+            datetime: Some("2026-11-01T18:00:00Z/2026-11-01T19:00:00Z".into()),
+            ..Default::default()
+        };
+        assert!(active_time(&q).is_err());
+    }
+}

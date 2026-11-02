@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use grid_processor::{GridDataService, MinioConfig};
 use storage::lightning::LightningCatalog;
 use storage::linear_features::LinearFeatureCatalog;
+use storage::nws_alerts::NwsAlertCatalog;
 use storage::observations::ObservationCatalog;
 use storage::segment_conditions::SegmentConditionsCatalog;
 use storage::storm_events::StormEventCatalog;
@@ -47,6 +48,10 @@ pub struct AppState {
     /// GLM lightning flashes (the `glm-lightning` feature collection). May
     /// legitimately be empty: a quiet sky is normal.
     pub lightning_catalog: Arc<LightningCatalog>,
+
+    /// NWS alerts (the `nws-alerts` feature collection), written by the
+    /// ingester from the downloader's polls of api.weather.gov.
+    pub nws_alert_catalog: Arc<NwsAlertCatalog>,
 
     /// Stale-while-revalidate snapshot of the `GET /collections` body (the listing
     /// costs ~575 queries; see `snapshot_cache`).
@@ -134,6 +139,8 @@ impl AppState {
         // GLM lightning flashes (written by the ingester)
         let lightning_catalog = Arc::new(LightningCatalog::new(catalog.pool_clone()));
 
+        let nws_alert_catalog = Arc::new(NwsAlertCatalog::new(catalog.pool_clone()));
+
         // Load EDR config
         let edr_dir = format!("{}/edr", config_dir);
         let edr_config = EdrConfig::load_from_dir(&edr_dir)?;
@@ -171,6 +178,7 @@ impl AppState {
             linear_feature_catalog,
             segment_conditions_catalog,
             lightning_catalog,
+            nws_alert_catalog,
             collections_snapshot: Arc::new(SnapshotCache::new(std::time::Duration::from_secs(
                 std::env::var("EDR_COLLECTIONS_SNAPSHOT_TTL_SECS")
                     .ok()

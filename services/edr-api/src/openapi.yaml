@@ -114,7 +114,17 @@ paths:
     get:
       operationId: getPosition
       summary: Position query
-      description: Sample data at a single point location
+      description: |
+        Sample data at a single point location.
+
+        **`nws-alerts`**: the NWS alerts in force at the point, most severe first, as a compact
+        GeoJSON FeatureCollection (`geometry` null unless `geometry=true`). Extra parameters:
+        `severity=Severe,Extreme` and `event=Tornado Warning,...` (comma lists, case-insensitive),
+        `geometry=true|false`; `datetime` must be a single instant (alerts active at that time).
+        Alerts whose onset is still ahead are included with `status: upcoming`. The body has a
+        top-level `meta` (`source`, `last_success_at`, `data_age_seconds`, `stale`).
+        `/area` and `/radius` answer the same way for a polygon / `within` distance. See
+        docs/nws-alerts-api.md.
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -500,6 +510,39 @@ paths:
           description: Invalid request parameters, or the collection does not support /items
         '404':
           description: Collection not found
+
+  /collections/{collectionId}/items/{featureId}:
+    get:
+      operationId: getItem
+      summary: One feature in full (nws-alerts)
+      description: |
+        `nws-alerts` only: one alert in any state (active, upcoming, ended, superseded) with all
+        text (`description`, `instruction`, raw originals), `sections`, `vtec`, `parameters`,
+        `ugc`, `zones`, `references` and lifecycle (`superseded_by`, `ended_at`, `first_seen_at`,
+        `last_seen_at`). `featureId` is the NWS URN (`urn:oid:2.49.0.1.840.0....`), URL-encoded
+        or raw. `geometry=false` omits the geometry.
+
+        `/items` for `nws-alerts` takes `bbox`, `datetime` (instant: active then; interval needs
+        `status=all`), `status=active|all` (default active), `severity`, `event`, `limit`
+        (default 500, max 2000; `truncated: true` when cut), `geometry` (default true) and
+        `simplify` (degrees; default scales with the bbox, `0` disables).
+      parameters:
+        - $ref: '#/components/parameters/collectionId'
+        - name: featureId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: urn:oid:2.49.0.1.840.0.0123456789abcdef.001.1
+      responses:
+        '200':
+          description: The alert as a GeoJSON Feature
+          content:
+            application/geo+json:
+              schema:
+                $ref: '#/components/schemas/GeoJSON'
+        '404':
+          description: Collection or alert not found
 
   /collections/{collectionId}/items/{featureId}/conditions:
     get:

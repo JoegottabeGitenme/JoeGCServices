@@ -140,6 +140,8 @@ pub struct StoredAlert {
     pub geometry_source: String,
     pub first_seen_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Last poll that listed it.
+    pub last_seen_at: DateTime<Utc>,
     /// GeoJSON of the effective geometry, when requested.
     pub geometry_geojson: Option<String>,
 }
@@ -164,7 +166,7 @@ const COLS: &str = "a.id, a.event, a.severity, a.urgency, a.certainty, a.categor
     a.description_text, a.instruction_text, a.area_desc, a.sender_name, a.web, a.sent, \
     a.effective, a.onset, a.expires, a.ends, a.end_time, a.ugc, a.zone_keys, a.is_marine, \
     a.vtec, a.vtec_event_key, a.sections, a.parameters, a.color, a.references_ids, \
-    a.superseded_by, a.ended_at, a.geometry_source, a.first_seen_at, a.updated_at";
+    a.superseded_by, a.ended_at, a.geometry_source, a.first_seen_at, a.updated_at, a.last_seen_at";
 
 /// Not superseded, not ended, end time (if any) in the future. `$now` is bound by the caller.
 fn active_predicate(now_param: &str) -> String {
@@ -184,6 +186,49 @@ fn geom_col(with_geometry: bool) -> &'static str {
 /// `ORDER BY` that puts the worst, most recent alerts first.
 const SEVERITY_ORDER: &str = "CASE a.severity WHEN 'Extreme' THEN 0 WHEN 'Severe' THEN 1 \
     WHEN 'Moderate' THEN 2 WHEN 'Minor' THEN 3 ELSE 4 END, a.effective DESC NULLS LAST, a.id";
+
+/// Where an [`AlertSearch`] looks.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlertRegion {
+    Point {
+        lon: f64,
+        lat: f64,
+    },
+    /// `[west, south, east, north]`.
+    Bbox([f64; 4]),
+    /// WKT `POLYGON((lon lat, ...))`, validated by the caller.
+    Polygon {
+        wkt: String,
+    },
+    /// Within `meters` of a point (geodesic).
+    Radius {
+        lon: f64,
+        lat: f64,
+        meters: f64,
+    },
+}
+
+/// A filtered alert query: the general form behind the EDR position / area /
+/// radius / items reads.
+#[derive(Debug, Clone)]
+pub struct AlertSearch {
+    pub region: AlertRegion,
+    pub now: DateTime<Utc>,
+    /// `None`: alerts in force at `now` (not superseded, not ended, end time
+    /// null or future; alerts that start later count). `Some((from, to))`:
+    /// every alert whose life overlaps the window, ended ones included.
+    pub window: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    /// Window mode only: also return messages that a later one replaced.
+    pub include_superseded: bool,
+    /// Case-insensitive; empty means any.
+    pub severities: Vec<String>,
+    /// Case-insensitive event names; empty means any.
+    pub events: Vec<String>,
+    pub limit: i64,
+    pub with_geometry: bool,
+    /// Douglas-Peucker tolerance in degrees applied to returned geometry.
+    pub simplify: Option<f64>,
+}
 
 #[derive(Clone)]
 pub struct NwsAlertCatalog {
@@ -524,6 +569,75 @@ impl NwsAlertCatalog {
             .fetch_all(&self.pool)
             .await
             .map_err(db("bbox query"))
+    }
+
+    /// Filtered search over a point, box, polygon or radius; worst alerts first.
+    pub async fn search(&self, q: &AlertSearch) -> WmsResult<Vec<StoredAlert>> {
+        let geom = match q.simplify.filter(|t| t.is_finite() && *t > 0.0) {
+            Some(tol) if q.with_geometry => {
+                format!("ST_AsGeoJSON(ST_SimplifyPreserveTopology(a.geom, {tol}), 5)")
+            }
+            _ => geom_col(q.with_geometry).to_string(),
+        };
+        let time = match q.window {
+            None => format!(
+                "{} AND $2::timestamptz IS NULL AND $3::timestamptz IS NULL",
+                active_predicate("$1")
+            ),
+            Some(_) => format!(
+                "{} AND COALESCE(a.effective, a.sent) <= $3 \
+                 AND COALESCE(LEAST(a.end_time, a.ended_at, a.superseded_at), 'infinity'::timestamptz) >= $2",
+                if q.include_superseded { "TRUE" } else { "a.superseded_by IS NULL" }
+            ),
+        };
+        let region = match &q.region {
+            AlertRegion::Point { .. } => {
+                "a.geom && ST_SetSRID(ST_MakePoint($7, $8), 4326) \
+                 AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($7, $8), 4326))"
+            }
+            AlertRegion::Bbox(_) => {
+                "a.geom && ST_MakeEnvelope($7, $8, $9, $10, 4326) \
+                 AND ST_Intersects(a.geom, ST_MakeEnvelope($7, $8, $9, $10, 4326))"
+            }
+            AlertRegion::Polygon { .. } => {
+                "a.geom && ST_MakeValid(ST_GeomFromText($7, 4326)) \
+                 AND ST_Intersects(a.geom, ST_MakeValid(ST_GeomFromText($7, 4326)))"
+            }
+            AlertRegion::Radius { .. } => {
+                "a.geom && ST_Expand(ST_SetSRID(ST_MakePoint($7, $8), 4326), $10) \
+                 AND ST_DWithin(a.geom::geography, ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography, $9)"
+            }
+        };
+        let sql = format!(
+            "SELECT {COLS}, {geom} AS geometry_geojson FROM nws_alerts a \
+             WHERE {time} AND {region} \
+               AND (cardinality($4::text[]) = 0 OR lower(a.severity) = ANY($4)) \
+               AND (cardinality($5::text[]) = 0 OR lower(a.event) = ANY($5)) \
+             ORDER BY {SEVERITY_ORDER} LIMIT $6"
+        );
+        let lower = |v: &[String]| v.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>();
+        let (from, to) = match q.window {
+            Some((f, t)) => (Some(f), Some(t)),
+            None => (None, None),
+        };
+        let query = sqlx::query_as(&sql)
+            .bind(q.now)
+            .bind(from)
+            .bind(to)
+            .bind(lower(&q.severities))
+            .bind(lower(&q.events))
+            .bind(q.limit);
+        let query = match &q.region {
+            AlertRegion::Point { lon, lat } => query.bind(*lon).bind(*lat),
+            AlertRegion::Bbox(b) => query.bind(b[0]).bind(b[1]).bind(b[2]).bind(b[3]),
+            AlertRegion::Polygon { wkt } => query.bind(wkt.clone()),
+            AlertRegion::Radius { lon, lat, meters } => {
+                // Degrees that surely cover `meters` at this latitude (index prefilter only).
+                let deg = meters / (111_320.0 * lat.to_radians().cos().abs().max(0.05)) + 0.01;
+                query.bind(*lon).bind(*lat).bind(*meters).bind(deg)
+            }
+        };
+        query.fetch_all(&self.pool).await.map_err(db("search"))
     }
 
     /// One alert by NWS id (any state).

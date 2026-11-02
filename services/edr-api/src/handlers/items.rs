@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use edr_protocol::responses::ExceptionResponse;
 
-use crate::handlers::{lightning, linear_features, storm_events};
+use crate::handlers::{lightning, linear_features, nws_alerts, storm_events};
 use crate::state::AppState;
 
 /// Superset of the storm-events and linear-features items params. Both
@@ -54,6 +54,29 @@ pub struct ItemsQueryParams {
 
     /// lightning-only: `goes-east` (default), `goes-west` or `both`.
     pub satellite: Option<String>,
+
+    /// nws-alerts-only filters; see `nws_alerts::NwsQuery`.
+    pub severity: Option<String>,
+    pub event: Option<String>,
+    pub status: Option<String>,
+    pub geometry: Option<String>,
+    pub simplify: Option<f64>,
+    pub include_superseded: Option<String>,
+}
+
+fn nws_items_params(p: &ItemsQueryParams) -> nws_alerts::NwsQuery {
+    nws_alerts::NwsQuery {
+        bbox: p.bbox.clone(),
+        datetime: p.datetime.clone(),
+        severity: p.severity.clone(),
+        event: p.event.clone(),
+        status: p.status.clone(),
+        limit: p.limit,
+        geometry: p.geometry.clone(),
+        simplify: p.simplify,
+        include_superseded: p.include_superseded.clone(),
+        ..Default::default()
+    }
 }
 
 /// Translate the generic params into the lightning backend's. A pure function
@@ -105,6 +128,9 @@ pub async fn items_handler(
     };
 
     match observation_source.as_deref() {
+        Some(nws_alerts::OBSERVATION_SOURCE) => {
+            nws_alerts::items(state, nws_items_params(&params)).await
+        }
         Some("lightning") => {
             lightning::lightning_items_handler(
                 Extension(state),
