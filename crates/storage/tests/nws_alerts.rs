@@ -2104,6 +2104,71 @@ async fn a_cancellation_is_never_in_force_not_even_before_the_poll_that_stored_i
     );
 }
 
+/// Each update names the whole chain before it, and NWS lists the newest message first, so a poll
+/// after a gap can show two replacements of one message in the wrong order. The one issued first
+/// ends the old message; otherwise the old and the first update would both be in force in between.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn the_replacement_issued_first_ends_the_old_message_whatever_the_feed_order() {
+    let env = env().await;
+    let a = timed_alert("urn:test:a", BIG, at(10, 0), at(10, 0), at(18, 0), &[]);
+    let u1 = timed_alert(
+        "urn:test:u1",
+        SMALL,
+        at(11, 0),
+        at(11, 0),
+        at(18, 0),
+        &["urn:test:a"],
+    );
+    let u2 = timed_alert(
+        "urn:test:u2",
+        SMALL,
+        at(11, 30),
+        at(11, 30),
+        at(18, 0),
+        &["urn:test:a", "urn:test:u1"],
+    );
+    env.nws
+        .apply_feed(&[a], Some(at(10, 1)), at(10, 1))
+        .await
+        .unwrap();
+    // the ingester was down from 10:01 to 11:45: one poll shows both updates, newest first
+    env.nws
+        .apply_feed(&[u2, u1], Some(at(11, 45)), at(11, 45))
+        .await
+        .unwrap();
+
+    let row = |id: &'static str| {
+        let nws = env.nws.clone();
+        async move { nws.get(id, false).await.unwrap().unwrap() }
+    };
+    let a = row("urn:test:a").await;
+    assert_eq!(a.superseded_by.as_deref(), Some("urn:test:u1"));
+    assert_eq!(a.superseded_at, Some(at(11, 0)));
+    let u1 = row("urn:test:u1").await;
+    assert_eq!(u1.superseded_by.as_deref(), Some("urn:test:u2"));
+    assert_eq!(u1.superseded_at, Some(at(11, 30)));
+
+    for (t, want) in [
+        (at(10, 59), vec!["a"]),
+        (at(11, 0), vec!["u1"]),
+        (at(11, 15), vec!["u1"]), // not the old message too
+        (at(11, 30), vec!["u2"]),
+        (at(11, 44), vec!["u2"]),
+    ] {
+        let hits = env
+            .nws
+            .search(&search(point(Q), t0()).in_force_at(t))
+            .await
+            .unwrap();
+        let got: Vec<String> = ids(&hits)
+            .into_iter()
+            .map(|i| i.trim_start_matches("urn:test:").to_string())
+            .collect();
+        assert_eq!(got, sorted(want), "at {t}");
+    }
+}
+
 /// A search without a window is what it always was: the lifecycle flags at `now`, on the partial
 /// index. The explicit-instant work must not move either.
 #[tokio::test]
@@ -3277,14 +3342,14 @@ async fn replacements_supersede_whether_listed_before_or_after_the_message_and_i
         &["urn:test:b"],
     );
 
-    // The replacement is listed first, the first of two replacements wins, and the replaced
-    // message is stored by this very poll.
+    // The replacement is listed first, the first issued of two replacements wins (a3, listed
+    // first, is the later), and the replaced message is stored by this very poll.
     let feed = vec![a3.clone(), a2.clone(), a.clone(), b2.clone()];
     let r = poll(&env, &feed, at(12, 0)).await;
     assert_eq!((r.superseded, r.upserted), (1, 4));
     let a_row = env.nws.get("urn:test:a", false).await.unwrap().unwrap();
-    assert_eq!(a_row.superseded_by.as_deref(), Some("urn:test:a3"));
-    assert_eq!(a_row.superseded_at, Some(at(11, 30)));
+    assert_eq!(a_row.superseded_by.as_deref(), Some("urn:test:a2"));
+    assert_eq!(a_row.superseded_at, Some(at(11, 0)));
 
     // b2 is unchanged in the next poll, in which b turns up: b2 supersedes it though nothing
     // rewrites b2.

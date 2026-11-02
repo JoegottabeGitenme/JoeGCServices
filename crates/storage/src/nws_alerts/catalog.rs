@@ -1107,9 +1107,11 @@ fn issued_by(a: &ParsedAlert, now: DateTime<Utc>) -> DateTime<Utc> {
 }
 
 /// Mark as superseded the older messages that `alerts` (in feed order) replace, in one statement.
-/// A message that several of them reference is replaced by the first, as it would be by one
-/// statement per alert, and one that arrives in the same feed as its replacement is superseded
-/// by it in this very poll whichever comes first. Returns how many messages were superseded.
+/// A message that several of them reference (each update names the whole chain before it) is
+/// replaced by the one issued first, the feed order breaking a tie: it is the first to end the old
+/// message, and NWS lists newest first, so the first listed is usually the wrong one. One that
+/// arrives in the same feed as its replacement is superseded by it in this very poll whichever
+/// comes first. Returns how many messages were superseded.
 async fn supersede_replaced(
     conn: &mut PgConnection,
     alerts: &[&ParsedAlert],
@@ -1134,7 +1136,7 @@ async fn supersede_replaced(
          FROM (SELECT DISTINCT ON (target) target, by_id, replaced_at \
                FROM unnest($1::text[], $2::text[], $3::timestamptz[]) \
                     WITH ORDINALITY AS u(target, by_id, replaced_at, n) \
-               ORDER BY target, n) s \
+               ORDER BY target, replaced_at, n) s \
          WHERE o.id = s.target AND o.superseded_by IS NULL",
     )
     .bind(&targets)
