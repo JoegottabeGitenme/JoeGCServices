@@ -1606,6 +1606,98 @@ async fn a_zone_whose_fetch_failed_is_recorded_retried_in_15_minutes_and_never_w
 /// Every read the EDR API uses is cut off at the catalog's read timeout and fails as
 /// `ServiceUnavailable` (SQLSTATE 57014), the limit ends with the read instead of staying on the
 /// pooled connection, and the writers never see it.
+/// The pool is shared with the API's other collections. A read that waits on a table lock holds a
+/// connection, and so does one whose client hung up (Postgres is not told, the statement runs on
+/// until the time limit): enough of them hold every connection. With the read slots the burst
+/// stops short of the whole pool and leaves connections for everyone else, and the slots are
+/// given back once the abandoned reads have ended.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_burst_of_alert_reads_cannot_take_every_connection_of_the_pool() {
+    let env = env().await;
+    // a pool of four stands for the API's ten
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect_with((*env.catalog.pool().connect_options()).clone())
+        .await
+        .unwrap();
+    let limit = std::time::Duration::from_secs(2);
+    let ms = std::time::Duration::from_millis;
+
+    // Another session holds the alert tables, so every read queues in Postgres until the limit.
+    let mut holder = env.catalog.pool().begin().await.unwrap();
+    sqlx::query("LOCK TABLE nws_alerts, nws_alerts_status IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+
+    // (read slots, whether the rest of the pool is starved). Four slots on four connections is
+    // what there was before the slots; the default for this pool is two.
+    let mut nws = NwsAlertCatalog::new(pool.clone());
+    for (slots, starved) in [(4, true), (2, false)] {
+        nws = NwsAlertCatalog::new(pool.clone())
+            .with_read_timeout(limit)
+            .with_read_slots(slots);
+        let spawn_reads = |n: usize| -> Vec<tokio::task::JoinHandle<_>> {
+            (0..n)
+                .map(|_| {
+                    let nws = nws.clone();
+                    tokio::spawn(async move { nws.status().await })
+                })
+                .collect()
+        };
+        // eight reads, from clients that hang up after a moment...
+        let abandoned = spawn_reads(8);
+        tokio::time::sleep(ms(300)).await;
+        for read in &abandoned {
+            read.abort();
+        }
+        // ...and four more that arrive after that, while Postgres is still on the first ones
+        let waiting = spawn_reads(4);
+        tokio::time::sleep(ms(300)).await;
+        let other = tokio::time::timeout(ms(1000), pool.acquire()).await;
+        assert_eq!(other.is_err(), starved, "{slots} read slots");
+        drop(other);
+        for read in &waiting {
+            read.abort();
+        }
+        // Postgres cancels the abandoned statements at the limit; their slots come back then
+        tokio::time::sleep(limit + ms(1000)).await;
+    }
+    holder.rollback().await.unwrap();
+    nws.status()
+        .await
+        .expect("the slots were given back once the abandoned reads ended");
+
+    // The time limit covers the wait for a slot: with the one slot taken, the read gives up
+    // after the limit, as a 503 (ServiceUnavailable), instead of queueing for ever.
+    let nws = NwsAlertCatalog::new(pool.clone())
+        .with_read_timeout(ms(400))
+        .with_read_slots(1);
+    let mut holder = env.catalog.pool().begin().await.unwrap();
+    sqlx::query("LOCK TABLE nws_alerts_status IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let first = tokio::spawn({
+        let nws = nws.clone();
+        async move { nws.status().await }
+    });
+    tokio::time::sleep(ms(100)).await;
+    let started = std::time::Instant::now();
+    let second = nws.status().await.unwrap_err();
+    assert!(
+        matches!(second, wms_common::WmsError::ServiceUnavailable(_)),
+        "{second:?}"
+    );
+    assert!(started.elapsed() < ms(1500), "{:?}", started.elapsed());
+    assert!(matches!(
+        first.await.unwrap().unwrap_err(),
+        wms_common::WmsError::ServiceUnavailable(_)
+    ));
+    holder.rollback().await.unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires docker (PostGIS)"]
 async fn reads_are_cut_off_at_the_read_timeout_and_the_limit_does_not_leak() {

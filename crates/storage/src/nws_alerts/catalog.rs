@@ -37,11 +37,13 @@
 //! abort the poll or the batch (see `ApplyResult` / `ZonesResult`).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::{PgConnection, PgPool};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::warn;
 
 use wms_common::{WmsError, WmsResult};
@@ -413,16 +415,21 @@ pub struct NwsAlertCatalog {
     /// `statement_timeout` for every read (see [`Self::with_read_timeout`]); `None`: the
     /// server's own setting.
     read_timeout: Option<std::time::Duration>,
+    /// One permit per read in flight (see [`Self::with_read_slots`]); clones share them.
+    read_slots: Arc<Semaphore>,
 }
 
 impl NwsAlertCatalog {
     /// Longest a read may run when the caller sets none of its own (the EDR API's default).
     pub const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+    /// Reads share half the pool's connections, at least one (see [`Self::with_read_slots`]).
     pub fn new(pool: PgPool) -> Self {
+        let slots = (pool.options().get_max_connections() / 2).max(1) as usize;
         Self {
             pool,
             read_timeout: None,
+            read_slots: Arc::new(Semaphore::new(slots)),
         }
     }
 
@@ -430,7 +437,8 @@ impl NwsAlertCatalog {
     /// [`Self::search`], [`Self::get`]) at `timeout`. Postgres cancels a read that runs longer
     /// and it fails as `WmsError::ServiceUnavailable`. The limit is a `SET LOCAL` inside the
     /// read's own transaction, so it ends with the read: it never reaches the next user of the
-    /// pooled connection, and the writers (which never use it) stay unlimited.
+    /// pooled connection, and the writers (which never use it) stay unlimited. It covers the wait
+    /// for a read slot too (see [`Self::with_read_slots`]).
     ///
     /// Postgres checks for the cancel between operations, not inside one long GEOS call, so a
     /// single pathological geometry operation still has to be kept out by validating the input.
@@ -439,13 +447,43 @@ impl NwsAlertCatalog {
         self
     }
 
-    /// A transaction for one read, with the read timeout set when there is one.
-    async fn read_tx(&self) -> WmsResult<sqlx::Transaction<'static, sqlx::Postgres>> {
-        let mut tx = self.pool.begin().await.map_err(db("begin"))?;
-        if let Some(timeout) = self.read_timeout {
+    /// At most `slots` reads run at a time; the others wait for one. The pool is shared with
+    /// every other collection of the service, and a read holds a connection until Postgres is
+    /// done with its statement, even when the request that asked for it has gone (the statement
+    /// is not cancelled then, only abandoned): without a bound, a burst of alert requests, slow
+    /// ones or ones cancelled by their clients, could hold every connection for as long as the
+    /// read timeout and starve the rest. The default is half the pool.
+    pub fn with_read_slots(mut self, slots: usize) -> Self {
+        self.read_slots = Arc::new(Semaphore::new(slots.max(1)));
+        self
+    }
+
+    /// A transaction for one read, holding a read slot, with the read timeout set when there is
+    /// one. The time limit covers the wait for the slot: a read that does not get one in time
+    /// fails like one that ran too long.
+    async fn read_tx(&self) -> WmsResult<ReadTx> {
+        let started = std::time::Instant::now();
+        let slot = self.read_slots.clone().acquire_owned();
+        let slot = match self.read_timeout {
+            Some(limit) => tokio::time::timeout(limit, slot).await.map_err(|_| {
+                WmsError::ServiceUnavailable(
+                    "NWS alerts read cancelled: no read slot came free within its time limit"
+                        .to_string(),
+                )
+            })?,
+            None => slot.await,
+        }
+        .map_err(|_| WmsError::DatabaseError("NWS alerts read slots closed".to_string()))?;
+        let tx = self.pool.begin().await.map_err(db("begin"))?;
+        let mut tx = ReadTx {
+            tx: Some(tx),
+            slot: Some(slot),
+        };
+        if let Some(limit) = self.read_timeout {
+            let left = limit.saturating_sub(started.elapsed());
             // `set_config(.., true)` is `SET LOCAL` that takes a bind parameter (milliseconds).
             sqlx::query("SELECT set_config('statement_timeout', $1, true)")
-                .bind(timeout.as_millis().max(1).to_string())
+                .bind(left.as_millis().max(1).to_string())
                 .execute(&mut *tx)
                 .await
                 .map_err(db("set statement_timeout"))?;
@@ -788,7 +826,7 @@ impl NwsAlertCatalog {
         .fetch_optional(&mut *tx)
         .await
         .map_err(read_db("status read"))?;
-        tx.commit().await.map_err(db("commit"))?;
+        tx.commit().await?;
         Ok(status)
     }
 
@@ -818,7 +856,7 @@ impl NwsAlertCatalog {
             .fetch_all(&mut *tx)
             .await
             .map_err(read_db("point query"))?;
-        tx.commit().await.map_err(db("commit"))?;
+        tx.commit().await?;
         Ok(rows)
     }
 
@@ -868,7 +906,7 @@ impl NwsAlertCatalog {
             .fetch_all(&mut *tx)
             .await
             .map_err(read_db("bbox query"))?;
-        tx.commit().await.map_err(db("commit"))?;
+        tx.commit().await?;
         Ok(rows)
     }
 
@@ -901,7 +939,7 @@ impl NwsAlertCatalog {
         };
         let mut tx = self.read_tx().await?;
         let rows = query.fetch_all(&mut *tx).await.map_err(read_db("search"))?;
-        tx.commit().await.map_err(db("commit"))?;
+        tx.commit().await?;
         Ok(rows)
     }
 
@@ -917,8 +955,55 @@ impl NwsAlertCatalog {
             .fetch_optional(&mut *tx)
             .await
             .map_err(read_db("get"))?;
-        tx.commit().await.map_err(db("commit"))?;
+        tx.commit().await?;
         Ok(alert)
+    }
+}
+
+/// The transaction of one read, and the read slot it occupies. Dropped before it is committed
+/// (the request was cancelled, a client hung up), the statement it was running goes on in Postgres
+/// and its connection is not free until that ends (at the read timeout at the latest), so the slot
+/// is kept until the connection is: a task rolls the transaction back, which waits for the
+/// statement, and only then lets the slot go.
+struct ReadTx {
+    tx: Option<sqlx::Transaction<'static, sqlx::Postgres>>,
+    slot: Option<OwnedSemaphorePermit>,
+}
+
+impl ReadTx {
+    async fn commit(mut self) -> WmsResult<()> {
+        match self.tx.take() {
+            Some(tx) => tx.commit().await.map_err(db("commit")),
+            None => Ok(()),
+        }
+    }
+}
+
+impl std::ops::Deref for ReadTx {
+    type Target = PgConnection;
+    fn deref(&self) -> &PgConnection {
+        self.tx.as_deref().expect("a read transaction that is open")
+    }
+}
+
+impl std::ops::DerefMut for ReadTx {
+    fn deref_mut(&mut self) -> &mut PgConnection {
+        self.tx
+            .as_deref_mut()
+            .expect("a read transaction that is open")
+    }
+}
+
+impl Drop for ReadTx {
+    fn drop(&mut self) {
+        if let (Some(tx), Some(slot)) = (self.tx.take(), self.slot.take()) {
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                runtime.spawn(async move {
+                    let _ = tx.rollback().await;
+                    drop(slot);
+                });
+            }
+        }
     }
 }
 
