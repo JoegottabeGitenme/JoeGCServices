@@ -262,12 +262,16 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   Errors carry no `Cache-Control` and are not cached.
 - **Age of the data.** Responses are cached for up to 60 seconds at the CDN (and by browsers), so
   `timeStamp` and `meta.data_age_seconds` describe the moment the body was generated, not the moment
-  you read it; `meta.stale` was decided then too. The data's true age is `data_age_seconds` plus the
-  time since `timeStamp` (or the `Age` header), or `now - meta.last_success_at` on your own clock:
-  use that, not the number as sent, before deciding the feed is fresh or that an empty answer means
-  "no alerts". The data also trails NWS by a poll or two (the downloader polls every 60 seconds,
-  plus the time a poll takes), so with the cache an alert NWS has just issued, changed or cancelled
-  can take about two minutes to show up.
+  you read it; `meta.stale` was decided then too. The data's true age is `meta.data_age_seconds` plus
+  the time since `timeStamp`: `data_age_seconds + (now - timeStamp)`, or `now - meta.last_success_at`,
+  with `now` the client's clock (both are in the body, so they work cross-origin and from a response
+  that sat in the browser's cache). Use that, not the number as sent, before deciding the feed is
+  fresh or that an empty answer means "no alerts". Do not use the `Age` header for this: it counts
+  only the seconds the CDN held the answer, not the time it sat in the browser's own cache, so it
+  understates the age of a response the browser reused. (It is exposed to cross-origin scripts, so
+  `response.headers.get('Age')` works, but it is not the data's age.) The data also trails NWS by a
+  poll or two (the downloader polls every 60 seconds, plus the time a poll takes), so with the cache
+  an alert NWS has just issued, changed or cancelled can take about two minutes to show up.
 - Alerts that NWS gave only zone codes get their geometry once the zones are fetched
   (`geometry_source: pending` until then; such an alert does not match point queries yet, or only
   where the zones fetched so far cover it).

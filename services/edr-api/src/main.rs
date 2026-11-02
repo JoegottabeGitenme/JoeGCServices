@@ -327,6 +327,9 @@ async fn run_server(args: Args) {
                     HeaderName::from_static("content-type"),
                     HeaderName::from_static("etag"),
                     HeaderName::from_static("x-cache"),
+                    // The seconds a CDN has held the answer. (Not the time it sat in the
+                    // browser's own cache, so clients age data from the body's timestamps.)
+                    HeaderName::from_static("age"),
                     // Custom EDR PNG headers for frontend consumption
                     HeaderName::from_static("x-edr-parameter"),
                     HeaderName::from_static("x-edr-units"),
