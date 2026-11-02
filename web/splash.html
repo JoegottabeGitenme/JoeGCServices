@@ -1344,7 +1344,8 @@
             margin: 0 -1rem;
             padding: 0.4rem 1rem;
             background: var(--paper-bg);
-            box-shadow: 0 1px 0 var(--paper-card-edge);
+            /* the upward shadow covers the readout's top padding, so no text peeks out above the name */
+            box-shadow: 0 -0.9rem 0 var(--paper-bg), 0 1px 0 var(--paper-card-edge);
         }
 
         .sc-key {
