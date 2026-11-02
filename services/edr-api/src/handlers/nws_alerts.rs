@@ -19,7 +19,10 @@
 //! outage as "no alerts".
 
 use axum::{
-    extract::{rejection::QueryRejection, Extension, Path, Query, RawQuery},
+    extract::{
+        rejection::{PathRejection, QueryRejection},
+        Extension, Path, Query, RawQuery,
+    },
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -793,20 +796,25 @@ fn internal(msg: impl std::fmt::Display) -> Response {
     )
 }
 
-/// A catalog failure as a response. A read the database cancelled at its time limit
-/// (`NWS_ALERTS_QUERY_TIMEOUT_MS`) is the request being too expensive, a 503 and only a warning;
-/// anything else is a fault.
+/// A catalog failure as a response. A read that did not finish within its time limit
+/// (`NWS_ALERTS_QUERY_TIMEOUT_MS`) is a 503 and only a warning: the query may have been too
+/// expensive, or the database busy (the limit counts the time spent waiting for a lock too), so
+/// the answer does not say a retry is pointless. Anything else is a fault.
 fn catalog_failure(e: WmsError) -> Response {
     match e {
         WmsError::ServiceUnavailable(msg) => {
             tracing::warn!("nws-alerts: {msg}");
-            error(
+            let mut r = error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ExceptionResponse::service_unavailable(
-                    "The alerts query was too expensive and timed out; \
-                     ask for a smaller or simpler area",
+                    "The alerts query did not finish within the server's time limit (the \
+                     database was busy, or the query was too expensive); try again shortly, and \
+                     for a large /area, /radius or /items ask for a smaller area",
                 ),
-            )
+            );
+            r.headers_mut()
+                .insert(header::RETRY_AFTER, header::HeaderValue::from_static("5"));
+            r
         }
         other => internal(other),
     }
@@ -1301,12 +1309,19 @@ pub async fn item(state: Arc<AppState>, id: String, q: NwsQuery) -> Response {
 }
 
 /// Route handler for `/collections/:collection_id/items/:feature_id`.
+///
+/// The path is taken as a `Result` because an id that is not UTF-8 once unescaped (`%FF`) is
+/// rejected by axum before the handler runs, as a plain-text 400; here it is the JSON one.
 pub async fn item_route_handler(
     Extension(state): Extension<Arc<AppState>>,
-    Path((collection_id, feature_id)): Path<(String, String)>,
+    path: Result<Path<(String, String)>, PathRejection>,
     RawQuery(raw): RawQuery,
     headers: HeaderMap,
 ) -> Response {
+    let Path((collection_id, feature_id)) = match path {
+        Ok(p) => p,
+        Err(rejection) => return bad_request(rejection.body_text()),
+    };
     if !is_nws_collection(&state, &collection_id).await {
         return error(
             StatusCode::NOT_FOUND,
@@ -2064,6 +2079,8 @@ mod tests {
         let r = catalog_failure(WmsError::ServiceUnavailable("search cancelled".into()));
         assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(r.headers()[header::CONTENT_TYPE], "application/json");
+        // a lock wait counts toward the limit, so a retry may well work
+        assert_eq!(r.headers()[header::RETRY_AFTER], "5");
         let r = catalog_failure(WmsError::DatabaseError("connection reset".into()));
         assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }

@@ -52,7 +52,8 @@ default window the last 24 h; superseded messages hidden unless `include_superse
 - `limit` below 1 (`limit=0`, `limit=-5`). Above the maximum it is cut to 2000, not refused;
 - `simplify` negative or not a finite number (`-1`, `NaN`, `inf`, `1e999`). `0` is how to ask for no
   simplification;
-- a control character (a NUL, a newline, ...) in `severity` or `event`, or in the alert id;
+- a control character (a NUL, a newline, ...) in `severity` or `event`, or in the alert id, or an
+  alert id that is not UTF-8 once unescaped (`/items/%FF`);
 - a `datetime` interval that ends before it starts.
 
 A `+` in a UTC offset has to be sent as `%2B` (`datetime=2026-11-01T18:00:00%2B00:00`); a bare `+`
@@ -132,10 +133,13 @@ The polygon is read as planar lon/lat. Text after the closing parentheses is a `
 **Query time limit.** Every database read behind these endpoints is capped at
 `NWS_ALERTS_QUERY_TIMEOUT_MS` milliseconds (an edr-api environment variable, default `10000`; a
 value that is not a positive number is ignored). A query that outlasts it is cancelled by
-Postgres and the request answers `503` with the usual JSON exception body (`"status": 503`,
-"too expensive and timed out"); the server logs a warning, not an error. Retrying the same request
-will not help: ask for a smaller or simpler area. The limit applies to these reads only, not to
-the ingester's writes or to the API's other collections.
+Postgres and the request answers `503` with the usual JSON exception body (`"status": 503`, "did
+not finish within the server's time limit") and `Retry-After: 5`; the server logs a warning, not an
+error. The limit counts the time a read spends waiting for a lock, so a `503` is not always an
+expensive query: a single point or one alert can get one while the database is busy, and the same
+request a few seconds later succeeds. Try again after a short delay; a large `/area`, `/radius` or
+`/items` that keeps failing is the one to make smaller or simpler. The limit applies to these reads
+only, not to the ingester's writes or to the API's other collections.
 
 **Test alerts.** NWS' feed also carries messages whose CAP status is not `Actual` (`Test`,
 `Exercise`, `System`, `Draft`; e.g. the periodic "Test Message"). They are all stored, but every
