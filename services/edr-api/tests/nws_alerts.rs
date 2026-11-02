@@ -149,7 +149,7 @@ async fn env_with_read_timeout(read_timeout: Option<std::time::Duration>) -> Env
         )
         .route(
             "/edr/collections/:collection_id/items",
-            get(handlers::items::items_handler),
+            get(handlers::nws_alerts::items_route),
         )
         .route(
             "/edr/collections/:collection_id/items/:feature_id",
@@ -503,6 +503,135 @@ async fn one_alert_in_full_by_raw_or_encoded_urn() {
     let (st, _, v, _) = e.get("/edr/collections/tornado/items/123").await;
     assert_eq!(st, 404, "{v}");
     let (_, _, _, _) = e.get("/edr/collections/trails/items/1/conditions").await;
+}
+
+/// Client mistakes are 4xx with the JSON exception body on every alert route: never a 500 (a NUL
+/// in a filter cannot even be sent to Postgres), never axum's plain-text rejection.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn client_mistakes_are_json_4xx_on_every_route() {
+    let e = env().await;
+    e.load().await;
+    let c = "/edr/collections/nws-alerts";
+    let pt = "coords=POINT(-107%2037.5)";
+    let poly = "coords=POLYGON((-108%2037,-106%2037,-106%2038.5,-108%2038.5,-108%2037))";
+    let rad = "coords=POINT(-106.1%2037.5)&within=100";
+    let id = handlers::nws_alerts::encode_id(&e.id("Severe Thunderstorm Warning"));
+    let routes = [
+        format!("{c}/position?{pt}"),
+        format!("{c}/area?{poly}"),
+        format!("{c}/radius?{rad}"),
+        format!("{c}/items?bbox=-108,36.5,-106,38.5"),
+        format!("{c}/items/{id}?geometry=false"),
+    ];
+    // (query string to append, text the reason must contain)
+    let bad = [
+        ("event=a%00b", "event: control characters"),
+        ("event=%00", "event: control characters"),
+        ("severity=a%00b", "severity: control characters"),
+        ("severity=Severe,%00", "severity: control characters"),
+        ("severity=a%0Ab", "severity: control characters"),
+        ("limit=abc", "Failed to deserialize query string"),
+        ("limit=", "Failed to deserialize query string"),
+        (
+            "limit=99999999999999999999",
+            "Failed to deserialize query string",
+        ),
+        ("simplify=abc", "Failed to deserialize query string"),
+        ("simplify=", "Failed to deserialize query string"),
+        ("geometry=true&geometry=false", "duplicate field"),
+    ];
+    for route in &routes {
+        for (qs, reason) in bad {
+            let item = route.contains("/items/");
+            // limit and the filters mean nothing to a single alert; a bad query string always does
+            if item && !(reason.starts_with("Failed") || reason.starts_with("duplicate")) {
+                continue;
+            }
+            let sep = if route.contains('?') { '&' } else { '?' };
+            let uri = format!("{route}{sep}{qs}");
+            let (st, h, v, _) = e.get(&uri).await;
+            assert_eq!(st, 400, "{uri}: {v}");
+            assert_eq!(h["content-type"], "application/json", "{uri}");
+            assert!(v["detail"].as_str().unwrap().contains(reason), "{uri}: {v}");
+        }
+    }
+    // a duplicated coords, as the verifier found it
+    let (st, h, v, _) = e
+        .get(&format!("{c}/position?{pt}&coords=POINT(-100%2040)"))
+        .await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(h["content-type"], "application/json");
+    assert!(v["detail"]
+        .as_str()
+        .unwrap()
+        .contains("duplicate field `coords`"));
+
+    // values that parse but make no sense: limit < 1, simplify < 0 or not finite
+    for route in &routes[..4] {
+        let sep = if route.contains('?') { '&' } else { '?' };
+        for (qs, reason) in [
+            ("limit=0", "limit must be at least 1"),
+            ("limit=-5", "limit must be at least 1"),
+            ("simplify=-1", "simplify must be"),
+            ("simplify=NaN", "simplify must be"),
+            ("simplify=inf", "simplify must be"),
+            ("simplify=-inf", "simplify must be"),
+            ("simplify=1e999", "simplify must be"),
+        ] {
+            let (st, h, v, _) = e.get(&format!("{route}{sep}{qs}")).await;
+            let nothing_to_limit = route.contains("/position") && qs.starts_with("limit");
+            if nothing_to_limit {
+                assert_eq!(st, 200, "position has no limit: {qs}");
+                continue;
+            }
+            assert_eq!(st, 400, "{route} {qs}: {v}");
+            assert_eq!(h["content-type"], "application/json", "{route} {qs}");
+            assert!(
+                v["detail"].as_str().unwrap().contains(reason),
+                "{route} {qs}: {v}"
+            );
+        }
+    }
+    // limit above the maximum is cut to it, as documented; simplify=0 is how to turn it off
+    for route in &routes[1..4] {
+        let sep = if route.contains('?') { '&' } else { '?' };
+        let (st, _, v, _) = e
+            .get(&format!(
+                "{route}{sep}limit=999999&simplify=0&datetime={AT}"
+            ))
+            .await;
+        assert_eq!(st, 200, "{route}: {v}");
+        assert_eq!(v["limit"], 2000, "{route}");
+    }
+
+    // a reversed interval
+    let (st, h, v, _) = e
+        .get(&format!(
+            "{c}/items?status=all&datetime=2026-11-02T00:00:00Z/2026-11-01T00:00:00Z"
+        ))
+        .await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(h["content-type"], "application/json");
+    assert!(v["detail"]
+        .as_str()
+        .unwrap()
+        .contains("starts at 2026-11-02T00:00:00Z but ends at 2026-11-01T00:00:00Z"));
+    let (st, _, _, _) = e
+        .get(&format!(
+            "{c}/items?status=all&datetime=2026-11-01T00:00:00Z/2026-11-02T00:00:00Z"
+        ))
+        .await;
+    assert_eq!(st, 200);
+
+    // a NUL in the alert id
+    let (st, h, v, _) = e.get(&format!("{c}/items/urn%3Aoid%3A%00x")).await;
+    assert_eq!(st, 400, "{v}");
+    assert_eq!(h["content-type"], "application/json");
+
+    // other collections keep their own parameter handling
+    let (st, _, _, _) = e.get("/edr/collections/tornado/items?limit=abc").await;
+    assert_eq!(st, 400);
 }
 
 /// The Colorado avalanche advisory in the fixture: labels written "*WHAT..." (no space) and no

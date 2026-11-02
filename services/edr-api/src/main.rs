@@ -206,7 +206,7 @@ async fn run_server(args: Args) {
         // storm events or linear features, dispatched by observation_source)
         .route(
             "/edr/collections/:collection_id/items",
-            get(handlers::items::items_handler),
+            get(handlers::nws_alerts::items_route),
         )
         // One item by id (nws-alerts: ids are URNs like urn:oid:2.49.0.1.840.0.<hash>;
         // raw or %3A-encoded both work). `/items/:id/conditions` below is longer, so no clash.

@@ -146,6 +146,11 @@ paths:
         `upcoming` while its onset is still ahead, otherwise `active`. History goes back only as
         far as retention keeps ended and replaced alerts (7 days by default); an older instant
         returns what is still stored, not an error.
+
+        **Errors on `nws-alerts`** are 4xx with the JSON exception body (`status`, `detail`),
+        never plain text or a 5xx: a query string that does not parse (`limit=abc`, a repeated
+        parameter), `limit` below 1, `simplify` negative or not finite, a control character in
+        `severity` or `event`, and a `datetime` interval that ends before it starts are all 400.
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -212,6 +217,8 @@ paths:
             Feature collections only (`trails`, storm events) and point-observation collections:
             maximum features returned (trails: clamped to 1-5000, default 1000). Ignored by
             gridded collections. Detect truncation with `numberReturned == limit`.
+            `nws-alerts`: default 500, at most 2000 (more is cut to it, `truncated: true` says
+            when the list was cut), 0 or less is a 400.
           schema:
             type: integer
             minimum: 1
@@ -306,6 +313,8 @@ paths:
             Feature collections only (`trails`, storm events) and point-observation collections:
             maximum features returned (trails: clamped to 1-5000, default 1000). Ignored by
             gridded collections. Detect truncation with `numberReturned == limit`.
+            `nws-alerts`: default 500, at most 2000 (more is cut to it, `truncated: true` says
+            when the list was cut), 0 or less is a 400.
           schema:
             type: integer
             minimum: 1
@@ -575,8 +584,9 @@ paths:
         on `/position`; interval needs `status=all`), `status=active|all` (default active),
         `include_superseded=true` (`status=all` only: also messages a newer one replaced),
         `severity`, `event`, `limit`
-        (default 500, max 2000; `truncated: true` when cut), `geometry` (default true),
-        `simplify` (degrees; default scales with the bbox, `0` disables) and
+        (default 500, max 2000, 0 or less is a 400; `truncated: true` when cut), `geometry`
+        (default true), `simplify` (degrees; default scales with the bbox, `0` disables, negative
+        or not finite is a 400) and
         `include_non_actual=true` (also Test/Exercise/System/Draft alerts; default Actual only).
       parameters:
         - $ref: '#/components/parameters/collectionId'
