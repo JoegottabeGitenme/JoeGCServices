@@ -23,6 +23,14 @@ computed for each request. The cached `/edr/collections` list carries no age, be
 in a cached body is wrong by the time it is read: use the collection document or any answer's
 `meta`.
 
+**Output format.** Every query answers `application/geo+json`, and only that. `f=GeoJSON` (also
+`geojson`, `application/geo+json`, and plain `json`) is accepted; any other `f` (`CoverageJSON`,
+`png`, `zzz`) is a `400` that says GeoJSON is what is served, the same answer an unknown `f` gets on
+the grid collections. Without `f`, the `Accept` header has to admit `application/geo+json` or
+`application/json` (`*/*` does): `Accept: application/vnd.cov+json` alone is a `406 Not
+Acceptable`, as the grid collections answer an `Accept` they cannot serve. An `f` overrides
+`Accept`.
+
 Common parameters: `severity=Severe,Extreme`, `event=Tornado Warning,Flash Flood Warning` (comma
 lists, case-insensitive), `geometry=true|false` (default: false on position/area/radius, true on
 items), `datetime=<instant>` (the alerts in force at that moment; default now, see
