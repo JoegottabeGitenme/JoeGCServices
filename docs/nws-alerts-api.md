@@ -111,7 +111,11 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
 - `significance`: `warning` / `watch` / `advisory` / `statement` / `other`. Group updates of one
   event by `vtec_event` (NEW, CON, EXT, UPG share it).
 - `summary` has only the keys present (`what`, `where`, `when`, `impacts`, `hazard`, `source`,
-  `impact`), trimmed to 500 characters; `instruction` to 600 (`…`). `/items/{id}` adds the untrimmed
+  `impact`), trimmed to 500 characters; `instruction` to 600 (`…`). They are read from the labelled
+  lines of the NWS text, written `* WHAT...`, `*WHAT...` (no space, as the Colorado avalanche
+  advisories do) or, for `HAZARD...`/`SOURCE...`/`IMPACT...`, bare. Alerts whose text has no such
+  labels (Alaska coastal-water forecasts, old-style watches) have an empty `summary`; their text is
+  in `sections.narrative` and `description` on `/items/{id}`. `/items/{id}` adds the untrimmed
   text, `description`, `description_raw`, `instruction_raw`, `sections`, `vtec`, `parameters`, `ugc`,
   `zones`, `references`, `superseded_by`, `superseded_at`, `ended_at`, `first_seen_at`,
   `last_seen_at`.

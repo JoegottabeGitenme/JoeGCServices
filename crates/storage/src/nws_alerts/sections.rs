@@ -30,6 +30,9 @@
 //! IMPACT...Expect damage to roofs, siding, and trees.
 //! ```
 //!
+//! A label may also have no space after the star (`*WHAT...`), as the Colorado avalanche
+//! advisories write it.
+//!
 //! Recognised labels become keys (`what`, `where`, `when`, `impacts`,
 //! `additional_details`, `precautionary_actions`, `hazard`, `source`, `impact`;
 //! any other all-caps `* LABEL...` becomes a slug of itself). Text outside a
@@ -81,7 +84,10 @@ pub fn normalize_text(text: &str) -> String {
 
 fn is_item(line: &str) -> bool {
     let t = line.trim_start();
-    t.starts_with("- ") || t.starts_with("* ") || t.starts_with("\u{2022}")
+    t.starts_with("- ")
+        || t.starts_with("* ")
+        || t.starts_with("\u{2022}")
+        || star_header(t.trim_end()).is_some()
 }
 
 fn collapse_spaces(s: &str) -> String {
@@ -134,7 +140,10 @@ fn label_key(label: &str) -> String {
         "HAZARD" => "hazard".into(),
         "SOURCE" => "source".into(),
         "ADDITIONAL DETAILS" => "additional_details".into(),
-        "PRECAUTIONARY/PREPAREDNESS ACTIONS" => "precautionary_actions".into(),
+        // (Denver's avalanche advisories drop the "ARY")
+        "PRECAUTIONARY/PREPAREDNESS ACTIONS" | "PRECAUTION/PREPAREDNESS ACTIONS" => {
+            "precautionary_actions".into()
+        }
         other => {
             let mut slug = String::new();
             for c in other.chars() {
@@ -160,6 +169,12 @@ fn split_label(s: &str) -> Option<(&str, &str)> {
             .chars()
             .all(|c| c.is_ascii_uppercase() || matches!(c, ' ' | '/' | '&' | '-'));
     ok.then_some((label, rest))
+}
+
+/// `* LABEL...rest` or `*LABEL...rest` (some offices, e.g. the Colorado avalanche advisories,
+/// leave out the space after the star): the label and the text after it.
+fn star_header(s: &str) -> Option<(&str, &str)> {
+    split_label(s.strip_prefix('*')?)
 }
 
 /// Labels allowed without a leading `* `.
@@ -208,13 +223,12 @@ pub fn parse_sections(description: &str) -> Sections {
         if trimmed == "&&" || trimmed == "$$" {
             break;
         }
-        // `* LABEL...rest` or bare `HAZARD...rest`
-        let header = if let Some(body) = trimmed.strip_prefix("* ") {
-            split_label(body).map(|(l, r)| (l, r, true))
-        } else {
-            split_label(trimmed)
+        // `* LABEL...rest`, `*LABEL...rest` or bare `HAZARD...rest`
+        let header = match star_header(trimmed) {
+            Some((l, r)) => Some((l, r, true)),
+            None => split_label(trimmed)
                 .filter(|(l, _)| bare_label(l))
-                .map(|(l, r)| (l, r, false))
+                .map(|(l, r)| (l, r, false)),
         };
         if let Some((label, rest, star)) = header {
             flush!();
@@ -321,6 +335,100 @@ mod tests {
         assert_eq!(
             s.get("precautionary_actions"),
             Some("Mariners should avoid the area.")
+        );
+    }
+
+    /// The three Colorado avalanche advisories NWS Denver had out on 2026-11-01, as the feed gave
+    /// them: labels written `*WHAT...` with no space after the star.
+    const AVALANCHE_SAN_JUAN: &str = "SABCO\n\nTHE FOLLOWING MESSAGE IS TRANSMITTED AT THE REQUEST OF THE\nCOLORADO AVALANCHE INFORMATION CENTER.\n\n...A SPECIAL AVALANCHE ADVISORY IN EFFECT FROM 4:30 PM SUNDAY\nUNTIL 4:30 PM MONDAY...\n\n*WHAT...Avalanche conditions are dangerous above treeline.\n*WHERE...San Juan Mountains\n*WHEN... From 4:30 PM Sunday until 4:30 PM Monday.\n*IMPACTS... Backcountry travelers can easily trigger dangerous\navalanches large enough to bury a human.\n*PRECAUTION/PREPAREDNESS ACTIONS... A potent winter storm increases\navalanche danger Sunday into Monday. Rain, snow, and wind will cause\nnatural avalanches above treeline. Check the forecast at\nwww.colorado.gov/avalanche.\n\n\nBeyer";
+    const AVALANCHE_WEST_ELK: &str = "SABCO\n\nTHE FOLLOWING MESSAGE IS TRANSMITTED AT THE REQUEST OF THE\nCOLORADO AVALANCHE INFORMATION CENTER.\n\n...A SPECIAL AVALANCHE ADVISORY IN EFFECT FROM 4:30 PM SATURDAY\nUNTIL 4:30 PM MONDAY...\n\n*WHAT...Avalanche conditions are dangerous above treeline.\n*WHERE...West Elk Mountains, Elk Mountains, San Juan Mountains, and\nLa Plata Mountains\n*WHEN...From 4:30 PM Saturday until 4:30 PM Monday.\n*IMPACTS...Backcountry travelers can easily trigger dangerous\navalanches large enough to bury a human.\n\n*PRECAUTION/PREPAREDNESS ACTIONS...A potent winter storm increases\navalanche danger Sunday into Monday. Rain, snow, and wind will cause\nnatural avalanches above treeline. Check the forecast at\nwww.colorado.gov/avalanche.\n\nBeyer & Pritchett";
+
+    #[test]
+    fn a_star_with_no_space_is_a_section_label_too() {
+        let s = parse_sections(AVALANCHE_SAN_JUAN);
+        assert_eq!(
+            s.get("what"),
+            Some("Avalanche conditions are dangerous above treeline.")
+        );
+        assert_eq!(s.get("where"), Some("San Juan Mountains"));
+        assert_eq!(
+            s.get("when"),
+            Some("From 4:30 PM Sunday until 4:30 PM Monday.")
+        );
+        assert_eq!(
+            s.get("impacts"),
+            Some("Backcountry travelers can easily trigger dangerous avalanches large enough to bury a human.")
+        );
+        // the last section runs to the end of the text, the signature included
+        assert!(s
+            .get("precautionary_actions")
+            .unwrap()
+            .starts_with("A potent winter storm increases avalanche danger Sunday into Monday."));
+        // what is left is the product preamble, and the product id line is dropped
+        assert_eq!(
+            s.narrative,
+            vec![
+                "THE FOLLOWING MESSAGE IS TRANSMITTED AT THE REQUEST OF THE COLORADO AVALANCHE INFORMATION CENTER.",
+                "...A SPECIAL AVALANCHE ADVISORY IN EFFECT FROM 4:30 PM SUNDAY UNTIL 4:30 PM MONDAY...",
+            ]
+        );
+
+        let s = parse_sections(AVALANCHE_WEST_ELK);
+        assert_eq!(
+            s.get("where"),
+            Some("West Elk Mountains, Elk Mountains, San Juan Mountains, and La Plata Mountains")
+        );
+        assert_eq!(
+            s.get("when"),
+            Some("From 4:30 PM Saturday until 4:30 PM Monday.")
+        );
+        // a blank line between two labelled sections ends the first one
+        assert_eq!(
+            s.get("impacts"),
+            Some("Backcountry travelers can easily trigger dangerous avalanches large enough to bury a human.")
+        );
+        assert!(s
+            .get("precautionary_actions")
+            .unwrap()
+            .ends_with("Beyer & Pritchett"));
+        assert_eq!(s.narrative.len(), 2);
+    }
+
+    #[test]
+    fn star_labels_parse_the_same_with_or_without_the_space() {
+        let spaced = "* WHAT...Heavy snow.\n* WHERE...The pass.\n* WHEN... Monday.\n* IMPACTS...Slow travel\nand closures.";
+        let tight = "*WHAT...Heavy snow.\n*WHERE...The pass.\n*WHEN... Monday.\n*IMPACTS...Slow travel\nand closures.";
+        let loose = "*  WHAT...Heavy snow.\n*  WHERE...The pass.\n*\tWHEN... Monday.\n*IMPACTS...Slow travel\nand closures.";
+        let want = parse_sections(spaced);
+        assert_eq!(want.get("what"), Some("Heavy snow."));
+        assert_eq!(want.get("when"), Some("Monday."));
+        assert_eq!(want.get("impacts"), Some("Slow travel and closures."));
+        assert_eq!(parse_sections(tight), want);
+        assert_eq!(parse_sections(loose), want);
+        // the bare forms (no star) are unchanged
+        let bare =
+            parse_sections("WHAT...Heavy snow.\n\nHAZARD...60 mph gusts.\n\nSOURCE...Radar.");
+        assert_eq!(bare.get("what"), Some("Heavy snow."));
+        assert_eq!(bare.get("hazard"), Some("60 mph gusts."));
+        assert_eq!(bare.get("source"), Some("Radar."));
+        // a star with lower-case text is not a label, with or without the space
+        for t in [
+            "* Locations impacted include...\nTown.",
+            "*Locations impacted include...\nTown.",
+        ] {
+            let s = parse_sections(t);
+            assert!(s.fields.is_empty(), "{t:?}: {:?}", s.fields);
+        }
+        // and "**" or a label with a stray star inside is no label
+        assert!(parse_sections("**WHAT...x").fields.is_empty());
+    }
+
+    #[test]
+    fn the_normalised_description_keeps_tight_star_labels_on_their_own_lines() {
+        let n = normalize_text(AVALANCHE_SAN_JUAN);
+        assert!(
+            n.contains("*WHAT...Avalanche conditions are dangerous above treeline.\n*WHERE...San Juan Mountains\n*WHEN..."),
+            "{n}"
         );
     }
 
