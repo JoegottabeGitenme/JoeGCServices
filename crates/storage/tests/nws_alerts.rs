@@ -48,11 +48,14 @@ async fn env() -> Env {
         .execute(catalog.pool())
         .await
         .expect("truncate");
-    // (left behind in a shared database by a test that installs it, see install_poison_trigger)
-    sqlx::query("DROP TRIGGER IF EXISTS nws_test_poison ON nws_alerts")
-        .execute(catalog.pool())
-        .await
-        .expect("drop test trigger");
+    // (left behind in a shared database by a test that installs it, see install_poison_trigger
+    // and install_write_log)
+    for trigger in ["nws_test_poison", "nws_test_write_log"] {
+        sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger} ON nws_alerts"))
+            .execute(catalog.pool())
+            .await
+            .expect("drop test trigger");
+    }
     let nws = NwsAlertCatalog::new(catalog.pool_clone());
     Env {
         catalog,
@@ -989,7 +992,12 @@ async fn an_alert_with_a_polygon_postgis_rejects_does_not_poison_the_feed() {
         )
         .await
         .unwrap();
-    assert_eq!((r.ended, r.upserted), (0, alerts.len()));
+    assert_eq!((r.ended, r.geometry_rejected, r.failed), (0, 2, 0));
+    assert_eq!(
+        (r.upserted, r.unchanged),
+        (2, alerts.len() - 2),
+        "the two stored without their polygon are tried with it again, the rest are as they were"
+    );
     assert_eq!(
         source_of(&env, "urn:test:bad-with-zone").await,
         ("zones".into(), true),
@@ -998,7 +1006,9 @@ async fn an_alert_with_a_polygon_postgis_rejects_does_not_poison_the_feed() {
 
     // An alert that was fine and then arrives with a bad polygon stays live.
     let mut next = alerts.clone();
-    next.iter_mut().find(|a| a.id == svr).unwrap().geometry_json = Some(POISON_GEOJSON.into());
+    let changed = next.iter_mut().find(|a| a.id == svr).unwrap();
+    changed.geometry_json = Some(POISON_GEOJSON.into());
+    changed.content_hash = None;
     env.nws
         .apply_feed(
             &next,
@@ -1158,6 +1168,7 @@ async fn a_row_the_database_refuses_is_skipped_in_the_feed_and_in_the_zone_recom
         if a.id == "urn:test:poison" || a.id == svr {
             a.headline = Some("changed headline".into());
             a.description = Some("changed description".into());
+            a.content_hash = None;
         }
     }
     let t1 = t0() + Duration::minutes(1);
@@ -1166,7 +1177,11 @@ async fn a_row_the_database_refuses_is_skipped_in_the_feed_and_in_the_zone_recom
         .apply_feed(&next, Some(t1), t1)
         .await
         .expect("a refused row must not fail the feed");
-    assert_eq!((r.failed, r.upserted), (1, alerts.len() - 1));
+    assert_eq!(
+        (r.failed, r.upserted, r.unchanged),
+        (1, 1, alerts.len() - 2),
+        "the poison row fails alone, the changed one is rewritten, the rest only touched"
+    );
     assert_eq!(
         env.nws
             .get(&svr, false)
@@ -1409,7 +1424,7 @@ async fn an_older_feed_counts_as_a_poll_but_changes_no_alert() {
     let t2 = t0() + Duration::minutes(2);
     let r = env.nws.apply_feed(&old, Some(fresh), t2).await.unwrap();
     assert!(!r.stale_ignored);
-    assert_eq!((r.upserted, r.ended), (old.len(), 1));
+    assert_eq!((r.upserted, r.unchanged, r.ended), (1, old.len() - 1, 1));
     assert!(env
         .nws
         .get(&svr, false)
@@ -2589,4 +2604,568 @@ async fn returned_geometry_is_valid_after_rounding_and_simplification() {
     .await
     .unwrap();
     assert!((stored - served).abs() < 1e-4, "{stored} vs {served}");
+}
+
+// --- a poll rewrites only what changed -----------------------------------------------------------
+
+/// Log every write of an alert's content: an insert, or an upsert's `DO UPDATE SET event = ...`
+/// (`UPDATE OF event` fires whenever `event` is in the SET list, changed or not). The
+/// `last_seen_at` bump, the supersede, the ended and the geometry updates do not name `event`,
+/// so the log is exactly the rows a poll rewrote.
+async fn install_write_log(env: &Env) {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS nws_test_write_log (id TEXT NOT NULL, op TEXT NOT NULL)",
+    )
+    .execute(env.catalog.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION nws_test_log_write() RETURNS trigger LANGUAGE plpgsql AS $f$ \
+         BEGIN INSERT INTO nws_test_write_log VALUES (NEW.id, TG_OP); RETURN NEW; END $f$",
+    )
+    .execute(env.catalog.pool())
+    .await
+    .unwrap();
+    sqlx::query("DROP TRIGGER IF EXISTS nws_test_write_log ON nws_alerts")
+        .execute(env.catalog.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER nws_test_write_log AFTER INSERT OR UPDATE OF event ON nws_alerts \
+         FOR EACH ROW EXECUTE FUNCTION nws_test_log_write()",
+    )
+    .execute(env.catalog.pool())
+    .await
+    .unwrap();
+    sqlx::query("TRUNCATE nws_test_write_log")
+        .execute(env.catalog.pool())
+        .await
+        .unwrap();
+}
+
+/// The ids written since the log was last drained (sorted, one entry per write), then empties it.
+async fn drain_write_log(env: &Env) -> Vec<(String, String)> {
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, op FROM nws_test_write_log ORDER BY id, op")
+            .fetch_all(env.catalog.pool())
+            .await
+            .unwrap();
+    sqlx::query("TRUNCATE nws_test_write_log")
+        .execute(env.catalog.pool())
+        .await
+        .unwrap();
+    rows
+}
+
+/// One poll at `t` (its own `updated` stamp too).
+async fn poll(
+    env: &Env,
+    alerts: &[ParsedAlert],
+    t: DateTime<Utc>,
+) -> storage::nws_alerts::ApplyResult {
+    env.nws.apply_feed(alerts, Some(t), t).await.unwrap()
+}
+
+/// Every stored alert as JSON, bar the two columns a quiet poll is allowed to move
+/// (`last_seen_at`) and the hash.
+async fn alert_rows(env: &Env) -> Vec<(String, Value)> {
+    sqlx::query_as(
+        "SELECT id, to_jsonb(a) - 'last_seen_at' - 'content_hash' FROM nws_alerts a ORDER BY id",
+    )
+    .fetch_all(env.catalog.pool())
+    .await
+    .unwrap()
+}
+
+async fn last_seen(env: &Env) -> Vec<DateTime<Utc>> {
+    sqlx::query_scalar("SELECT last_seen_at FROM nws_alerts ORDER BY id")
+        .fetch_all(env.catalog.pool())
+        .await
+        .unwrap()
+}
+
+/// A square for each zone the alerts list, so that none is left pending.
+async fn resolve_all_zones(env: &Env, alerts: &[ParsedAlert], t: DateTime<Utc>) {
+    let mut keys: Vec<&String> = alerts.iter().flat_map(|a| &a.zone_keys).collect();
+    keys.sort();
+    keys.dedup();
+    let zones: Vec<ZoneRecord> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| {
+            let x = i as f64;
+            zone(k, ZoneStatus::Ok, Some(square(x, 10.0, x + 0.5, 10.5)))
+        })
+        .collect();
+    env.nws.upsert_zones(&zones, t).await.unwrap();
+}
+
+/// A copy of the fixture's Severe Thunderstorm Warning under `id` that NWS sent as a Cancel.
+fn cancel_message(id: &str) -> ParsedAlert {
+    let mut f = features()
+        .into_iter()
+        .find(|f| f["properties"]["event"] == "Severe Thunderstorm Warning")
+        .unwrap();
+    f["properties"]["id"] = json!(id);
+    f["properties"]["messageType"] = json!("Cancel");
+    parse_feature(&f).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_poll_of_an_unchanged_feed_rewrites_no_alert_but_advances_last_seen() {
+    let env = env().await;
+    install_write_log(&env).await;
+    let mut alerts = fixture_alerts();
+    alerts.push(cancel_message("urn:test:cancel"));
+    let n = alerts.len();
+
+    let r = poll(&env, &alerts, t0()).await;
+    assert_eq!((r.upserted, r.unchanged, r.failed), (n, 0, 0));
+    let first = drain_write_log(&env).await;
+    assert_eq!(first.len(), n, "a new alert is written once: {first:?}");
+    resolve_all_zones(&env, &alerts, t0()).await;
+    let before = alert_rows(&env).await;
+    let cancel_ended = env
+        .nws
+        .get("urn:test:cancel", false)
+        .await
+        .unwrap()
+        .unwrap()
+        .ended_at;
+    assert_eq!(cancel_ended, Some(t0()), "a Cancel is over on arrival");
+
+    // NWS' `updated` moves every minute; the alerts in it do not. Before alerts were hashed every
+    // one of them was rewritten by every poll (n of n, measured on this feed).
+    for k in 1..=3 {
+        let t = t0() + Duration::minutes(k);
+        let r = poll(&env, &alerts, t).await;
+        assert_eq!(
+            (r.upserted, r.unchanged, r.failed, r.ended, r.superseded),
+            (0, n, 0, 0, 0),
+            "poll {k}"
+        );
+        assert_eq!(
+            drain_write_log(&env).await,
+            vec![],
+            "poll {k} wrote an alert row"
+        );
+        assert_eq!(
+            last_seen(&env).await,
+            vec![t; n],
+            "poll {k}: everything was seen"
+        );
+    }
+    assert_eq!(
+        alert_rows(&env).await,
+        before,
+        "nothing but last_seen_at moved"
+    );
+    let a = env
+        .nws
+        .get("urn:test:cancel", false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((a.ended_at, a.first_seen_at), (cancel_ended, t0()));
+
+    // The skipped rewrite is the one that would have changed nothing: rewriting the same feed in
+    // full (what every poll used to do) leaves every column but last_seen_at as it is.
+    let unhashed: Vec<ParsedAlert> = alerts
+        .iter()
+        .cloned()
+        .map(|mut a| {
+            a.content_hash = None;
+            a
+        })
+        .collect();
+    let r = poll(&env, &unhashed, t0() + Duration::minutes(4)).await;
+    assert_eq!((r.upserted, r.unchanged), (n, 0));
+    assert_eq!(drain_write_log(&env).await.len(), n);
+    assert_eq!(alert_rows(&env).await, before);
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn only_the_alert_that_changed_is_rewritten() {
+    let env = env().await;
+    install_write_log(&env).await;
+    let alerts = fixture_alerts();
+    let n = alerts.len();
+    poll(&env, &alerts, t0()).await;
+    resolve_all_zones(&env, &alerts, t0()).await;
+    drain_write_log(&env).await;
+    let winter = id_of(&alerts, "Winter Storm Warning", |_| true);
+    let svr = id_of(&alerts, "Severe Thunderstorm Warning", |a| {
+        a.id.starts_with("urn:oid")
+    });
+    let before = env.nws.get(&winter, false).await.unwrap().unwrap();
+
+    // NWS rewords one alert and moves another's polygon.
+    let t1 = t0() + Duration::minutes(1);
+    let next: Vec<ParsedAlert> = features()
+        .into_iter()
+        .map(|mut f| {
+            if f["properties"]["id"] == winter.as_str() {
+                f["properties"]["description"] =
+                    json!("Heavy snow now expected. Travel is unwise.");
+            }
+            if f["properties"]["id"] == svr.as_str() {
+                f["geometry"] = serde_json::from_str(&square(-100.0, 30.0, -99.0, 31.0)).unwrap();
+            }
+            parse_feature(&f).unwrap()
+        })
+        .collect();
+    let r = poll(&env, &next, t1).await;
+    assert_eq!((r.upserted, r.unchanged), (2, n - 2));
+    let mut want = vec![
+        (winter.clone(), "UPDATE".to_string()),
+        (svr.clone(), "UPDATE".to_string()),
+    ];
+    want.sort();
+    assert_eq!(drain_write_log(&env).await, want);
+
+    let w = env.nws.get(&winter, false).await.unwrap().unwrap();
+    assert_eq!(
+        w.description.as_deref(),
+        Some("Heavy snow now expected. Travel is unwise.")
+    );
+    assert_eq!(w.updated_at, t1, "its content changed");
+    assert_eq!(w.first_seen_at, before.first_seen_at);
+    let moved: bool = sqlx::query_scalar(
+        "SELECT ST_Equals(geom, ST_Multi(ST_GeomFromGeoJSON($2))) FROM nws_alerts WHERE id = $1",
+    )
+    .bind(&svr)
+    .bind(square(-100.0, 30.0, -99.0, 31.0))
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap();
+    assert!(moved, "the new polygon was stored");
+
+    // ...and once rewritten they are quiet again.
+    let r = poll(&env, &next, t1 + Duration::minutes(1)).await;
+    assert_eq!((r.upserted, r.unchanged), (0, n));
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_changed_alert_resolves_its_zones_again_and_zones_arriving_later_reach_one_nobody_rewrites(
+) {
+    let env = env().await;
+    install_write_log(&env).await;
+    let alerts = fixture_alerts();
+    let n = alerts.len();
+    let winter = id_of(&alerts, "Winter Storm Warning", |_| true);
+
+    // No zone is known yet: the zone-based alerts wait, and a second poll leaves them waiting.
+    poll(&env, &alerts, t0()).await;
+    assert_eq!(source_of(&env, &winter).await, ("pending".into(), false));
+    drain_write_log(&env).await;
+    let r = poll(&env, &alerts, t0() + Duration::minutes(1)).await;
+    assert_eq!((r.upserted, r.unchanged), (0, n));
+    assert!(drain_write_log(&env).await.is_empty());
+    assert_eq!(source_of(&env, &winter).await, ("pending".into(), false));
+    assert!(
+        r.missing_zones.contains(&"forecast/COZ068".to_string()),
+        "{:?}",
+        r.missing_zones
+    );
+
+    // Its zone arrives: the alert gets its geometry though no poll writes it.
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/COZ068",
+                ZoneStatus::Ok,
+                Some(square(CO[0], CO[1], CO[2], CO[3])),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(source_of(&env, &winter).await, ("zones".into(), true));
+    let r = poll(&env, &alerts, t0() + Duration::minutes(2)).await;
+    assert_eq!((r.upserted, r.unchanged), (0, n));
+    assert!(drain_write_log(&env).await.is_empty());
+    assert_eq!(
+        source_of(&env, &winter).await,
+        ("zones".into(), true),
+        "kept across quiet polls"
+    );
+
+    // NWS moves the warning to another zone, which is already known: the alert is rewritten and
+    // its geometry follows in the same poll.
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/COZ069",
+                ZoneStatus::Ok,
+                Some(square(MD[0], MD[1], MD[2], MD[3])),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    let t3 = t0() + Duration::minutes(3);
+    let next: Vec<ParsedAlert> = features()
+        .into_iter()
+        .map(|mut f| {
+            if f["properties"]["id"] == winter.as_str() {
+                f["properties"]["affectedZones"] =
+                    json!(["https://api.weather.gov/zones/forecast/COZ069"]);
+            }
+            parse_feature(&f).unwrap()
+        })
+        .collect();
+    let r = poll(&env, &next, t3).await;
+    assert_eq!((r.upserted, r.unchanged), (1, n - 1));
+    assert_eq!(
+        drain_write_log(&env).await,
+        vec![(winter.clone(), "UPDATE".to_string())]
+    );
+    assert_eq!(source_of(&env, &winter).await, ("zones".into(), true));
+    let (lon, lat) = md_lonlat();
+    let hit = env.nws.active_at_point(lon, lat, t3, false).await.unwrap();
+    assert!(ids(&hit).contains(&winter), "found where its new zone is");
+    let old = env
+        .nws
+        .active_at_point(-107.0, 37.5, t3, false)
+        .await
+        .unwrap();
+    assert!(
+        !ids(&old).contains(&winter),
+        "and no longer where the old one was"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn an_alert_that_left_the_feed_and_came_back_is_live_again_and_rewritten_once() {
+    let env = env().await;
+    install_write_log(&env).await;
+    let mut alerts = fixture_alerts();
+    alerts.push(cancel_message("urn:test:cancel"));
+    let n = alerts.len();
+    let winter = id_of(&alerts, "Winter Storm Warning", |_| true);
+    poll(&env, &alerts, t0()).await;
+    resolve_all_zones(&env, &alerts, t0()).await;
+    let first = env.nws.get(&winter, false).await.unwrap().unwrap();
+    drain_write_log(&env).await;
+
+    // Gone for a poll: ended, and nothing was rewritten to say so.
+    let without: Vec<ParsedAlert> = alerts.iter().filter(|a| a.id != winter).cloned().collect();
+    let t1 = t0() + Duration::minutes(1);
+    let r = poll(&env, &without, t1).await;
+    assert_eq!((r.ended, r.upserted, r.unchanged), (1, 0, n - 1));
+    assert!(drain_write_log(&env).await.is_empty());
+    let gone = env.nws.get(&winter, false).await.unwrap().unwrap();
+    assert_eq!(gone.ended_at, Some(t1));
+    assert_eq!(gone.last_seen_at, t0(), "not listed, so not seen");
+    assert!(!gone.is_active(t1));
+
+    // Back, byte for byte the same message: revived, which takes a rewrite, and only of it.
+    let t2 = t0() + Duration::minutes(2);
+    let r = poll(&env, &alerts, t2).await;
+    assert_eq!((r.ended, r.upserted, r.unchanged), (0, 1, n - 1));
+    assert_eq!(
+        drain_write_log(&env).await,
+        vec![(winter.clone(), "UPDATE".to_string())]
+    );
+    let back = env.nws.get(&winter, false).await.unwrap().unwrap();
+    assert_eq!(back.ended_at, None);
+    assert!(back.is_active(t2));
+    assert_eq!(
+        (back.first_seen_at, back.last_seen_at),
+        (first.first_seen_at, t2)
+    );
+    assert_eq!(
+        back.updated_at, first.updated_at,
+        "its content did not change"
+    );
+    assert_eq!(back.geometry_source, "zones");
+    let live = env
+        .nws
+        .search(&search(AlertRegion::Bbox([-179.0, -89.0, 179.0, 89.0]), t2))
+        .await
+        .unwrap();
+    assert!(ids(&live).contains(&winter));
+
+    // Then quiet again; the Cancel, over since it arrived, was never rewritten for being ended.
+    let r = poll(&env, &alerts, t2 + Duration::minutes(1)).await;
+    assert_eq!((r.upserted, r.unchanged), (0, n));
+    assert!(drain_write_log(&env).await.is_empty());
+    let cancel = env
+        .nws
+        .get("urn:test:cancel", false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cancel.ended_at, Some(t0()));
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_new_derivation_version_rewrites_every_alert_once() {
+    let env = env().await;
+    install_write_log(&env).await;
+    let alerts = fixture_alerts();
+    let n = alerts.len();
+    poll(&env, &alerts, t0()).await;
+    drain_write_log(&env).await;
+
+    // The rows were stored by a build with another DERIVATION_VERSION: same features, other hashes.
+    let other = storage::nws_alerts::DERIVATION_VERSION + 1;
+    for f in features() {
+        let old = storage::nws_alerts::feature_hash(&f, other);
+        assert_ne!(Some(old.clone()), parse_feature(&f).unwrap().content_hash);
+        sqlx::query("UPDATE nws_alerts SET content_hash = $2 WHERE id = $1")
+            .bind(f["properties"]["id"].as_str().unwrap())
+            .bind(old)
+            .execute(env.catalog.pool())
+            .await
+            .unwrap();
+    }
+    let t1 = t0() + Duration::minutes(1);
+    let r = poll(&env, &alerts, t1).await;
+    assert_eq!((r.upserted, r.unchanged), (n, 0));
+    assert_eq!(drain_write_log(&env).await.len(), n);
+    let r = poll(&env, &alerts, t1 + Duration::minutes(1)).await;
+    assert_eq!((r.upserted, r.unchanged), (0, n));
+    assert!(drain_write_log(&env).await.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn rows_stored_before_the_hash_existed_are_migrated_and_rewritten_once() {
+    let env = env().await;
+    install_write_log(&env).await;
+    let alerts = fixture_alerts();
+    let n = alerts.len();
+    poll(&env, &alerts, t0()).await;
+    resolve_all_zones(&env, &alerts, t0()).await;
+    let before = alert_rows(&env).await;
+
+    // The table as the previous release left it: no hash column.
+    sqlx::query("ALTER TABLE nws_alerts DROP COLUMN content_hash")
+        .execute(env.catalog.pool())
+        .await
+        .unwrap();
+    env.catalog
+        .migrate_nws_alerts()
+        .await
+        .expect("migrates a populated table");
+    env.catalog.migrate_nws_alerts().await.expect("and again");
+    let (rows, hashed): (i64, i64) =
+        sqlx::query_as("SELECT count(*), count(content_hash) FROM nws_alerts")
+            .fetch_one(env.catalog.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        (rows as usize, hashed),
+        (n, 0),
+        "the rows survive, hash unknown"
+    );
+    drain_write_log(&env).await;
+
+    // Unknown means changed: the first poll rewrites everything, and says nothing else changed.
+    let t1 = t0() + Duration::minutes(1);
+    let r = poll(&env, &alerts, t1).await;
+    assert_eq!((r.upserted, r.unchanged, r.failed), (n, 0, 0));
+    assert_eq!(drain_write_log(&env).await.len(), n);
+    assert_eq!(alert_rows(&env).await, before);
+    let hashed: i64 = sqlx::query_scalar("SELECT count(content_hash) FROM nws_alerts")
+        .fetch_one(env.catalog.pool())
+        .await
+        .unwrap();
+    assert_eq!(hashed as usize, n);
+
+    // ...once.
+    let r = poll(&env, &alerts, t1 + Duration::minutes(1)).await;
+    assert_eq!((r.upserted, r.unchanged), (0, n));
+    assert!(drain_write_log(&env).await.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_row_the_database_refuses_to_touch_is_skipped_alone_and_the_feed_still_applies() {
+    let env = env().await;
+    let mut alerts = fixture_alerts();
+    let mut poison = svr_with_status("urn:test:poison", Some("Actual"));
+    poison.geometry_json = None;
+    poison.zone_keys = vec!["forecast/COZ068".into()];
+    alerts.push(poison);
+    let n = alerts.len();
+    poll(&env, &alerts, t0()).await;
+    install_poison_trigger(&env).await;
+
+    // The feed is unchanged, but the database will not update the poison row at all: the quiet
+    // path cannot touch it, so every alert goes the one-at-a-time way, where only it fails.
+    let t1 = t0() + Duration::minutes(1);
+    let r = poll(&env, &alerts, t1).await;
+    assert_eq!((r.failed, r.upserted, r.unchanged), (1, n - 1, 0));
+    assert_eq!(
+        last_seen(&env).await.iter().filter(|t| **t == t1).count(),
+        n - 1
+    );
+    let st = env.nws.status().await.unwrap().unwrap();
+    assert_eq!(st.last_success_at, Some(t1));
+    let p = env
+        .nws
+        .get("urn:test:poison", false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(p.ended_at.is_none(), "still listed, so still live");
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn replacements_supersede_whether_listed_before_or_after_the_message_and_in_quiet_polls() {
+    let env = env().await;
+    let a = timed_alert("urn:test:a", BIG, at(10, 0), at(10, 0), at(18, 0), &[]);
+    let a2 = timed_alert(
+        "urn:test:a2",
+        SMALL,
+        at(11, 0),
+        at(11, 0),
+        at(18, 0),
+        &["urn:test:a"],
+    );
+    let a3 = timed_alert(
+        "urn:test:a3",
+        SMALL,
+        at(11, 30),
+        at(11, 30),
+        at(18, 0),
+        &["urn:test:a"],
+    );
+    let b = timed_alert("urn:test:b", BIG, at(10, 0), at(10, 0), at(18, 0), &[]);
+    let b2 = timed_alert(
+        "urn:test:b2",
+        SMALL,
+        at(11, 0),
+        at(11, 0),
+        at(18, 0),
+        &["urn:test:b"],
+    );
+
+    // The replacement is listed first, the first of two replacements wins, and the replaced
+    // message is stored by this very poll.
+    let feed = vec![a3.clone(), a2.clone(), a.clone(), b2.clone()];
+    let r = poll(&env, &feed, at(12, 0)).await;
+    assert_eq!((r.superseded, r.upserted), (1, 4));
+    let a_row = env.nws.get("urn:test:a", false).await.unwrap().unwrap();
+    assert_eq!(a_row.superseded_by.as_deref(), Some("urn:test:a3"));
+    assert_eq!(a_row.superseded_at, Some(at(11, 30)));
+
+    // b2 is unchanged in the next poll, in which b turns up: b2 supersedes it though nothing
+    // rewrites b2.
+    let feed = vec![a3, a2, a, b2, b];
+    let r = poll(&env, &feed, at(12, 1)).await;
+    assert_eq!((r.superseded, r.upserted, r.unchanged), (1, 1, 4));
+    let b_row = env.nws.get("urn:test:b", false).await.unwrap().unwrap();
+    assert_eq!(b_row.superseded_by.as_deref(), Some("urn:test:b2"));
+    assert_eq!(b_row.superseded_at, Some(at(11, 0)));
+    let r = poll(&env, &feed, at(12, 2)).await;
+    assert_eq!((r.superseded, r.upserted, r.unchanged), (0, 0, 5));
 }
