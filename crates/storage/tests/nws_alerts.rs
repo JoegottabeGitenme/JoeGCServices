@@ -2383,3 +2383,210 @@ async fn a_bbox_with_west_above_east_covers_both_sides_of_the_antimeridian() {
         assert!(!plan.contains("Seq Scan"), "{region:?}\n{plan}");
     }
 }
+
+/// Valid in full precision; the hole is 4e-6 degrees inside the shell, so rounding to 5 decimals
+/// puts its edge on the shell's (like NWS zones AMZ364 and PZZ745, which come out of a plain
+/// `ST_AsGeoJSON(geom, 5)` self-intersecting).
+const THIN_HOLE: &str = r#"{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]],[[0.000004,0.3],[0.5,0.3],[0.5,0.5],[0.000004,0.5],[0.000004,0.3]]]}"#;
+/// A shell with a 0.1 degree bump and a small island (hole) inside the bump. Simplified by more
+/// than the bump's height, the shell edge skips over the island, which GEOS before 3.12 allows.
+const BUMP_AND_ISLAND: &str = r#"{"type":"Polygon","coordinates":[[[10,0],[20,0],[20,10],[15,10.1],[10,10],[10,0]],[[14.99,10.04],[15.01,10.04],[15.01,10.06],[14.99,10.06],[14.99,10.04]]]}"#;
+
+async fn is_valid_geojson(env: &Env, geometry: &str) -> bool {
+    sqlx::query_scalar("SELECT ST_IsValid(ST_GeomFromGeoJSON($1))")
+        .bind(geometry)
+        .fetch_one(env.catalog.pool())
+        .await
+        .unwrap()
+}
+
+/// What the SQL says a plain rendering of the stored geometry is worth.
+async fn naive_is_valid(env: &Env, id: &str, simplify: Option<f64>) -> bool {
+    let geom = match simplify {
+        Some(t) => format!("ST_SimplifyPreserveTopology(geom, {t})"),
+        None => "geom".to_string(),
+    };
+    sqlx::query_scalar(&format!(
+        "SELECT ST_IsValid(ST_GeomFromGeoJSON(ST_AsGeoJSON({geom}, 5))) FROM nws_alerts WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap()
+}
+
+async fn geos_before_3_12(env: &Env) -> bool {
+    let v: String = sqlx::query_scalar("SELECT postgis_geos_version()")
+        .fetch_one(env.catalog.pool())
+        .await
+        .unwrap();
+    let mut it = v.split(|c: char| !c.is_ascii_digit());
+    let (major, minor): (u32, u32) = (
+        it.next().unwrap().parse().unwrap(),
+        it.next().unwrap().parse().unwrap(),
+    );
+    (major, minor) < (3, 12)
+}
+
+/// Geometry is valid GeoJSON as the client reads it: after rounding to a metre, and after
+/// simplification, on every read that returns one.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn returned_geometry_is_valid_after_rounding_and_simplification() {
+    let env = env().await;
+    let thin = alert_with_geometry("urn:test:thin", serde_json::from_str(THIN_HOLE).unwrap());
+    let bump = alert_with_geometry(
+        "urn:test:bump",
+        serde_json::from_str(BUMP_AND_ISLAND).unwrap(),
+    );
+    let tiny = alert_with_geometry(
+        "urn:test:tiny",
+        serde_json::from_str(&square(30.0, 30.0, 30.000001, 30.000001)).unwrap(),
+    );
+    let plain = alert_with_geometry(
+        "urn:test:plain",
+        serde_json::from_str(&square(40.0, 40.0, 41.5, 41.25)).unwrap(),
+    );
+    let mut pending = timed_alert(
+        "urn:test:pending",
+        BIG,
+        at(10, 0),
+        at(10, 0),
+        at(18, 0),
+        &[],
+    );
+    pending.geometry_json = None;
+    pending.zone_keys = vec!["forecast/NOPE".into()];
+    env.nws
+        .apply_feed(
+            &[thin, bump, tiny, plain, pending],
+            Some(at(10, 1)),
+            at(10, 1),
+        )
+        .await
+        .unwrap();
+    let now = at(12, 0);
+
+    // the stored geometry is valid; the plain renderings are not (the test is sensitive)
+    for id in ["urn:test:thin", "urn:test:bump"] {
+        let stored: bool =
+            sqlx::query_scalar("SELECT ST_IsValid(geom) FROM nws_alerts WHERE id = $1")
+                .bind(id)
+                .fetch_one(env.catalog.pool())
+                .await
+                .unwrap();
+        assert!(stored, "{id}");
+    }
+    assert!(
+        !naive_is_valid(&env, "urn:test:thin", None).await,
+        "5-decimal rounding breaks the thin hole"
+    );
+    if geos_before_3_12(&env).await {
+        assert!(
+            !naive_is_valid(&env, "urn:test:bump", Some(0.2)).await,
+            "this GEOS lets the simplified shell skip the island"
+        );
+    }
+
+    let geometry_of = |rows: &[storage::StoredAlert], id: &str| -> Option<String> {
+        rows.iter()
+            .find(|a| a.id == id)
+            .unwrap_or_else(|| panic!("{id} not returned"))
+            .geometry_geojson
+            .clone()
+    };
+    let with_geometry = |mut q: AlertSearch, simplify: Option<f64>| {
+        q.with_geometry = true;
+        q.simplify = simplify;
+        q
+    };
+    let mut reads: Vec<(&str, Vec<storage::StoredAlert>)> = Vec::new();
+    for (name, simplify) in [
+        ("search", None),
+        ("search simplify=0.2", Some(0.2)),
+        ("search simplify=0.00001", Some(0.00001)),
+        ("search simplify=3", Some(3.0)),
+    ] {
+        let q = with_geometry(
+            search(AlertRegion::Bbox([-1.0, -1.0, 50.0, 50.0]), now),
+            simplify,
+        );
+        reads.push((name, env.nws.search(&q).await.unwrap()));
+    }
+    reads.push((
+        "in_bbox",
+        env.nws
+            .in_bbox(
+                [-1.0, -1.0, 50.0, 50.0],
+                now,
+                now,
+                true,
+                false,
+                now,
+                100,
+                true,
+            )
+            .await
+            .unwrap(),
+    ));
+    reads.push((
+        "active_at_point",
+        env.nws.active_at_point(0.9, 0.9, now, true).await.unwrap(),
+    ));
+    for (name, rows) in &reads {
+        for id in ["urn:test:thin", "urn:test:bump", "urn:test:plain"] {
+            if *name == "active_at_point" && id != "urn:test:thin" {
+                continue;
+            }
+            let g = geometry_of(rows, id).unwrap_or_else(|| panic!("{name}: {id} has a geometry"));
+            let v: Value = serde_json::from_str(&g).unwrap();
+            assert_eq!(v["type"], "MultiPolygon", "{name} {id}");
+            assert!(is_valid_geojson(&env, &g).await, "{name} {id}: {g}");
+        }
+    }
+    // one alert in full, simplified or not
+    for id in ["urn:test:thin", "urn:test:bump"] {
+        let g = env
+            .nws
+            .get(id, true)
+            .await
+            .unwrap()
+            .unwrap()
+            .geometry_geojson
+            .unwrap();
+        assert!(is_valid_geojson(&env, &g).await, "get {id}: {g}");
+    }
+
+    // what stays: an ordinary shape is the same shape, a pending one has none, one smaller than
+    // the grid collapses to none instead of failing the read
+    let rows = &reads[0].1;
+    let plain_json: Value =
+        serde_json::from_str(&geometry_of(rows, "urn:test:plain").unwrap()).unwrap();
+    assert_eq!(
+        plain_json["coordinates"],
+        serde_json::from_str::<Value>("[[[[40,40],[41.5,40],[41.5,41.25],[40,41.25],[40,40]]]]")
+            .unwrap()
+    );
+    let (name, rows) = &reads[0];
+    assert!(
+        rows.iter().all(|a| a.id != "urn:test:pending"),
+        "{name}: a pending alert has no geometry, so no box finds it"
+    );
+    assert_eq!(geometry_of(rows, "urn:test:tiny"), None);
+    let pending = env
+        .nws
+        .get("urn:test:pending", true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pending.geometry_geojson, None);
+    // the area of the repaired shapes is the stored one's, to a metre
+    let (stored, served): (f64, f64) = sqlx::query_as(
+        "SELECT ST_Area(geom), ST_Area(ST_GeomFromGeoJSON($1)) FROM nws_alerts WHERE id = 'urn:test:thin'",
+    )
+    .bind(geometry_of(&reads[0].1, "urn:test:thin").unwrap())
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap();
+    assert!((stored - served).abs() < 1e-4, "{stored} vs {served}");
+}

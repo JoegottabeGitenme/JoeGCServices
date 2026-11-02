@@ -188,6 +188,11 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
 - Alerts that NWS gave only zone codes get their geometry once the zones are fetched
   (`geometry_source: pending` until then; such an alert does not match point queries yet, or only
   where the zones fetched so far cover it).
+- `geometry` (when asked for) is a `MultiPolygon`, or `null` when the alert has none yet. Its
+  coordinates are rounded to 5 decimals (about a metre), and it is valid as returned (OGC simple
+  features: no hole outside its shell, nested shells or self-intersection), whatever `simplify`
+  did to it or the rounding would have done to a thin zone; it is an even-odd area, so a client may
+  hand it straight to a geometry library. A part smaller than a metre is dropped.
 - `geometry_source`: `polygon` (NWS sent one), `zones` (union of the alert's zones), `pending` (some
   zones not fetched yet), `none` (no usable geometry: the zones have none, or the database rejected
   the polygon and there were no zones to fall back on). A polygon the database rejects never costs

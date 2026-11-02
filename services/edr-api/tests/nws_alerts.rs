@@ -592,6 +592,106 @@ async fn only_geojson_is_offered_and_asking_for_anything_else_is_refused() {
     assert_eq!(st, 406);
 }
 
+/// A zone valid at full precision whose hole is 4e-6 degrees inside the shell, so rounding to
+/// 5 decimals would put the hole's edge on the shell's (as for NWS zones AMZ364 and PZZ745).
+const THIN_HOLE_ZONE: &str = r#"{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,1],[0,0]],[[0.000004,0.3],[0.5,0.3],[0.5,0.5],[0.000004,0.5],[0.000004,0.3]]]}"#;
+/// A zone with a 0.1 degree bump and an island inside the bump; simplified by more than the bump
+/// is high, a shell edge skips the island (GEOS before 3.12).
+const BUMP_ZONE: &str = r#"{"type":"Polygon","coordinates":[[[10,0],[20,0],[20,10],[15,10.1],[10,10],[10,0]],[[14.99,10.04],[15.01,10.04],[15.01,10.06],[14.99,10.06],[14.99,10.04]]]}"#;
+
+/// What a client reads back is a valid geometry (PostGIS' `ST_IsValid` on the GeoJSON), for an alert
+/// that is the union of zones, whatever the simplification, on every route that returns one.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn the_geometry_of_a_union_of_zones_is_valid_as_returned() {
+    let e = env().await;
+    e.load().await;
+    e.nws
+        .upsert_zones(
+            &[
+                zone("forecast/PZZ455", THIN_HOLE_ZONE.to_string()),
+                zone("forecast/PZZ475", BUMP_ZONE.to_string()),
+            ],
+            t0(),
+        )
+        .await
+        .unwrap();
+    let id = e
+        .alerts
+        .iter()
+        .find(|a| a.zone_keys == ["forecast/PZZ455", "forecast/PZZ475"])
+        .expect("the fixture's two-zone Small Craft Advisory")
+        .id
+        .clone();
+    let (source, parts): (String, i32) = sqlx::query_as(
+        "SELECT geometry_source, ST_NumGeometries(geom) FROM nws_alerts WHERE id = $1",
+    )
+    .bind(&id)
+    .fetch_one(e.catalog.pool())
+    .await
+    .unwrap();
+    assert_eq!((source.as_str(), parts), ("zones", 2));
+
+    async fn valid(e: &Env, uri: &str, id: &str) {
+        let (st, _, v, _) = e.get(uri).await;
+        assert_eq!(st, 200, "{uri}: {v}");
+        let features: Vec<&Value> = match v["type"] == "Feature" {
+            true => vec![&v],
+            false => v["features"].as_array().unwrap().iter().collect(),
+        };
+        let ours: Vec<&&Value> = features.iter().filter(|f| f["id"] == id).collect();
+        assert_eq!(ours.len(), 1, "{uri}: the union alert is returned once");
+        for f in features {
+            let g = &f["geometry"];
+            if g.is_null() {
+                continue;
+            }
+            let ok: bool = sqlx::query_scalar("SELECT ST_IsValid(ST_GeomFromGeoJSON($1))")
+                .bind(g.to_string())
+                .fetch_one(e.catalog.pool())
+                .await
+                .unwrap();
+            assert!(ok, "{uri}: {} has invalid geometry {g}", f["id"]);
+        }
+    }
+    let encoded = handlers::nws_alerts::encode_id(&id);
+    let c = "/edr/collections/nws-alerts";
+    let bbox = "bbox=-1,-1,25,12";
+    for simplify in [
+        "",
+        "&simplify=0",
+        "&simplify=0.2",
+        "&simplify=0.00001",
+        "&simplify=5",
+    ] {
+        valid(
+            &e,
+            &format!("{c}/items?{bbox}&datetime={AT}{simplify}"),
+            &id,
+        )
+        .await;
+        valid(
+            &e,
+            &format!("{c}/area?coords=POLYGON((-1%20-1,25%20-1,25%2012,-1%2012,-1%20-1))&datetime={AT}&geometry=true{simplify}"),
+            &id,
+        )
+        .await;
+        valid(
+            &e,
+            &format!("{c}/radius?coords=POINT(0.9%200.9)&within=500&datetime={AT}&geometry=true{simplify}"),
+            &id,
+        )
+        .await;
+    }
+    valid(&e, &format!("{c}/items/{encoded}"), &id).await;
+    valid(
+        &e,
+        &format!("{c}/position?coords=POINT(0.9%200.9)&datetime={AT}&geometry=true"),
+        &id,
+    )
+    .await;
+}
+
 /// NWS splits the zones it draws over the antimeridian: one polygon east of 171E up to 180, one from
 /// -180 to 171W. A bbox written west > east (170,50,-170,60) and a radius that reaches over the
 /// line find both; they used to be a 400 and a miss.
