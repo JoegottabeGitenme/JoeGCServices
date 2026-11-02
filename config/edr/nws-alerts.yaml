@@ -11,7 +11,8 @@
 # - /collections/nws-alerts/area?coords=POLYGON(...)         - alerts intersecting a polygon
 # - /collections/nws-alerts/radius?coords=&within=           - alerts near a point
 #
-# Filters on every query: severity=, event= (comma lists), geometry=true|false.
+# Filters on every query: severity=, event= (comma lists), geometry=true|false,
+# include_non_actual=true (also Test/Exercise/System/Draft messages; default Actual only).
 
 model: nws-alerts
 data_type: featurecollection

@@ -13,7 +13,9 @@
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use serde_json::{json, Value};
-use storage::nws_alerts::{parse_feature, ParsedAlert, ZoneRecord, ZoneStatus};
+use storage::nws_alerts::{
+    parse_feature, AlertRegion, AlertSearch, ParsedAlert, ZoneRecord, ZoneStatus,
+};
 use storage::{Catalog, NwsAlertCatalog};
 
 const FIXTURE: &str =
@@ -703,8 +705,10 @@ async fn one_alert_by_id_carries_the_predigested_fields() {
     assert_eq!(st.last_alert_count, Some(alerts.len() as i32));
 
     // The point query uses the GIST index (plan check on a table big enough to prefer it).
+    // One connection for both statements: a session setting does not follow a pool.
+    let mut conn = env.catalog.pool().acquire().await.unwrap();
     sqlx::query("SET enable_seqscan = off")
-        .execute(env.catalog.pool())
+        .execute(&mut *conn)
         .await
         .unwrap();
     let plan: Vec<(String,)> = sqlx::query_as(
@@ -712,9 +716,174 @@ async fn one_alert_by_id_carries_the_predigested_fields() {
          AND a.geom && ST_SetSRID(ST_MakePoint(-107, 37.5), 4326) \
          AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint(-107, 37.5), 4326))",
     )
-    .fetch_all(env.catalog.pool())
+    .fetch_all(&mut *conn)
     .await
     .unwrap();
     let plan = plan.into_iter().map(|r| r.0).collect::<Vec<_>>().join("\n");
     assert!(plan.contains("idx_nws_alerts_geom"), "{plan}");
+}
+
+fn search(region: AlertRegion, now: DateTime<Utc>) -> AlertSearch {
+    AlertSearch {
+        region,
+        now,
+        window: None,
+        include_superseded: false,
+        severities: vec![],
+        events: vec![],
+        limit: 100,
+        with_geometry: false,
+        simplify: None,
+        include_non_actual: false,
+    }
+}
+
+/// A copy of the fixture's Severe Thunderstorm Warning under a new id, with a CAP `status`
+/// (`None` removes the field).
+fn svr_with_status(id: &str, status: Option<&str>) -> ParsedAlert {
+    let mut f = features()
+        .into_iter()
+        .find(|f| f["properties"]["event"] == "Severe Thunderstorm Warning")
+        .unwrap();
+    f["properties"]["id"] = json!(id);
+    match status {
+        Some(s) => f["properties"]["status"] = json!(s),
+        None => {
+            f["properties"].as_object_mut().unwrap().remove("status");
+        }
+    }
+    parse_feature(&f).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn test_exercise_and_draft_alerts_are_stored_but_only_actual_ones_are_served_by_default() {
+    let env = env().await;
+    let mut alerts = fixture_alerts();
+    for (id, st) in [
+        ("urn:test:exercise", Some("Exercise")),
+        ("urn:test:draft", Some("Draft")),
+        ("urn:test:system", Some("System")),
+        ("urn:test:nostatus", None),
+    ] {
+        alerts.push(svr_with_status(id, st));
+    }
+    env.nws.apply_feed(&alerts, None, t0()).await.unwrap();
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "county/MDC031",
+                ZoneStatus::Ok,
+                Some(square(MD[0], MD[1], MD[2], MD[3])),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    let svr = id_of(&alerts, "Severe Thunderstorm Warning", |a| {
+        a.id.starts_with("urn:oid")
+    });
+    let test_msg = id_of(&alerts, "Test Message", |_| true);
+
+    // Everything NWS offers is stored, whatever its status.
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM nws_alerts")
+        .fetch_one(env.catalog.pool())
+        .await
+        .unwrap();
+    assert_eq!(stored as usize, alerts.len());
+    let (px, py): (f64, f64) = sqlx::query_as(
+        "SELECT ST_X(ST_PointOnSurface(geom)), ST_Y(ST_PointOnSurface(geom)) FROM nws_alerts WHERE id = $1",
+    )
+    .bind(&svr)
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap();
+    let md = AlertRegion::Point {
+        lon: (MD[0] + MD[2]) / 2.0,
+        lat: (MD[1] + MD[3]) / 2.0,
+    };
+    let svr_ids = ["urn:test:exercise", "urn:test:draft", "urn:test:system"];
+
+    // Point search: Actual (and status-less) only by default.
+    let point = AlertRegion::Point { lon: px, lat: py };
+    let mut q = search(point.clone(), t0() - Duration::minutes(10));
+    let got = ids(&env.nws.search(&q).await.unwrap());
+    let mut want = vec![svr.clone(), "urn:test:nostatus".to_string()];
+    want.sort();
+    assert_eq!(got, want, "Exercise / Draft / System are hidden by default");
+    q.include_non_actual = true;
+    let got = ids(&env.nws.search(&q).await.unwrap());
+    assert!(
+        svr_ids.iter().all(|i| got.contains(&i.to_string())) && got.contains(&svr),
+        "include_non_actual returns them too: {got:?}"
+    );
+    assert_eq!(got.len(), 5);
+
+    // The county-zone "Test Message" (CAP status Test) is hidden from a point search...
+    let mut q = search(md.clone(), t0() - Duration::minutes(1));
+    assert!(env.nws.search(&q).await.unwrap().is_empty());
+    q.include_non_actual = true;
+    let got = env.nws.search(&q).await.unwrap();
+    assert_eq!(ids(&got), vec![test_msg.clone()]);
+    assert_eq!(got[0].status.as_deref(), Some("Test"));
+
+    // ...and from every other region type and from history windows.
+    let bbox = AlertRegion::Bbox([MD[0] - 0.1, MD[1] - 0.1, MD[2] + 0.1, MD[3] + 0.1]);
+    let poly = AlertRegion::Polygon {
+        wkt: format!(
+            "POLYGON(({w} {s}, {e} {s}, {e} {n}, {w} {n}, {w} {s}))",
+            w = MD[0] - 0.1,
+            s = MD[1] - 0.1,
+            e = MD[2] + 0.1,
+            n = MD[3] + 0.1
+        ),
+    };
+    let radius = AlertRegion::Radius {
+        lon: (MD[0] + MD[2]) / 2.0,
+        lat: (MD[1] + MD[3]) / 2.0,
+        meters: 50_000.0,
+    };
+    for region in [bbox, poly, radius] {
+        let mut q = search(region, t0() - Duration::minutes(1));
+        assert!(
+            env.nws.search(&q).await.unwrap().is_empty(),
+            "{:?}",
+            q.region
+        );
+        q.include_non_actual = true;
+        assert_eq!(
+            ids(&env.nws.search(&q).await.unwrap()),
+            vec![test_msg.clone()]
+        );
+        // history window
+        let mut h = search(q.region.clone(), t0());
+        h.window = Some((t0() - Duration::hours(2), t0()));
+        assert!(env.nws.search(&h).await.unwrap().is_empty());
+        h.include_non_actual = true;
+        assert_eq!(
+            ids(&env.nws.search(&h).await.unwrap()),
+            vec![test_msg.clone()]
+        );
+    }
+
+    // The older single-purpose reads are Actual-only too.
+    assert!(env
+        .nws
+        .active_at_point(
+            md_lonlat().0,
+            md_lonlat().1,
+            t0() - Duration::minutes(1),
+            false
+        )
+        .await
+        .unwrap()
+        .is_empty());
+
+    // An alert by id comes back whatever its status.
+    let one = env.nws.get(&test_msg, false).await.unwrap().unwrap();
+    assert_eq!(one.status.as_deref(), Some("Test"));
+}
+
+fn md_lonlat() -> (f64, f64) {
+    ((MD[0] + MD[2]) / 2.0, (MD[1] + MD[3]) / 2.0)
 }

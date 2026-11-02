@@ -21,6 +21,13 @@ items), `datetime=<instant>` (alerts active at that time; default now), `simplif
 default window the last 24 h; superseded messages hidden unless `include_superseded=true`),
 `limit` (default 500, max 2000; `"truncated": true` when cut).
 
+**Test alerts.** NWS' feed also carries messages whose CAP status is not `Actual` (`Test`,
+`Exercise`, `System`, `Draft`; e.g. the periodic "Test Message"). They are all stored, but every
+list query (`/position`, `/items`, `/area`, `/radius`, history windows included) returns only
+`Actual` ones unless you pass `include_non_actual=true`. A message with no status at all counts as
+`Actual`. `/items/{id}` returns the alert whatever its status. Each feature says which it is in
+`cap_status`.
+
 ## Response
 
 A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
@@ -32,7 +39,7 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   "properties":{"event":"Severe Thunderstorm Warning","severity":"Severe","urgency":"Immediate","certainty":"Observed",
    "color":"#FFA500","headline":"Severe Thunderstorm Warning issued ... until 5:00 PM MST","area":"Bernalillo; Sandoval",
    "sender":"NWS Albuquerque NM","sent":"...","effective":"...","onset":"...","ends":"2026-11-02T00:00:00Z","expires":"...",
-   "status":"active","significance":"warning","action":"NEW","vtec_event":"KABQ.SV.W.0428",
+   "status":"active","cap_status":"Actual","significance":"warning","action":"NEW","vtec_event":"KABQ.SV.W.0428",
    "summary":{"hazard":"60 mph wind gusts.","source":"Radar indicated.","impact":"Expect damage to roofs, siding, and trees."},
    "instruction":"For your protection move to an interior room ...","geometry_source":"polygon",
    "links":[{"rel":"self","href":".../collections/nws-alerts/items/urn%3Aoid%3A2.49.0.1.840.0.937dcb...001.1"},{"rel":"alternate","href":"https://api.weather.gov/alerts/urn:oid:..."}]}}]}
@@ -40,6 +47,7 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
 
 - `status`: `active`, `upcoming` (issued, hazard starts later: label it "Starts 6 PM"), `ended`,
   `superseded` (a newer message replaced it; only seen via `/items/{id}` or `include_superseded`).
+  This is the lifecycle status; the CAP one (`Actual`, `Test`, ...) is `cap_status`.
 - `significance`: `warning` / `watch` / `advisory` / `statement` / `other`. Group updates of one
   event by `vtec_event` (NEW, CON, EXT, UPG share it).
 - `summary` has only the keys present (`what`, `where`, `when`, `impacts`, `hazard`, `source`,

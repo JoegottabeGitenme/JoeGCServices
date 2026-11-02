@@ -175,6 +175,18 @@ fn active_predicate(now_param: &str) -> String {
     )
 }
 
+/// The CAP `status` filter. NWS' feed also carries `Test`, `Exercise`, `System` and `Draft`
+/// messages (e.g. the "Test Message" keepalive); they are all stored, but the reads only show
+/// `Actual` ones unless the caller asks for the rest. A missing status is treated as `Actual`:
+/// hiding a real warning because a field was absent is the worse mistake.
+fn actual_only(include_non_actual: bool) -> &'static str {
+    if include_non_actual {
+        "TRUE"
+    } else {
+        "COALESCE(lower(a.status), 'actual') = 'actual'"
+    }
+}
+
 fn geom_col(with_geometry: bool) -> &'static str {
     if with_geometry {
         "ST_AsGeoJSON(a.geom, 5)"
@@ -228,6 +240,8 @@ pub struct AlertSearch {
     pub with_geometry: bool,
     /// Douglas-Peucker tolerance in degrees applied to returned geometry.
     pub simplify: Option<f64>,
+    /// Also return CAP `status` Test / Exercise / System / Draft messages (default: only `Actual`).
+    pub include_non_actual: bool,
 }
 
 #[derive(Clone)]
@@ -499,7 +513,7 @@ impl NwsAlertCatalog {
         .map_err(db("status read"))
     }
 
-    /// Alerts in force at a point, worst first.
+    /// `Actual` alerts in force at a point, worst first.
     pub async fn active_at_point(
         &self,
         lon: f64,
@@ -509,12 +523,13 @@ impl NwsAlertCatalog {
     ) -> WmsResult<Vec<StoredAlert>> {
         let sql = format!(
             "SELECT {COLS}, {geom} AS geometry_geojson FROM nws_alerts a \
-             WHERE {active} \
+             WHERE {active} AND {actual} \
                AND a.geom && ST_SetSRID(ST_MakePoint($1, $2), 4326) \
                AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($1, $2), 4326)) \
              ORDER BY {SEVERITY_ORDER}",
             geom = geom_col(with_geometry),
             active = active_predicate("$3"),
+            actual = actual_only(false),
         );
         sqlx::query_as(&sql)
             .bind(lon)
@@ -525,7 +540,7 @@ impl NwsAlertCatalog {
             .map_err(db("point query"))
     }
 
-    /// Alerts intersecting a lon/lat box whose life overlaps `[from, to]`.
+    /// `Actual` alerts intersecting a lon/lat box whose life overlaps `[from, to]`.
     /// `active_only` restricts to those in force at `now`; otherwise ended
     /// alerts are included, and superseded messages only if `include_superseded`.
     #[allow(clippy::too_many_arguments)]
@@ -549,13 +564,14 @@ impl NwsAlertCatalog {
         };
         let sql = format!(
             "SELECT {COLS}, {geom} AS geometry_geojson FROM nws_alerts a \
-             WHERE {filter} \
+             WHERE {filter} AND {actual} \
                AND a.geom && ST_MakeEnvelope($1, $2, $3, $4, 4326) \
                AND ST_Intersects(a.geom, ST_MakeEnvelope($1, $2, $3, $4, 4326)) \
                AND COALESCE(a.effective, a.sent) <= $6 \
                AND COALESCE(LEAST(a.end_time, a.ended_at, a.superseded_at), 'infinity'::timestamptz) >= $5 \
              ORDER BY {SEVERITY_ORDER} LIMIT $8",
             geom = geom_col(with_geometry),
+            actual = actual_only(false),
         );
         sqlx::query_as(&sql)
             .bind(bbox[0])
@@ -572,6 +588,7 @@ impl NwsAlertCatalog {
     }
 
     /// Filtered search over a point, box, polygon or radius; worst alerts first.
+    /// Only CAP `Actual` alerts unless `include_non_actual`.
     pub async fn search(&self, q: &AlertSearch) -> WmsResult<Vec<StoredAlert>> {
         let geom = match q.simplify.filter(|t| t.is_finite() && *t > 0.0) {
             Some(tol) if q.with_geometry => {
@@ -610,10 +627,11 @@ impl NwsAlertCatalog {
         };
         let sql = format!(
             "SELECT {COLS}, {geom} AS geometry_geojson FROM nws_alerts a \
-             WHERE {time} AND {region} \
+             WHERE {time} AND {actual} AND {region} \
                AND (cardinality($4::text[]) = 0 OR lower(a.severity) = ANY($4)) \
                AND (cardinality($5::text[]) = 0 OR lower(a.event) = ANY($5)) \
-             ORDER BY {SEVERITY_ORDER} LIMIT $6"
+             ORDER BY {SEVERITY_ORDER} LIMIT $6",
+            actual = actual_only(q.include_non_actual),
         );
         let lower = |v: &[String]| v.iter().map(|s| s.to_lowercase()).collect::<Vec<_>>();
         let (from, to) = match q.window {
