@@ -1,23 +1,64 @@
 //! OpenAPI definition handler.
 
+use std::sync::LazyLock;
+
 use axum::{
+    extract::{rejection::QueryRejection, Query},
     http::{header, StatusCode},
     response::Response,
 };
+use serde::Deserialize;
 
-/// OpenAPI 3.0 specification for the EDR API
+/// OpenAPI 3.0 specification for the EDR API, as written (YAML).
 const OPENAPI_SPEC: &str = include_str!("../openapi.yaml");
 
-/// GET /edr/api - OpenAPI definition
-pub async fn api_handler() -> Response {
+/// Media type of the JSON form, the one the landing page's `service-desc` link advertises.
+const OPENAPI_JSON_TYPE: &str = "application/vnd.oai.openapi+json;version=3.0";
+/// Media type of the YAML form (`?f=yaml`).
+const OPENAPI_YAML_TYPE: &str = "application/vnd.oai.openapi;version=3.0";
+
+/// [`OPENAPI_SPEC`] as JSON, in the document's own order, made once: a client that is told the
+/// answer is `+json` may hand it straight to a JSON parser.
+static OPENAPI_JSON: LazyLock<String> = LazyLock::new(|| {
+    yaml_to_json(OPENAPI_SPEC).expect("openapi.yaml converts to JSON (see the unit test)")
+});
+
+/// The YAML document as compact JSON. Keys keep their order, and a key that is not a string
+/// (an unquoted `200:`) becomes one.
+fn yaml_to_json(yaml: &str) -> Result<String, String> {
+    let value: serde_yaml::Value = serde_yaml::from_str(yaml).map_err(|e| e.to_string())?;
+    serde_json::to_string(&value).map_err(|e| e.to_string())
+}
+
+/// Convert the specification now, so a document that cannot be converted fails the start of the
+/// service, not the first request for it.
+pub fn init() {
+    LazyLock::force(&OPENAPI_JSON);
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ApiQuery {
+    /// `yaml` for the document as written; anything else (`json`, none) is JSON.
+    f: Option<String>,
+}
+
+/// GET /edr/api - OpenAPI definition: JSON (`application/vnd.oai.openapi+json`), or with
+/// `?f=yaml` (`yml`) the YAML source (`application/vnd.oai.openapi`).
+pub async fn api_handler(query: Result<Query<ApiQuery>, QueryRejection>) -> Response {
+    let yaml = query.is_ok_and(|Query(q)| {
+        q.f.as_deref()
+            .is_some_and(|f| f.eq_ignore_ascii_case("yaml") || f.eq_ignore_ascii_case("yml"))
+    });
+    let (content_type, body) = if yaml {
+        (OPENAPI_YAML_TYPE, OPENAPI_SPEC)
+    } else {
+        (OPENAPI_JSON_TYPE, OPENAPI_JSON.as_str())
+    };
     Response::builder()
         .status(StatusCode::OK)
-        .header(
-            header::CONTENT_TYPE,
-            "application/vnd.oai.openapi+json;version=3.0",
-        )
+        .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "max-age=3600")
-        .body(OPENAPI_SPEC.into())
+        .body(body.into())
         .unwrap()
 }
 
@@ -55,7 +96,7 @@ pub async fn api_html_handler() -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{API_HTML, OPENAPI_SPEC};
+    use super::*;
 
     /// A floating CDN version (`redoc/latest`) once blanked this page when Redoc 3 shipped
     /// as an ES module. Keep the bundle pinned.
@@ -69,6 +110,84 @@ mod tests {
             !API_HTML.contains("/latest/"),
             "api.html loads a floating `latest` asset"
         );
+    }
+
+    async fn get(f: Option<&str>) -> (String, String) {
+        let q = ApiQuery {
+            f: f.map(str::to_string),
+        };
+        let r = api_handler(Ok(Query(q))).await;
+        let (parts, body) = r.into_parts();
+        let bytes = axum::body::to_bytes(body, 8 << 20).await.unwrap();
+        (
+            parts.headers[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .to_string(),
+            String::from_utf8(bytes.to_vec()).unwrap(),
+        )
+    }
+
+    /// `/edr/api` said `application/vnd.oai.openapi+json` and sent YAML, so a client that parsed
+    /// it as the type said failed on the first character.
+    #[tokio::test]
+    async fn the_json_type_comes_with_json() {
+        for f in [None, Some("json"), Some("JSON"), Some("html"), Some("")] {
+            let (ty, body) = get(f).await;
+            assert_eq!(ty, "application/vnd.oai.openapi+json;version=3.0", "{f:?}");
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_else(|e| {
+                panic!("{f:?}: not JSON ({e}): {}", &body[..body.len().min(80)])
+            });
+            assert!(v["openapi"].as_str().unwrap().starts_with("3.0"));
+            assert!(v["paths"].is_object() && v["components"].is_object());
+        }
+    }
+
+    #[tokio::test]
+    async fn f_yaml_sends_the_document_as_written_with_the_yaml_type() {
+        for f in ["yaml", "YAML", "yml"] {
+            let (ty, body) = get(Some(f)).await;
+            assert_eq!(ty, "application/vnd.oai.openapi;version=3.0", "{f}");
+            assert_eq!(body, OPENAPI_SPEC, "{f}");
+        }
+        // a query string that does not parse is the default, not an error
+        let r = api_handler(Query::<ApiQuery>::try_from_uri(
+            &"/edr/api?f=a&f=b".parse().unwrap(),
+        ))
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            r.headers()[header::CONTENT_TYPE],
+            "application/vnd.oai.openapi+json;version=3.0"
+        );
+    }
+
+    #[test]
+    fn the_json_is_the_yaml_document_in_its_own_order() {
+        init();
+        let from_json: serde_json::Value = serde_json::from_str(&OPENAPI_JSON).unwrap();
+        let from_yaml: serde_json::Value = serde_yaml::from_str(OPENAPI_SPEC).unwrap();
+        assert_eq!(from_json, from_yaml, "nothing lost or changed");
+        // the response codes are quoted in the file, and strings in the JSON
+        let responses = &from_json["paths"]["/collections/{collectionId}/items/{featureId}"]["get"]
+            ["responses"];
+        assert!(responses["200"].is_object(), "{responses}");
+        // the document's own order: `openapi` first, not sorted away
+        assert!(
+            OPENAPI_JSON.starts_with(r#"{"openapi":"3.0"#),
+            "{}",
+            &OPENAPI_JSON[..40]
+        );
+    }
+
+    #[test]
+    fn yaml_keys_that_are_not_strings_become_strings() {
+        let json = yaml_to_json("responses:\n  200:\n    description: ok\n  404:\n    description: no\nflag:\n  true: 1\n").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["responses"]["200"]["description"], "ok");
+        assert_eq!(v["responses"]["404"]["description"], "no");
+        assert_eq!(v["flag"]["true"], 1);
+        assert!(yaml_to_json("a: [").is_err());
     }
 
     /// The served OpenAPI spec once had no mention of the trails collection
