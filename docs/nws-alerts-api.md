@@ -39,7 +39,13 @@ disables). Without `simplify`, `/items`, `/area` and `/radius` simplify the geom
 about a pixel of a 1500 px wide view of the query's extent (the bbox, the polygon's bounding box, the
 circle), at most 0.05 degrees, so a CONUS view or a continent-sized area stays small (every alert
 in the country is 1-2 MB, instead of tens); `/position` returns the full geometry unless you give a
-`simplify`.
+`simplify`. `simplify` is a Douglas-Peucker tolerance in degrees: the returned outline stays
+within about that distance of the full-resolution one. Every part of an alert stays, however small
+the alert: a part (or a whole alert, such as a tornado warning on a continent view) smaller than
+the tolerance is kept, as little as a triangle, not dropped. A hole smaller than the tolerance is
+filled in. A tolerance of 0.00001 or less (the 5 decimals the coordinates are rounded to) is the
+same as `0`. The simplified geometry is as valid as the full one at any tolerance (see `geometry`
+under [Response](#response)).
 `/items` also takes `status=active|all` (with `all`, `datetime=from/to` returns history,
 default window the last 24 h; superseded messages hidden unless `include_superseded=true`),
 `limit` (default 500, max 2000; `"truncated": true` when cut).
@@ -242,7 +248,13 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   coordinates are rounded to 5 decimals (about a metre), and it is valid as returned (OGC simple
   features: no hole outside its shell, nested shells or self-intersection), whatever `simplify`
   did to it or the rounding would have done to a thin zone, so a client may hand it straight to a
-  geometry library. A part smaller than a metre is dropped.
+  geometry library, also a recent one (GEOS 3.10 and later, shapely 2, JTS) that checks for nested
+  shells: a part that simplification left inside another part, such as an island that a coastal
+  zone's outline was simplified across, is merged into it. A part smaller than a metre is dropped.
+  The rings follow the right-hand rule of RFC 7946 section 3.1.6: every exterior ring runs
+  counter-clockwise and every hole clockwise, whichever way NWS drew its polygon. (Earlier versions
+  returned the unions of zones with clockwise exterior rings. A client that relied on that, d3-geo
+  for one, which wants clockwise exterior rings on the sphere, has to `rewind` the geometry now.)
 - `geometry_source`: `polygon` (NWS sent one), `zones` (union of the alert's zones), `pending` (some
   zones not fetched yet), `none` (no usable geometry: the zones have none, or the database rejected
   the polygon and there were no zones to fall back on). A polygon the database rejects never costs
