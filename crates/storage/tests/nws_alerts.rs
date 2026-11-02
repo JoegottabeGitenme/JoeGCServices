@@ -291,6 +291,20 @@ async fn zone_only_alerts_get_geometry_as_zones_arrive_and_point_query_finds_the
         .collect();
     env.nws.upsert_zones(&recs, t0()).await.unwrap();
     assert_eq!(source_of(&env, &gale).await, ("none".into(), false));
+    // ...and is not stuck there: when one of its zones later comes back with geometry (the 24 h
+    // retry after a 404), the alert picks it up.
+    env.nws
+        .upsert_zones(
+            &[zone(
+                &gale_zones[0],
+                ZoneStatus::Ok,
+                Some(square(-125.0, 40.0, -124.0, 41.0)),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(source_of(&env, &gale).await, ("zones".into(), true));
     // A 404 on a refresh never wipes a zone we already hold.
     env.nws
         .upsert_zones(&[zone("forecast/COZ068", ZoneStatus::NotFound, None)], t0())
