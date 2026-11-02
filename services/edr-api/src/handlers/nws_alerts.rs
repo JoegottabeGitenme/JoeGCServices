@@ -226,7 +226,9 @@ fn common_properties(
     p.insert("sent".into(), opt_ts(a.sent));
     p.insert("effective".into(), opt_ts(a.effective));
     p.insert("onset".into(), opt_ts(a.onset));
-    p.insert("ends".into(), opt_ts(a.end_time));
+    // NWS' own: null when NWS gave none ("until further notice"). The lifecycle uses `end_time`
+    // (`ends`, else `expires`), so such an alert is over at `expires`.
+    p.insert("ends".into(), opt_ts(a.ends));
     p.insert("expires".into(), opt_ts(a.expires));
     p.insert("status".into(), json!(alert_status(a, now)));
     // The CAP status: Actual, or Test / Exercise / System / Draft (only returned on request).
@@ -1307,6 +1309,7 @@ mod tests {
         assert_eq!(p["status"], "active");
         assert_eq!(p["summary"]["hazard"], "60 mph wind gusts.");
         assert_eq!(p["ends"], "2026-11-02T00:00:00Z");
+        assert_eq!(p["expires"], "2026-11-02T00:00:00Z");
         assert!(p["instruction"].as_str().unwrap().len() <= INSTRUCTION_MAX + 3);
         assert_eq!(
             p["links"][0]["href"],
@@ -1327,6 +1330,28 @@ mod tests {
         ] {
             assert!(p.get(k).is_none(), "{k} must not be in the compact shape");
         }
+    }
+
+    #[test]
+    fn ends_is_what_nws_gave_and_null_when_it_gave_none() {
+        // The avalanche advisories have no `ends`, only an `expires`.
+        let a = by_event("Avalanche Advisory");
+        assert!(a.ends.is_none());
+        let expires = a.expires.unwrap();
+        for f in [compact_feature(&a, t0(), ""), full_feature(&a, t0(), "")] {
+            let p = &f["properties"];
+            assert!(p["ends"].is_null(), "not the message expiry: {}", p["ends"]);
+            assert_eq!(p["expires"], ts(expires));
+        }
+        // the lifecycle still ends it at `expires` ("ends, else expires")
+        assert_eq!(alert_status(&a, expires - Duration::seconds(1)), "active");
+        assert_eq!(alert_status(&a, expires), "ended");
+        // and an alert that has an `ends` reports it, whatever `expires` says
+        let mut b = by_event("Severe Thunderstorm Warning");
+        b.expires = Some(b.ends.unwrap() + Duration::hours(1));
+        let p = compact_feature(&b, t0(), "")["properties"].clone();
+        assert_eq!(p["ends"], ts(b.ends.unwrap()));
+        assert_eq!(p["expires"], ts(b.expires.unwrap()));
     }
 
     #[test]

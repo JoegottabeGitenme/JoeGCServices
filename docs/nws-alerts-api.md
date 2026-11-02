@@ -34,7 +34,7 @@ flags. A message is returned when, at the instant:
   11:00 by an update with a smaller polygon is still returned at 10:59 for a point only its old
   polygon covered, and not at 11:00;
 - it had not ended: the poll that first no longer listed it had not happened yet;
-- its end time (`ends`, else `expires`) had not been reached. The end is exclusive: an alert
+- its end time (NWS' `ends`, else `expires`) had not been reached. The end is exclusive: an alert
   ending at 18:00 is not in force at 18:00.
 
 So an alert issued after the instant is never returned, and one that was in force then is returned
@@ -104,6 +104,12 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
    "links":[{"rel":"self","href":".../collections/nws-alerts/items/urn%3Aoid%3A2.49.0.1.840.0.937dcb...001.1"},{"rel":"alternate","href":"https://api.weather.gov/alerts/urn:oid:..."}]}}]}
 ```
 
+- `ends` is the end time NWS gave the hazard, `null` when it gave none (an "until further notice"
+  Flood Warning, the Colorado avalanche advisories, some statements). `expires` is when the message
+  itself expires and is always there. An alert with a null `ends` is in force until NWS re-issues
+  it or stops listing it, and is treated as over at `expires` if neither happens first (its
+  `status` becomes `ended` then): show `expires` as the latest it can last, not as a forecast end
+  of the hazard.
 - `status`: `active`, `upcoming` (issued, hazard starts later: label it "Starts 6 PM"), `ended`,
   `superseded` (a newer message replaced it; only seen via `/items/{id}` or `include_superseded`).
   As of now, or as of the request's `datetime` instant (see above). This is the lifecycle status;
@@ -137,7 +143,7 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
 
 ## Lifecycle notes
 
-- An alert is in force from issue until its end time (`ends`, else `expires`), unless NWS stops
+- An alert is in force from issue until its end time (NWS' `ends`, else `expires`), unless NWS stops
   listing it, a newer message replaces it, or it is a cancellation (`messageType: Cancel` or a VTEC
   `CAN` action). A VTEC `EXP` message ("will expire at ...") is **not** over when it arrives: it
   stays in force until its end time.
