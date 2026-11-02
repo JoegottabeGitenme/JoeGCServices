@@ -202,6 +202,24 @@ impl Collection {
                 .with_title("Locations"),
         );
     }
+
+    /// Standard links for a feature collection that is read through its own `/items`: the links
+    /// of [`Self::build_links`], except that `rel="items"` points at `{collection}/items` and
+    /// there is no `instances` link (no model runs) and no `locations` one (the generic named
+    /// locations hold none of this collection's features, so their URLs are 404s).
+    pub fn build_items_links(&mut self, base_url: &str) {
+        let collection_url = format!("{}/collections/{}", base_url, self.id);
+        self.links = vec![
+            Link::new(&collection_url, "self").with_type("application/json"),
+            Link::new(&collection_url, "collection")
+                .with_type("application/json")
+                .with_title("This collection"),
+            Link::new(base_url, "root").with_type("application/json"),
+            Link::new(format!("{}/items", collection_url), "items")
+                .with_type("application/geo+json")
+                .with_title("Items"),
+        ];
+    }
 }
 
 /// Supported data query types for a collection.
@@ -245,6 +263,11 @@ fn default_output_formats() -> Vec<String> {
         "application/geo+json".to_string(),
         "GeoJSON".to_string(),
     ]
+}
+
+/// Output formats of a collection that only returns GeoJSON.
+pub fn geojson_output_formats() -> Vec<String> {
+    vec!["application/geo+json".to_string(), "GeoJSON".to_string()]
 }
 
 /// Output formats for locations queries.
@@ -375,6 +398,28 @@ impl DataQueries {
                 ]),
             }),
         });
+        self
+    }
+
+    /// Advertise GeoJSON as the only output format of every query added so far, for a collection
+    /// that never answers in CoverageJSON: link type `application/geo+json` and the output formats
+    /// `application/geo+json` and the `GeoJSON` short form (see [`default_output_formats`]).
+    pub fn geojson_only(mut self) -> Self {
+        let queries = [
+            &mut self.position,
+            &mut self.area,
+            &mut self.cube,
+            &mut self.trajectory,
+            &mut self.corridor,
+            &mut self.radius,
+            &mut self.locations,
+        ];
+        for q in queries.into_iter().flatten() {
+            q.link.type_ = Some("application/geo+json".to_string());
+            if let Some(v) = q.link.variables.as_mut() {
+                v.output_formats = Some(geojson_output_formats());
+            }
+        }
         self
     }
 
@@ -571,6 +616,54 @@ mod tests {
         assert!(collection.links.iter().any(|l| l.rel == "self"));
         assert!(collection.links.iter().any(|l| l.rel == "collection")); // OGC EDR requirement
         assert!(collection.links.iter().any(|l| l.rel == "instances"));
+    }
+
+    #[test]
+    fn items_links_point_at_items_and_advertise_no_instances_or_locations() {
+        let mut c = Collection::new("nws-alerts");
+        c.build_items_links("http://localhost:8083/edr");
+        let href = |rel: &str| {
+            c.links
+                .iter()
+                .find(|l| l.rel == rel)
+                .map(|l| l.href.as_str())
+        };
+        assert_eq!(
+            href("items"),
+            Some("http://localhost:8083/edr/collections/nws-alerts/items")
+        );
+        assert_eq!(
+            href("self"),
+            Some("http://localhost:8083/edr/collections/nws-alerts")
+        );
+        assert!(href("collection").is_some() && href("root").is_some()); // OGC EDR requirement
+        assert!(href("instances").is_none());
+        assert!(c.links.iter().all(|l| !l.href.contains("/locations")));
+        let items = c.links.iter().find(|l| l.rel == "items").unwrap();
+        assert_eq!(items.type_.as_deref(), Some("application/geo+json"));
+    }
+
+    #[test]
+    fn geojson_only_replaces_the_coveragejson_advertising() {
+        let q = DataQueries::with_position("http://x/edr", "alerts")
+            .with_area("http://x/edr", "alerts")
+            .with_radius("http://x/edr", "alerts")
+            .geojson_only();
+        for d in [&q.position, &q.area, &q.radius] {
+            let link = &d.as_ref().unwrap().link;
+            assert_eq!(link.type_.as_deref(), Some("application/geo+json"));
+            assert_eq!(
+                link.variables.as_ref().unwrap().output_formats,
+                Some(vec!["application/geo+json".into(), "GeoJSON".into()])
+            );
+        }
+        assert!(q.position.unwrap().link.href.ends_with("/alerts/position"));
+        // queries that were not added stay absent
+        assert!(q.cube.is_none() && q.locations.is_none());
+        // the default stays CoverageJSON for everyone else
+        let d = DataQueries::with_position("http://x/edr", "gfs");
+        let link = d.position.unwrap().link;
+        assert_eq!(link.type_.as_deref(), Some("application/vnd.cov+json"));
     }
 
     #[test]

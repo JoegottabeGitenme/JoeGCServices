@@ -97,7 +97,13 @@ paths:
     get:
       operationId: getCollection
       summary: Get collection metadata
-      description: Returns metadata about a specific collection
+      description: |
+        Returns metadata about a specific collection.
+
+        **`nws-alerts`**: advertises GeoJSON only (`application/geo+json`; there is no
+        CoverageJSON), an `items` link to `/collections/nws-alerts/items` and no `instances` or
+        `locations` links. The `description` ends with the live data age (the cached
+        `/collections` list has none). `Cache-Control: public, max-age=60`.
       parameters:
         - $ref: '#/components/parameters/collectionId'
       responses:

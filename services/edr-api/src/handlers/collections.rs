@@ -597,6 +597,8 @@ pub async fn build_collections_list_json(state: &Arc<AppState>) -> Option<String
                         &collection_def.id,
                         &coll_def.title,
                         &coll_def.description,
+                        // the list is cached: a relative age would be wrong by the time it is read
+                        false,
                     )
                     .await,
                 );
@@ -948,12 +950,16 @@ pub async fn get_collection_handler(
                 &collection_def.id,
                 &collection_def.title,
                 &collection_def.description,
+                true,
             )
             .await;
             return Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/json")
-                .header(header::CACHE_CONTROL, "max-age=60")
+                .header(
+                    header::CACHE_CONTROL,
+                    crate::handlers::nws_alerts::CACHE_CONTROL,
+                )
                 .body(
                     serde_json::to_string_pretty(&doc)
                         .unwrap_or_default()
