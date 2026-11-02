@@ -572,14 +572,22 @@ mod tests {
     /// Everything [`parse_feature`] makes of the fixture, hashed. It changes when the parsers do
     /// (or a field is added to [`ParsedAlert`], or the fixture changes), and then the alerts
     /// already stored are derived the old way: bump [`DERIVATION_VERSION`] so that the next poll
-    /// rewrites them, and set the new digest here.
+    /// rewrites them, and set the new digest here. Hashed with sorted keys, like [`feature_hash`],
+    /// and with `geometry_json` read back as JSON: map order (plain `to_string`, and the
+    /// geometry string) depends on whether serde_json's `preserve_order` is on, which zarrs
+    /// turns on in workspace builds but not in `-p storage` ones.
     #[test]
     fn parser_output_is_pinned_to_the_derivation_version() {
-        const PINNED: &str = "ab928b486060233f2094c1fd26c60fc62bec1fb3f3c8ebd5d18a3ffb603d45fd";
-        let digest: String = Sha256::digest(serde_json::to_string(&parsed()).unwrap())
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        const PINNED: &str = "d241b97ed52314e60cdbc0257c86aa3fcc76f92c0b6896539e845f5eed35e730";
+        let mut out = serde_json::to_value(parsed()).unwrap();
+        for a in out.as_array_mut().unwrap() {
+            if let Some(g) = a["geometry_json"].as_str() {
+                a["geometry_json"] = serde_json::from_str(g).unwrap();
+            }
+        }
+        let mut h = Sha256::new();
+        hash_canonical(&out, &mut h);
+        let digest: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(
             digest, PINNED,
             "what parse_feature makes of the fixture changed: bump DERIVATION_VERSION (now {DERIVATION_VERSION}) \
