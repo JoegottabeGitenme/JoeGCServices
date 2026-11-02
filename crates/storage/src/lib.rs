@@ -31,7 +31,7 @@ pub use lightning::{FlashArea, FlashQuery, LightningCatalog, NewFlash, StoredFla
 pub use linear_features::{LinearFeature, LinearFeatureCatalog, LinearFeatureItem};
 pub use nws_alerts::{
     AlertRegion, AlertSearch, FeedStatus, NwsAlertCatalog, ParsedAlert, StoredAlert, ZoneRecord,
-    ZoneStatus,
+    ZoneStatus, ZonesResult,
 };
 pub use observations::{
     Location, Observation, ObservationCatalog, ObservationInsertResult, ObservationQuery,

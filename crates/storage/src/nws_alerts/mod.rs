@@ -17,7 +17,7 @@ pub mod vtec;
 
 pub use catalog::{
     AlertRegion, AlertSearch, ApplyResult, FeedStatus, NwsAlertCatalog, StoredAlert, ZoneRecord,
-    ZoneStatus,
+    ZoneStatus, ZonesResult,
 };
 pub use lifecycle::GeometrySource;
 pub use vtec::{parse_vtec, Vtec};

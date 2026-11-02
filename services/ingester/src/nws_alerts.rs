@@ -51,6 +51,10 @@ pub struct NwsAlertsIngestResponse {
     pub superseded: u64,
     pub ended: u64,
     pub missing_zones: Vec<String>,
+    /// Alerts stored without their own polygon because the database rejected it.
+    pub geometry_rejected: usize,
+    /// Alerts the database rejected outright (skipped).
+    pub failed: usize,
 }
 
 fn fail(status: StatusCode, msg: impl Into<String>) -> (StatusCode, Json<NwsAlertsIngestResponse>) {
@@ -143,6 +147,9 @@ pub async fn ingest_nws_alerts_handler(
                 ended = r.ended,
                 missing_zones = r.missing_zones.len(),
                 parse_errors,
+                geometry_rejected = r.geometry_rejected,
+                failed = r.failed,
+                geometry_failed = r.geometry_failed,
                 "NWS alerts applied"
             );
             (
@@ -155,6 +162,8 @@ pub async fn ingest_nws_alerts_handler(
                     superseded: r.superseded,
                     ended: r.ended,
                     missing_zones: r.missing_zones,
+                    geometry_rejected: r.geometry_rejected,
+                    failed: r.failed,
                 }),
             )
         }
@@ -195,6 +204,10 @@ pub struct NwsZonesIngestResponse {
     pub message: String,
     pub zones_stored: usize,
     pub alerts_updated: u64,
+    /// Zones whose geometry the database rejected (stored without it).
+    pub zones_invalid_geometry: usize,
+    /// Zones the database rejected outright (skipped; they will be asked for again).
+    pub zones_failed: usize,
 }
 
 fn valid_zone_key(k: &str) -> bool {
@@ -222,6 +235,8 @@ pub async fn ingest_nws_zones_handler(
                 message: "NWS alert catalog not configured".into(),
                 zones_stored: 0,
                 alerts_updated: 0,
+                zones_invalid_geometry: 0,
+                zones_failed: 0,
             }),
         );
     };
@@ -255,15 +270,27 @@ pub async fn ingest_nws_zones_handler(
         .collect();
 
     match catalog.upsert_zones(&zones, Utc::now()).await {
-        Ok(updated) => (
-            StatusCode::OK,
-            Json(NwsZonesIngestResponse {
-                success: true,
-                message: format!("Stored {} zones", zones.len()),
-                zones_stored: zones.len(),
-                alerts_updated: updated,
-            }),
-        ),
+        Ok(r) => {
+            if r.invalid_geometry > 0 || r.failed > 0 || r.alerts_failed > 0 {
+                warn!(
+                    invalid_geometry = r.invalid_geometry,
+                    failed = r.failed,
+                    alerts_failed = r.alerts_failed,
+                    "NWS zones stored with problems"
+                );
+            }
+            (
+                StatusCode::OK,
+                Json(NwsZonesIngestResponse {
+                    success: true,
+                    message: format!("Stored {} zones", r.stored),
+                    zones_stored: r.stored,
+                    alerts_updated: r.alerts_updated,
+                    zones_invalid_geometry: r.invalid_geometry,
+                    zones_failed: r.failed,
+                }),
+            )
+        }
         Err(e) => {
             error!(error = %e, "NWS zone ingest failed");
             (
@@ -273,6 +300,8 @@ pub async fn ingest_nws_zones_handler(
                     message: e.to_string(),
                     zones_stored: 0,
                     alerts_updated: 0,
+                    zones_invalid_geometry: 0,
+                    zones_failed: 0,
                 }),
             )
         }
@@ -396,20 +425,29 @@ mod tests {
         )
     }
 
-    /// The downloader's whole conversation with the ingester: a feed, the zones it
-    /// asks for, a 304, an error report, and an empty feed that must be refused.
-    ///
-    /// ```text
-    /// cargo test -p ingester -- --ignored nws_alerts::tests::http
-    /// ```
-    #[tokio::test]
-    #[ignore = "requires Docker"]
-    async fn http_feed_then_zones_then_not_modified_then_errors() {
-        let infra = test_utils::containers::TestInfrastructure::start().await;
-        let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+    /// The router over a real PostGIS: the Docker test containers, or the database in
+    /// `NWS_TEST_DATABASE_URL` when set.
+    async fn setup() -> (
+        axum::Router,
+        NwsAlertCatalog,
+        Catalog,
+        Option<test_utils::containers::TestInfrastructure>,
+    ) {
+        let (url, infra) = match std::env::var("NWS_TEST_DATABASE_URL") {
+            Ok(url) => (url, None),
+            Err(_) => {
+                let infra = test_utils::containers::TestInfrastructure::start().await;
+                (infra.postgres_url(), Some(infra))
+            }
+        };
+        let catalog = Catalog::connect(&url).await.unwrap();
         catalog.migrate().await.unwrap();
         catalog.migrate_observations().await.unwrap();
         catalog.migrate_nws_alerts().await.unwrap();
+        sqlx::query("TRUNCATE nws_alerts, nws_zones, nws_alerts_status")
+            .execute(catalog.pool())
+            .await
+            .unwrap();
         let storage = Arc::new(
             ObjectStorage::new(&ObjectStorageConfig {
                 endpoint: "http://127.0.0.1:1".to_string(),
@@ -431,7 +469,75 @@ mod tests {
             nws_alert_catalog: Some(nws.clone()),
             tracker: crate::server::IngestionTracker::new(),
         });
-        let router = build_router(state);
+        (build_router(state), nws, catalog, infra)
+    }
+
+    /// One alert whose polygon makes PostGIS raise, and a zone batch with one such zone, are
+    /// stored around, not refused: the answer is 200 (so the downloader keeps its ETag and goes on
+    /// to the next zone batch).
+    ///
+    /// ```text
+    /// cargo test -p ingester --bin ingester -- --ignored nws_alerts::tests::http_bad
+    /// ```
+    #[tokio::test]
+    #[ignore = "requires Docker"]
+    async fn http_bad_geometry_in_a_feed_or_zone_batch_is_stored_around() {
+        let (router, nws, _catalog, _infra) = setup().await;
+        let feed: serde_json::Value = serde_json::from_str(FIXTURE).unwrap();
+        let mut features = feed["features"].as_array().unwrap().clone();
+        let n = features.len();
+        let mut bad = features
+            .iter()
+            .find(|f| f["properties"]["event"] == "Severe Thunderstorm Warning")
+            .unwrap()
+            .clone();
+        bad["properties"]["id"] = serde_json::json!("urn:test:bad-polygon");
+        bad["geometry"] = serde_json::json!({"type": "Polygon", "coordinates": "not an array"});
+        features.push(bad);
+
+        let (st, body) = post(
+            &router,
+            "/ingest/nws-alerts",
+            serde_json::json!({"features": features, "feed_updated": feed["updated"]}),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["received"], n + 1);
+        assert_eq!(body["geometry_rejected"], 1);
+        assert_eq!(body["failed"], 0);
+        let status = nws.status().await.unwrap().unwrap();
+        assert!(status.last_success_at.is_some() && status.last_error.is_none());
+        assert_eq!(status.last_alert_count, Some(n as i32 + 1));
+        let stored = nws
+            .get("urn:test:bad-polygon", false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(stored.ended_at.is_none());
+
+        let (st, body) = post(&router, "/ingest/nws-zones", serde_json::json!({"zones": [
+            {"zone_key": "forecast/COZ068", "status": "ok",
+             "geometry": {"type": "Polygon", "coordinates": [[[-107.5,37.0],[-106.5,37.0],[-106.5,38.0],[-107.5,38.0],[-107.5,37.0]]]}},
+            {"zone_key": "county/MDC031", "status": "ok",
+             "geometry": {"type": "Polygon", "coordinates": "not an array"}},
+        ]})).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["zones_stored"], 2);
+        assert_eq!(body["zones_invalid_geometry"], 1);
+        assert_eq!(body["zones_failed"], 0);
+        assert!(body["alerts_updated"].as_u64().unwrap() >= 1);
+    }
+
+    /// The downloader's whole conversation with the ingester: a feed, the zones it
+    /// asks for, a 304, an error report, and an empty feed that must be refused.
+    ///
+    /// ```text
+    /// cargo test -p ingester -- --ignored nws_alerts::tests::http
+    /// ```
+    #[tokio::test]
+    #[ignore = "requires Docker"]
+    async fn http_feed_then_zones_then_not_modified_then_errors() {
+        let (router, nws, catalog, _infra) = setup().await;
 
         let feed: serde_json::Value = serde_json::from_str(FIXTURE).unwrap();
         let n = feed["features"].as_array().unwrap().len();

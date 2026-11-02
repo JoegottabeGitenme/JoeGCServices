@@ -33,6 +33,8 @@ const DEFAULT_USER_AGENT: &str = "FolkWeather (folkweather.com, support@folkweat
 const ACCEPT_GEOJSON: &str = "application/geo+json";
 /// Zones posted to the ingester per request.
 const ZONE_POST_BATCH: usize = 25;
+/// After this many refused single-zone retries in a row, stop retrying the rest of the batch.
+const ZONE_RETRY_GIVE_UP: usize = 3;
 /// How long the zone worker sleeps when nothing nudges it.
 const ZONE_IDLE_WAKE: Duration = Duration::from_secs(60);
 
@@ -306,7 +308,6 @@ impl NwsAlertsRunner {
             "Fetching NWS zones"
         );
         let mut posted = 0usize;
-        let mut result = Ok(());
         for group in keys.chunks(ZONE_POST_BATCH) {
             let fetched: Vec<Option<Value>> = stream::iter(group.iter().cloned())
                 .map(|k| async move { self.fetch_zone(&k).await })
@@ -315,23 +316,58 @@ impl NwsAlertsRunner {
                 .await;
             let zones: Vec<Value> = fetched.into_iter().flatten().collect();
             if !zones.is_empty() {
-                match self
-                    .post_ingester("/ingest/nws-zones", &json!({ "zones": zones }))
-                    .await
-                {
-                    Ok(_) => posted += zones.len(),
-                    Err(e) => {
-                        result = Err(e);
-                        self.zones.done(group);
-                        break;
-                    }
-                }
+                posted += self.post_zones(&zones).await;
             }
             self.zones.done(group);
         }
-        // Anything not reached (error mid-way) is simply asked for again by the next poll.
+        // Anything the ingester refused is simply asked for again by a later poll.
         self.zones.done(&keys);
-        result.map(|_| posted)
+        Ok(posted)
+    }
+
+    /// Post one batch of fetched zones; returns how many the ingester accepted.
+    ///
+    /// A batch it refuses is retried zone by zone, so one zone it cannot take (it should store
+    /// those itself, but it is the ingester's database) never costs the rest of the batch, and the
+    /// caller goes on to the next batch either way: keys come out of a sorted set, so giving up
+    /// on the first failure would hit the same batch again every cycle and starve every later one.
+    /// A run of failures in a row means the ingester itself is down: stop retrying one by one.
+    async fn post_zones(&self, zones: &[Value]) -> usize {
+        let err = match self
+            .post_ingester("/ingest/nws-zones", &json!({ "zones": zones }))
+            .await
+        {
+            Ok(_) => return zones.len(),
+            Err(e) => e,
+        };
+        warn!(source = "nws_alerts", zones = zones.len(), error = %err, "Ingester refused a zone batch; retrying its zones one at a time");
+        if zones.len() == 1 {
+            return 0;
+        }
+        let (mut posted, mut consecutive_failures) = (0usize, 0usize);
+        for z in zones {
+            if consecutive_failures >= ZONE_RETRY_GIVE_UP {
+                warn!(
+                    source = "nws_alerts",
+                    "Ingester keeps refusing zones; leaving the rest of this batch for a later poll"
+                );
+                break;
+            }
+            match self
+                .post_ingester("/ingest/nws-zones", &json!({ "zones": [z] }))
+                .await
+            {
+                Ok(_) => {
+                    posted += 1;
+                    consecutive_failures = 0;
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+                    warn!(source = "nws_alerts", zone = %z["zone_key"], error = %e, "Ingester refused a zone");
+                }
+            }
+        }
+        posted
     }
 
     /// `None` = transient failure (retried on a later poll); `Some` = a result to store.
@@ -689,6 +725,75 @@ mod tests {
         // in-flight bookkeeping is cleared, so a later poll can ask for the flaky one again
         runner.zones.add(["forecast/FLAKY1".to_string()]);
         assert_eq!(runner.zones.pending_len(), 1);
+    }
+
+    /// Zones are posted in batches of `ZONE_POST_BATCH`. The first batch holds a zone the
+    /// ingester chokes on (the whole request fails): that must not keep the later batches from
+    /// being posted, now or on every later cycle.
+    #[tokio::test]
+    async fn a_zone_batch_the_ingester_refuses_does_not_stop_the_later_batches() {
+        use wiremock::matchers::{body_string_contains, path_regex};
+        let nws = MockServer::start().await;
+        let ing = MockServer::start().await;
+        let square = json!({"type":"Feature","geometry":{"type":"Polygon","coordinates":[[[-1.0,-1.0],[1.0,-1.0],[1.0,1.0],[-1.0,1.0],[-1.0,-1.0]]]},
+            "properties":{"name":"z","state":"CO","type":"public"}});
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/zones/forecast/Z\d+$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(square))
+            .mount(&nws)
+            .await;
+        // any request that carries the poison zone is refused...
+        Mock::given(method("POST"))
+            .and(path("/ingest/nws-zones"))
+            .and(body_string_contains("forecast/Z003"))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(1)
+            .mount(&ing)
+            .await;
+        // ...everything else is accepted
+        Mock::given(method("POST"))
+            .and(path("/ingest/nws-zones"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+            .with_priority(2)
+            .mount(&ing)
+            .await;
+
+        let runner = NwsAlertsRunner::new(cfg(&nws, &ing)).unwrap();
+        let keys: Vec<String> = (0..60).map(|i| format!("forecast/Z{i:03}")).collect();
+        runner.zones.add(keys.clone());
+        let posted = runner
+            .process_zone_queue()
+            .await
+            .expect("a refused batch is not an error for the cycle");
+        assert_eq!(posted, 59, "everything but the poison zone was accepted");
+
+        let accepted: BTreeSet<String> = ing
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == "/ingest/nws-zones")
+            .filter(|r| !String::from_utf8_lossy(&r.body).contains("forecast/Z003"))
+            .flat_map(|r| {
+                let b: Value = serde_json::from_slice(&r.body).unwrap();
+                b["zones"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|z| z["zone_key"].as_str().unwrap().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let want: BTreeSet<String> = keys.into_iter().filter(|k| k != "forecast/Z003").collect();
+        assert_eq!(
+            accepted, want,
+            "later batches and the rest of the first one got through"
+        );
+        // nothing is stuck in flight: the next poll can ask for any of them again
+        runner
+            .zones
+            .add(["forecast/Z003".to_string(), "forecast/Z030".to_string()]);
+        assert_eq!(runner.zones.pending_len(), 2);
     }
 
     #[test]

@@ -59,4 +59,11 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   `meta.last_error` appears when a poll has failed since the last success.
 - Every response: `Cache-Control: public, max-age=60`.
 - Alerts that NWS gave only zone codes get their geometry once the zones are fetched
-  (`geometry_source: pending` until then; such an alert does not match point queries yet).
+  (`geometry_source: pending` until then; such an alert does not match point queries yet, or only
+  where the zones fetched so far cover it).
+- `geometry_source`: `polygon` (NWS sent one), `zones` (union of the alert's zones), `pending` (some
+  zones not fetched yet), `none` (no usable geometry: the zones have none, or the database rejected
+  the polygon and there were no zones to fall back on). A polygon the database rejects never costs
+  the alert or the rest of the feed: it is stored without its own polygon and uses its zones. The
+  same goes for a zone whose geometry is rejected (it is kept as `invalid_geometry` and retried
+  after a day).
