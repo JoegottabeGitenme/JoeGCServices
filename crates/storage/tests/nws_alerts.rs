@@ -1375,6 +1375,22 @@ async fn an_older_feed_counts_as_a_poll_but_changes_no_alert() {
     );
     assert_eq!(st.last_alert_count, Some(alerts.len() as i32));
 
+    // An empty feed is a fault, never a poll that counts, stale or not.
+    let r = env
+        .nws
+        .apply_feed(
+            &[],
+            Some(fresh - Duration::minutes(3)),
+            t1 + Duration::seconds(30),
+        )
+        .await
+        .unwrap();
+    assert!(!r.stale_ignored);
+    assert_eq!(
+        env.nws.status().await.unwrap().unwrap().last_success_at,
+        Some(t1)
+    );
+
     // The same stamp is processed normally (a 200 with unchanged `updated` is still a real answer).
     let t2 = t0() + Duration::minutes(2);
     let r = env.nws.apply_feed(&old, Some(fresh), t2).await.unwrap();

@@ -15,6 +15,16 @@
 //! those and hands them to [`NwsAlertCatalog::upsert_zones`], which fills in the
 //! alerts' geometry. Until then `geometry_source = 'pending'` (and `geom` holds
 //! the union of whatever zones are known, possibly NULL).
+//!
+//! ## Concurrency and bad rows
+//!
+//! Two writers touch alert geometry: feed polls ([`NwsAlertCatalog::apply_feed`]) and zone
+//! batches ([`NwsAlertCatalog::upsert_zones`]). Both take [`NWS_WRITE_LOCK_KEY`] (a
+//! transaction-scoped advisory lock) first, so each sees what the other committed. Inside their
+//! transaction every alert, every zone and every geometry recomputation runs under its own
+//! savepoint: a row the database rejects (a polygon PostGIS cannot parse, a union GEOS cannot
+//! compute) is stored without the offending geometry or skipped and counted, never allowed to
+//! abort the poll or the batch (see `ApplyResult` / `ZonesResult`).
 
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
@@ -322,7 +332,7 @@ impl NwsAlertCatalog {
         // (they are "no longer listed") and revert updates. The answer is still a valid reply, so
         // the poll counts as a success (data age keeps moving), but it changes no alert. Equal
         // stamps are processed normally; a feed without a (parseable) stamp always is.
-        if let Some(incoming) = feed_updated {
+        if let Some(incoming) = feed_updated.filter(|_| !alerts.is_empty()) {
             let held: Option<DateTime<Utc>> =
                 sqlx::query_scalar("SELECT feed_updated_at FROM nws_alerts_status WHERE id = 1")
                     .fetch_optional(&mut *tx)
