@@ -342,18 +342,41 @@ ft. Rain.
     `TUE` and not `TUE NIGHT`.
   - A period that spans days is named by any of them: `TUE AND TUE NIGHT` by `TUESDAY` or `TUESDAY
     NIGHT`, `WED THROUGH THU` by `WEDNESDAY`, `THURSDAY` or `THURSDAY NIGHT`.
-  - `THROUGH`, `AND` and the rest only join the day words: `SMALL CRAFT ADVISORY THROUGH MONDAY`
-    names `MON`, the day the advisory ends, not the periods before it.
+  - `AND` and the rest only join the day words. `THROUGH` makes a range of periods, because the
+    hazard is in force from the start of the forecast to the day named, and the wind that makes it
+    so is often in the first period, not the last: `SMALL CRAFT ADVISORY THROUGH MONDAY` is every
+    period from the first one (the one in force now) to `MON`, and `THROUGH LATE TONIGHT` is
+    `TODAY` and `TONIGHT`. `THIS EVENING THROUGH TUESDAY EVENING` is `TONIGHT`, `TUE` and `TUE
+    NIGHT`: from the first period the first day names to the last period the second names, none
+    in the middle skipped. `THROUGH MONDAY` ends with `MON`, not `MON NIGHT`. A range can be
+    several periods long; in a list `summary.what` is cut at 500 characters.
   - With no day word, or none that a period carries (the formal headline of an alert NWS gave no
     broadcast text, or `MONDAY` where the forecast has no `MON`), `what` is the first period,
     `Today: ...` or `Rest of today: ...`.
   - The labels are short: `Tue night`, `Wed through Thu`.
+  - **`Today`, `Tonight` and `Rest of today` are the day the forecast was written.** NWS writes
+    them for the day it issues the forecast, and the alert stays in force after that day is over
+    (a Small Craft Advisory sent on Sunday at noon, read on Monday). So `summary.what` is made
+    from the time the alert is read: a period that is over (a day runs 6 AM to 6 PM, a night
+    6 PM to 6 AM, in the office's time, which the zone in `formal_headline` gives) is left out when
+    the headline names another that is not, or else the first period that is not over is
+    taken, and a `Tonight` that is still in progress the next day is labelled with the day it meant
+    (`Sun night`). If every period is over, it says the period the headline names, labelled `Sun`
+    or `Sun night`. Read the same day, the labels are NWS' own. An alert whose `formal_headline`
+    names no time zone is not adjusted. The text of a period is the forecast as of `sent`; it
+    does not change after that.
+  - Alerts stored by the first version of the parser, which has the forecast run together in one
+    narrative paragraph, give the same `summary.what`: the periods are read out of that paragraph
+    until the next poll rewrites them as `sections.periods`.
 
 **Free text (Special Weather Statements, Hydrologic Outlooks, Marine Weather Statements, test
 messages).** With no labels and no periods at all, `summary.what` is the first sentence of the
 text, and the second too when both fit in 200 characters; a first sentence over 200 characters is cut
 at a word (`…`). A paragraph that is not a sentence (it does not end in `.`, `!` or `?`, such as
-the river's name that starts a Hydrologic Outlook, or a table) is passed over. The product id line
+the river's name that starts a Hydrologic Outlook, or a table) is passed over, and so are the two
+lines that every Alaska marine forecast starts with and that say nothing about the weather (`Coastal
+Waters Forecast for ...` and `Wind forecasts reflect the predominant speed and direction
+expected.`). The product id line
 (`ESFEAX`) is dropped, as everywhere. An alert whose text has other labels but no `WHAT` or `HAZARD`
 gets no `what`.
 
