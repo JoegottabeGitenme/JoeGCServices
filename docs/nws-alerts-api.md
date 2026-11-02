@@ -85,7 +85,8 @@ flags. A message is returned when, at the instant:
 - no newer message had replaced it. An update, or the cancellation of the alert, replaces it from
   the moment that message was issued, not from the later poll that noticed: a warning replaced at
   11:00 by an update with a smaller polygon is still returned at 10:59 for a point only its old
-  polygon covered, and not at 11:00;
+  polygon covered, and not at 11:00. When several messages name the same one, the first issued is
+  the one that replaces it (`superseded_by`), whatever order the feed listed them in;
 - it had not ended: the poll that first no longer listed it had not happened yet. A cancellation
   (a `Cancel`, or a message whose VTEC actions are all `CAN`) is over the moment it is issued, so it
   is never in force itself, not even in the minute before the poll that stored it; the alert it
