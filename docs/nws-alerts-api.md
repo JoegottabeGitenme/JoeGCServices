@@ -141,6 +141,14 @@ request a few seconds later succeeds. Try again after a short delay; a large `/a
 `/items` that keeps failing is the one to make smaller or simpler. The limit applies to these reads
 only, not to the ingester's writes or to the API's other collections.
 
+**Read slots.** The database pool is shared by every collection of the API, and a read holds a
+connection until Postgres has finished its statement, also when the client that asked has gone
+(Postgres is not told, the statement runs on until the limit). So at most half the pool's
+connections (5 of 10) run alert reads at once and the rest queue for a slot, instead of a burst of
+alert requests holding every connection and starving the grids, observations and trails. The wait
+for a slot counts toward the same time limit, and a request that gets none in time is the same
+`503`; a read cancelled with its client keeps its slot until its statement has ended.
+
 **Test alerts.** NWS' feed also carries messages whose CAP status is not `Actual` (`Test`,
 `Exercise`, `System`, `Draft`; e.g. the periodic "Test Message"). They are all stored, but every
 list query (`/position`, `/items`, `/area`, `/radius`, history windows included) returns only
