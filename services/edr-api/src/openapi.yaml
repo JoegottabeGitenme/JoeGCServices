@@ -139,7 +139,8 @@ paths:
         top-level `meta` (`source`, `last_success_at`, `data_age_seconds`, `stale`). Responses are
         cached for up to 60 s (`Cache-Control: public, max-age=60`), so `timeStamp` and `meta`
         describe when the body was generated: the data's true age is `data_age_seconds` plus the
-        time since `timeStamp`.
+        time since `timeStamp` (on the client's clock; not the `Age` header, which leaves out the
+        time in the browser's cache).
         `/area` and `/radius` answer the same way for a polygon / `within` distance. Returned
         geometry is a `MultiPolygon` (or `null`) rounded to 5 decimals and valid as returned, also
         after `simplify`. See docs/nws-alerts-api.md.
