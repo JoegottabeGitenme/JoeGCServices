@@ -123,8 +123,12 @@ paths:
       description: |
         Sample data at a single point location.
 
-        **`nws-alerts`**: the NWS alerts in force at the point, most severe first, as a compact
-        GeoJSON FeatureCollection (`geometry` null unless `geometry=true`). Extra parameters:
+        **`nws-alerts`**: the NWS alerts in force at the point, worst first (CAP severity, then
+        warning / watch / advisory / statement, then urgency, certainty and the newest
+        `effective`), as a compact
+        GeoJSON FeatureCollection (`geometry` null unless `geometry=true`). Each feature has
+        `headline` (NWS' broadcast text when it gave one, in which `TODAY` / `TONIGHT` are
+        relative to the day it was `sent`) and `formal_headline` (NWS' own, dated). Extra parameters:
         `severity=Severe,Extreme` and `event=Tornado Warning,...` (comma lists, case-insensitive),
         `geometry=true|false`; `datetime` must be a single instant. Only CAP `status: Actual`
         alerts are returned; `include_non_actual=true` adds the Test,
@@ -625,8 +629,7 @@ paths:
         `nws-alerts` only: one alert in any state (active, upcoming, ended, superseded) with all
         text (`description`, `instruction`, raw originals), `sections`, `vtec`, `parameters`
         (NWS' without `BLOCKCHANNEL`, `EAS-ORG`, `CMAMtext`, `CMAMlongtext`), `ugc`, `zones`,
-        `references`, `formal_headline` (NWS' own headline; `headline` is its broadcast text when
-        it has one), `message_type`, `category`, `response`, `is_marine` and lifecycle
+        `references`, `message_type`, `category`, `response`, `is_marine` and lifecycle
         (`superseded_by`, `superseded_at`, `ended_at` (set when NWS stops listing the alert),
         `first_seen_at`, `last_seen_at` (the last poll that listed the alert), `updated_at`
         (when the message last changed)). `featureId` is the NWS URN (`urn:oid:2.49.0.1.840.0....`), URL-encoded
