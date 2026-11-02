@@ -2012,7 +2012,7 @@
                 let res;
                 try { res = await fetch(url, { signal: ctl.signal }); }
                 catch (e) { if (e.name === 'AbortError') throw e; throw new Error("Couldn't reach the server: network error"); }
-                if (!res.ok) throw new Error("Couldn't reach the server: " + res.status);
+                if (!res.ok) throw new Error('The server answered ' + res.status);
                 return res;
             }
             async function getJson(slot, url) { return (await getRes(slot, url)).json(); }
@@ -2023,6 +2023,8 @@
                 el.open.href = curUrl;
                 el.kind.hidden = !(opts && opts.kinds);
             }
+            // Only the answer to the request the Request bar shows may fill the Response box: a slower, older one must not
+            function setResponseFor(url, obj) { if (curUrl === abs(url)) setResponse(obj); }
             function setReadout(html) { el.readout.innerHTML = html; }
             function setError(e) { if (e && e.name === 'AbortError') return; setReadout(`<p class="sc-err">${esc(e.message || e)}</p>`); }
             function setHint(html) { el.hint.innerHTML = html; }
@@ -2164,6 +2166,7 @@
 
             // ---- Alert helpers ----
             const SEVERITY_RANK = { Extreme: 4, Severe: 3, Moderate: 2, Minor: 1 };
+            const URGENCY_RANK = { Immediate: 3, Expected: 2, Future: 1 };
             const alertColor = (c) => (/^#[0-9a-f]{6}$/i.test(c || '') ? c : '#8a8a8a');
             // The outline: the fill colour pulled 40% towards ink, so pale hazard colours still show an edge
             function shade(c) {
@@ -2248,32 +2251,44 @@
                         try {
                             const d = await getJson('q', url);
                             if (!live('alerts')) return;
-                            setResponse(d);
+                            setResponseFor(url, d);
                             const fs = d.features || [];
                             map.getSource('sc-alerts').setData({ type: 'FeatureCollection', features: fs.filter((f) => f.geometry).map((f) => {
                                 const p = f.properties || {}, c = alertColor(p.color);
                                 return { type: 'Feature', geometry: f.geometry, properties: { aid: f.id, color: c, edge: shade(c), rank: SEVERITY_RANK[p.severity] || 0 } };
                             }) });
                             setHint(`${fs.length}${d.truncated ? '+' : ''} alert${fs.length === 1 ? '' : 's'} in this view. Click anywhere for the alerts at that spot.`);
+                            // The first answer opens on an example, unless the user has already clicked
                             if (!this.picked) {
-                                this.picked = true;
-                                const pt = this.start(fs);
-                                if (pt) this.pick(pt);
+                                const cands = this.start(fs);
+                                if (cands.length) { this.picked = 'auto'; this.open(cands); }
                                 else setReadout('<h3>No alerts in view</h3><p>NWS has nothing in force here right now. Zoom out or pan to find some.</p>');
                             }
-                        } catch (err) { setError(err); }
+                        } catch (err) {
+                            if (err.name === 'AbortError' || !live('alerts')) return;
+                            setHint(`<span class="sc-err">${esc(err.message)}.</span> The alerts in this view didn't load. Pan or zoom to try again.`);
+                            if (!this.picked) setError(err);
+                        }
                     },
-                    // Opening example: a spot inside the strongest alert in view that has a summary to show
+                    // Opening example: spots inside the most severe alerts in view (most urgent first, then those with a summary to show)
                     start(fs) {
-                        const b = map.getBounds();
-                        const score = (p) => (p.summary && p.summary.what ? 10 : p.summary && Object.keys(p.summary).length ? 6 : 0) + 2 * (SEVERITY_RANK[p.severity] || 0) + (p.geometry_source === 'polygon' ? 1 : 0);
+                        const b = map.getBounds(), out = [];
+                        const score = (p) => 100 * (SEVERITY_RANK[p.severity] || 0) + 10 * (URGENCY_RANK[p.urgency] || 0) + (p.summary && Object.keys(p.summary).length ? 2 : 0) + (p.geometry_source === 'polygon' ? 1 : 0);
                         const cands = fs.filter((f) => f.geometry && f.properties.status === 'active' && !['EXP', 'CAN'].includes(f.properties.action))
                             .sort((a, z) => score(z.properties) - score(a.properties));
-                        for (const f of cands) { const pt = pointInside(f.geometry); if (pt && b.contains(pt)) return pt; }
-                        return null;
+                        for (const f of cands) {
+                            const pt = pointInside(f.geometry);
+                            if (pt && b.contains(pt)) { out.push({ pt, id: f.id }); if (out.length === 4) break; }
+                        }
+                        return out;
                     },
-                    click(e) { this.pick([e.lngLat.lng, e.lngLat.lat]); },
-                    async pick(ll) {
+                    // The outlines are simplified, so a spot can fall outside its alert: try each spot until /position finds the alert there
+                    async open(cands) {
+                        for (let i = 0; i < cands.length && this.picked === 'auto'; i++) if (await this.pick(cands[i].pt, cands[i].id, i < cands.length - 1)) return;
+                    },
+                    click(e) { this.picked = 'user'; this.pick([e.lngLat.lng, e.lngLat.lat]); },
+                    // false when the spot was passed over: its alert (want) isn't there and `more` spots are left to try
+                    async pick(ll, want, more) {
                         const lng = wrapLng(ll[0]), lat = ll[1];
                         setPin([lng, lat]);
                         const url = `/edr/collections/nws-alerts/position?coords=POINT(${r4(lng)}%20${r4(lat)})`;
@@ -2281,13 +2296,18 @@
                         setReadout('<p class="sc-muted">Querying…</p>');
                         try {
                             const d = await getJson('obs', url);
-                            if (!live('alerts')) return;
-                            setResponse(d);
+                            if (!live('alerts')) return true;
                             const fs = d.features || [];
+                            if (more && !fs.some((f) => f.id === want)) return false;
+                            setResponseFor(url, d);
                             if (map.getLayer('sc-alert-sel')) map.setFilter('sc-alert-sel', ['in', ['get', 'aid'], ['literal', fs.map((f) => f.id)]]);
-                            this.last = { fs, meta: d.meta || {}, lng, lat };
-                            this.show(0);
+                            this.last = { fs, meta: d.meta || {}, lng, lat, url, d };
+                            // Open on the alert the spot was chosen in, else on the first one in force among the worst (the answer lists worst first, not in-force first)
+                            const rank = (f) => SEVERITY_RANK[f.properties.severity] || 0;
+                            const iw = fs.findIndex((f) => f.id === want), ia = fs.findIndex((f) => f.properties.status === 'active' && rank(f) === rank(fs[0]));
+                            this.show(iw >= 0 ? iw : Math.max(ia, 0));
                         } catch (err) { setError(err); }
+                        return true;
                     },
                     // The alert at index i in full, the others at the spot as a list to switch to
                     show(i) {
@@ -2322,7 +2342,7 @@
                         try {
                             const d = await getJson('obs', url);
                             if (!live('alerts')) return;
-                            setResponse(d);
+                            setResponseFor(url, d);
                             el.resp.open = true;
                         } catch (err) { setError(err); }
                     },
