@@ -123,7 +123,9 @@ paths:
         `geometry=true|false`; `datetime` must be a single instant. Only CAP `status: Actual`
         alerts are returned; `include_non_actual=true` adds the Test,
         Exercise, System and Draft ones (every feature carries `cap_status`).
-        Alerts whose onset is still ahead are included with `status: upcoming`. The body has a
+        Alerts whose onset is still ahead are included with `status: upcoming`. `ends` is the end
+        time NWS gave the hazard and is `null` when it gave none; `expires` (always present) is when
+        the message expires, and an alert with no `ends` is treated as over then. The body has a
         top-level `meta` (`source`, `last_success_at`, `data_age_seconds`, `stale`).
         `/area` and `/radius` answer the same way for a polygon / `within` distance. See
         docs/nws-alerts-api.md.
@@ -132,7 +134,7 @@ paths:
         `status=active`): without it, or with `datetime=now`, the alerts in force now. With an instant, the alerts that
         were in force at that moment: issued by then (`effective`, else `sent`), not yet replaced
         by a newer message (over from the moment the replacement was issued), not yet ended (the
-        poll that stopped listing it) and before their end time (`ends`, else `expires`;
+        poll that stopped listing it) and before their end time (NWS' `ends`, else `expires`;
         exclusive). An alert issued after the instant is not returned; one since superseded or
         ended is, if it was in force then. Each feature's `status` is as of the instant:
         `upcoming` while its onset is still ahead, otherwise `active`. History goes back only as

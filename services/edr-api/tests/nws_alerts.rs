@@ -501,6 +501,54 @@ async fn one_alert_in_full_by_raw_or_encoded_urn() {
     let (_, _, _, _) = e.get("/edr/collections/trails/items/1/conditions").await;
 }
 
+/// The Colorado avalanche advisory in the fixture: labels written "*WHAT..." (no space) and no
+/// NWS `ends`, only an `expires`.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn avalanche_advisory_has_a_summary_and_a_null_ends() {
+    let e = env().await;
+    e.load().await;
+    let encoded = handlers::nws_alerts::encode_id(&e.id("Avalanche Advisory"));
+    let (st, _, f, _) = e
+        .get(&format!(
+            "/edr/collections/nws-alerts/items/{encoded}?geometry=false"
+        ))
+        .await;
+    assert_eq!(st, 200, "{f}");
+    let p = &f["properties"];
+    assert_eq!(
+        p["summary"]["what"],
+        "Avalanche conditions are dangerous above treeline."
+    );
+    assert_eq!(
+        p["summary"]["where"],
+        "West Elk Mountains, Elk Mountains, San Juan Mountains, and La Plata Mountains"
+    );
+    assert!(p["summary"]["when"]
+        .as_str()
+        .unwrap()
+        .starts_with("From 4:30 PM Saturday"));
+    assert!(p["summary"]["impacts"]
+        .as_str()
+        .unwrap()
+        .contains("avalanches"));
+    assert!(p["sections"]["precautionary_actions"].is_string());
+    assert!(p["sections"]["narrative"].as_array().unwrap().len() == 2);
+    assert!(p["ends"].is_null(), "NWS gave no ends: {}", p["ends"]);
+    assert_eq!(p["expires"], "2026-11-02T23:30:00Z");
+    assert_eq!(p["color"], "#CD853F");
+
+    // and the test message has the Test colour
+    let encoded = handlers::nws_alerts::encode_id(&e.id("Test Message"));
+    let (_, _, f, _) = e
+        .get(&format!(
+            "/edr/collections/nws-alerts/items/{encoded}?geometry=false"
+        ))
+        .await;
+    assert_eq!(f["properties"]["color"], "#F0FFFF");
+    assert!(f["properties"]["ends"].is_null());
+}
+
 #[tokio::test]
 #[ignore = "requires docker (PostGIS)"]
 async fn area_radius_collection_document_and_freshness() {
