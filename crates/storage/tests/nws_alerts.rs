@@ -1789,6 +1789,18 @@ fn timed_alert(
     ends: DateTime<Utc>,
     replaces: &[&str],
 ) -> ParsedAlert {
+    parse_feature(&timed_feature(id, bbox, sent, onset, ends, replaces)).unwrap()
+}
+
+/// [`timed_alert`] as the NWS feature, for a test that changes more of it.
+fn timed_feature(
+    id: &str,
+    bbox: [f64; 4],
+    sent: DateTime<Utc>,
+    onset: DateTime<Utc>,
+    ends: DateTime<Utc>,
+    replaces: &[&str],
+) -> Value {
     let mut f = features()
         .into_iter()
         .find(|f| f["properties"]["event"] == "Severe Thunderstorm Warning")
@@ -1810,6 +1822,20 @@ fn timed_alert(
         .iter()
         .map(|r| json!({"identifier": r, "sent": sent.to_rfc3339()}))
         .collect::<Vec<_>>());
+    f
+}
+
+/// A `Cancel` of `cancels`, issued at `sent` and good until `ends`, as NWS sends one: with the
+/// cancelled alert's polygon.
+fn timed_cancel(
+    id: &str,
+    bbox: [f64; 4],
+    sent: DateTime<Utc>,
+    ends: DateTime<Utc>,
+    cancels: &str,
+) -> ParsedAlert {
+    let mut f = timed_feature(id, bbox, sent, sent, ends, &[cancels]);
+    f["properties"]["messageType"] = json!("Cancel");
     parse_feature(&f).unwrap()
 }
 
@@ -1989,6 +2015,93 @@ async fn an_explicit_instant_returns_the_messages_in_force_then() {
         .unwrap();
     let c_row = env.nws.get("urn:test:c", false).await.unwrap().unwrap();
     assert_eq!(c_row.superseded_at, Some(at(13, 2)));
+}
+
+/// A message that is over when it arrives (a `Cancel`, or an update whose every VTEC action is CAN)
+/// has no life: issued and over at the same moment, whatever time passes before a poll stores it.
+/// The warning it cancels is out of force from that moment too, so until the poll the answer at
+/// that instant is nothing, not the cancellation presented as an active alert.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_cancellation_is_never_in_force_not_even_before_the_poll_that_stored_it() {
+    let env = env().await;
+    let a = timed_alert("urn:test:a", BIG, at(10, 0), at(10, 0), at(18, 0), &[]);
+    let a2 = timed_alert("urn:test:a2", BIG, at(10, 0), at(10, 0), at(18, 0), &[]);
+    // A is cancelled at 11:00 by a message the 11:01:10 poll is the first to list...
+    let c = timed_cancel("urn:test:c", BIG, at(11, 0), at(11, 30), "urn:test:a");
+    // ...and A2 at 12:00 by an Update whose only VTEC action is CAN, listed at 12:01:10.
+    let mut d = timed_feature(
+        "urn:test:d",
+        BIG,
+        at(12, 0),
+        at(12, 0),
+        at(18, 0),
+        &["urn:test:a2"],
+    );
+    d["properties"]["parameters"]["VTEC"] =
+        json!(["/O.CAN.KFGZ.SV.W.0001.000000T0000Z-261101T1800Z/"]);
+    let d = parse_feature(&d).unwrap();
+    assert!(c.ended_on_arrival && d.ended_on_arrival);
+
+    let late = |h, m| at(h, m) + Duration::seconds(70);
+    for (feed, now) in [
+        (vec![a, a2.clone()], at(10, 1)),
+        (vec![c, a2], late(11, 0)),
+        (vec![d], late(12, 0)),
+    ] {
+        env.nws.apply_feed(&feed, Some(now), now).await.unwrap();
+    }
+
+    // They end when issued, not when a poll first showed them.
+    let row = |id: &'static str| {
+        let nws = env.nws.clone();
+        async move { nws.get(id, false).await.unwrap().unwrap() }
+    };
+    assert_eq!(row("urn:test:c").await.ended_at, Some(at(11, 0)));
+    assert_eq!(row("urn:test:d").await.ended_at, Some(at(12, 0)));
+    assert_eq!(row("urn:test:a").await.superseded_at, Some(at(11, 0)));
+    assert_eq!(row("urn:test:a2").await.superseded_at, Some(at(12, 0)));
+
+    let cases: [(DateTime<Utc>, Vec<&str>); 9] = [
+        (at(10, 59), vec!["a", "a2"]),
+        (at(11, 0), vec!["a2"]), // A replaced; C is over as it is issued
+        (at(11, 0) + Duration::seconds(30), vec!["a2"]), // before the poll that stored C
+        (late(11, 0), vec!["a2"]), // the poll itself
+        (at(11, 59), vec!["a2"]), // C's end time is long past, A2 remains
+        (at(12, 0), vec![]),     // A2 replaced by D, itself over at once
+        (at(12, 0) + Duration::seconds(30), vec![]), // before the poll that stored D
+        (late(12, 0), vec![]),
+        (at(17, 59), vec![]),
+    ];
+    for (t, want) in cases {
+        for (name, region) in [
+            ("point", point as fn((f64, f64)) -> AlertRegion),
+            ("bbox", bbox_around),
+            ("polygon", polygon_around),
+            ("radius", radius_around),
+        ] {
+            let hits = env
+                .nws
+                .search(&search(region(P), t0()).in_force_at(t))
+                .await
+                .unwrap();
+            let got: Vec<String> = ids(&hits)
+                .into_iter()
+                .map(|i| i.trim_start_matches("urn:test:").to_string())
+                .collect();
+            assert_eq!(got, sorted(want.clone()), "{name} at {t}");
+        }
+    }
+
+    // A window over the cancellation still lists it: it happened, it just was never in force.
+    let mut history = search(point(P), t0());
+    history.window = Some((at(10, 30), at(12, 30)));
+    history.include_superseded = true;
+    let hits = env.nws.search(&history).await.unwrap();
+    assert_eq!(
+        ids(&hits),
+        ["urn:test:a", "urn:test:a2", "urn:test:c", "urn:test:d"]
+    );
 }
 
 /// A search without a window is what it always was: the lifecycle flags at `now`, on the partial
@@ -2733,7 +2846,11 @@ async fn a_poll_of_an_unchanged_feed_rewrites_no_alert_but_advances_last_seen() 
         .unwrap()
         .unwrap()
         .ended_at;
-    assert_eq!(cancel_ended, Some(t0()), "a Cancel is over on arrival");
+    assert_eq!(
+        cancel_ended,
+        alerts.last().unwrap().effective,
+        "a Cancel is over from the moment it was issued"
+    );
 
     // NWS' `updated` moves every minute; the alerts in it do not. Before alerts were hashed every
     // one of them was rewritten by every poll (n of n, measured on this feed).
@@ -3000,7 +3117,7 @@ async fn an_alert_that_left_the_feed_and_came_back_is_live_again_and_rewritten_o
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(cancel.ended_at, Some(t0()));
+    assert_eq!(cancel.ended_at, alerts.last().unwrap().effective);
 }
 
 #[tokio::test]

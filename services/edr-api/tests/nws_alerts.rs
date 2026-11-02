@@ -1706,3 +1706,68 @@ async fn an_explicit_datetime_returns_what_was_in_force_then_with_the_status_it_
         .await;
     assert_eq!(st, 400, "{v}");
 }
+
+/// A cancellation is over the moment it is issued. The poll that first shows it runs later, and
+/// in between the warning it cancels is already out of force: the answer at those instants is
+/// nothing, not the cancellation labelled as an active alert.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_cancellation_is_not_an_alert_in_force_before_the_poll_that_stored_it() {
+    let e = env().await;
+    let a = e.timed("urn:test:a", BIG, at(10, 0), at(10, 0), at(18, 0), &[]);
+    // sent 11:00, in the feed at the 11:01:10 poll
+    let mut c = e.timed(
+        "urn:test:c",
+        BIG,
+        at(11, 0),
+        at(11, 0),
+        at(11, 30),
+        &["urn:test:a"],
+    );
+    c.message_type = "Cancel".into();
+    c.ended_on_arrival = true;
+    let poll = at(11, 0) + Duration::seconds(70);
+    e.nws
+        .apply_feed(&[a], Some(at(10, 1)), at(10, 1))
+        .await
+        .unwrap();
+    e.nws.apply_feed(&[c], Some(poll), poll).await.unwrap();
+
+    for (t, want) in [
+        ("2026-11-01T10:59:00Z", vec!["a active"]),
+        ("2026-11-01T11:00:00Z", vec![]),
+        ("2026-11-01T11:00:30Z", vec![]), // before the poll that stored the cancellation
+        ("2026-11-01T11:01:10Z", vec![]),
+        ("2026-11-01T11:20:00Z", vec![]), // inside the Cancel's own expiry
+    ] {
+        for route in [pos, items_around, area_around, radius_around] {
+            assert_eq!(e.then(&route(P), t).await, want, "{} at {t}", route(P));
+        }
+    }
+
+    // The history still lists it, as the ended message it is.
+    let window = "datetime=2026-11-01T10:30:00Z/2026-11-01T11:30:00Z";
+    let (st, _, v, _) = e
+        .get(&format!(
+            "/edr/collections/nws-alerts/{}&status=all&include_superseded=true&{window}",
+            items_around(P)
+        ))
+        .await;
+    assert_eq!(st, 200, "{v}");
+    let mut listed: Vec<(&str, &str)> = v["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["id"].as_str().unwrap(),
+                f["properties"]["status"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec![("urn:test:a", "superseded"), ("urn:test:c", "ended")]
+    );
+}

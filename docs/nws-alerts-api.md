@@ -86,7 +86,10 @@ flags. A message is returned when, at the instant:
   the moment that message was issued, not from the later poll that noticed: a warning replaced at
   11:00 by an update with a smaller polygon is still returned at 10:59 for a point only its old
   polygon covered, and not at 11:00;
-- it had not ended: the poll that first no longer listed it had not happened yet;
+- it had not ended: the poll that first no longer listed it had not happened yet. A cancellation
+  (a `Cancel`, or a message whose VTEC actions are all `CAN`) is over the moment it is issued, so it
+  is never in force itself, not even in the minute before the poll that stored it; the alert it
+  cancels is out of force from then on, and nothing is returned in between;
 - its end time (NWS' `ends`, else `expires`) had not been reached. The end is exclusive: an alert
   ending at 18:00 is not in force at 18:00.
 
@@ -232,12 +235,14 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   `CAN` action). A VTEC `EXP` message ("will expire at ...") is **not** over when it arrives: it
   stays in force until its end time.
 - `superseded_at` (on `/items/{id}`) is when a replacement was issued, never later than the poll
-  that first showed it; `ended_at` is the poll that stopped listing the alert. Both feed the
-  `datetime` instants above. `ended_at` is **set only when NWS stops listing the alert** (or sends
-  a cancellation): an alert whose end time has passed is `status: ended` from that instant, but its
-  `ended_at` stays `null` until the poll that no longer lists it, usually within a minute or two,
-  and a `superseded` alert that also left the feed never gets one. To say when an alert ended, use
-  `ends` (else `expires`), `superseded_at` or `ended_at`, whichever applies, not `ended_at` alone.
+  that first showed it; `ended_at` is the poll that stopped listing the alert, or, for a
+  cancellation, the moment it was issued (also never later than the poll that first showed it).
+  Both feed the `datetime` instants above. `ended_at` is **set only when NWS stops listing the
+  alert** (or sends a cancellation): an alert whose end time has passed is `status: ended` from that
+  instant, but its `ended_at` stays `null` until the poll that no longer lists it, usually within a
+  minute or two, and a `superseded` alert that also left the feed never gets one. To say when an
+  alert ended, use `ends` (else `expires`), `superseded_at` or `ended_at`, whichever applies, not
+  `ended_at` alone.
 - The ingester ignores a feed whose own `updated` stamp is older than the one it already applied
   (NWS is behind a CDN and a lagging node can serve a stale copy): the poll counts for
   `meta.last_success_at`, but nothing in it changes an alert, so a stale copy cannot end alerts
