@@ -1405,7 +1405,8 @@
         }
 
         a:focus-visible,
-        button:focus-visible {
+        button:focus-visible,
+        .sc-aev:focus-visible {
             outline: 2px solid var(--ochre);
             outline-offset: 2px;
             border-radius: 4px;
@@ -2369,7 +2370,9 @@
                             if (more && !fs.some((f) => f.id === want)) return false;
                             setResponseFor(url, d);
                             if (map.getLayer('sc-alert-sel')) map.setFilter('sc-alert-sel', ['in', ['get', 'aid'], ['literal', fs.map((f) => f.id)]]);
-                            this.last = { fs, meta: d.meta || {}, lng, lat, url, d };
+                            // How long the answer sat in a cache before it got here. The API lets caches keep it 60 s, so more than that is a wrong clock (here or there), not cache time
+                            const sat = (Date.now() - Date.parse(d.timeStamp)) / 1000;
+                            this.last = { fs, meta: d.meta || {}, lng, lat, url, d, lag: sat > 0 && sat <= 65 ? sat : 0, at: performance.now() };
                             // Open on the alert the spot was chosen in, else on the first one in force among the worst (the answer lists worst first, not in-force first)
                             const rank = (f) => SEVERITY_RANK[f.properties.severity] || 0;
                             const iw = fs.findIndex((f) => f.id === want), ia = fs.findIndex((f) => f.properties.status === 'active' && rank(f) === rank(fs[0]));
@@ -2379,10 +2382,11 @@
                     },
                     // The alert at index i in full, the others at the spot as a list to switch to (user: picked from that list)
                     show(i, user) {
-                        const { fs, meta, lng, lat } = this.last;
-                        // The answer may have sat in a cache (60 s at most), so add the time since NWS's data was read. Capped, as a wrong clock must not make a fresh feed look stale
-                        const lag = Math.min(90, Math.max(0, (Date.now() - Date.parse(this.last.d.timeStamp)) / 1000)) || 0;
-                        const age = meta.data_age_seconds == null ? null : meta.data_age_seconds + lag, stale = !!meta.stale || (age != null && age > 300);
+                        const { fs, meta, lng, lat, lag, at } = this.last;
+                        // data_age_seconds is the age when the API answered: add the time the answer sat in a cache and the time it has been on screen (the page's own timer, so a wrong clock can't move it).
+                        // The stale flag is about the feed, so it leaves out the time on screen
+                        const base = meta.data_age_seconds == null ? null : meta.data_age_seconds + lag;
+                        const age = base == null ? null : base + (performance.now() - at) / 1000, stale = !!meta.stale || (base != null && base > 300);
                         const foot = `<p class="sc-muted sc-afoot">From api.weather.gov${age != null ? `, checked ${age < 90 ? fmt(age) + ' s' : fmt(age / 60) + ' min'} ago` : ''}${stale ? ' <span class="sc-err">(feed is stale)</span>' : ''}.</p>`;
                         if (!fs.length) { setReadout(`<h3>No alerts here</h3><p>NWS has nothing in force at ${where(lng, lat)}.</p>` + foot); return; }
                         // Switching alerts drops a Full alert still loading and puts the Request and Response boxes back on this spot's query
@@ -2394,7 +2398,7 @@
                         const span = (q) => (q.status === 'upcoming' ? 'starts ' + localTime(q.onset || q.effective) : q.ends ? 'until ' + localTime(q.ends) : q.expires ? 'expires ' + localTime(q.expires) : '');
                         const others = fs.map((f, j) => [f, j]).filter(([, j]) => j !== i);
                         setReadout(`<h3>${fs.length} alert${fs.length === 1 ? '' : 's'} at ${where(lng, lat)}</h3>` +
-                            `<div class="sc-alert"><p class="sc-aev"><i class="sc-sw" style="background:${alertColor(p.color)}"></i>${esc(p.event || 'Alert')}</p>` +
+                            `<div class="sc-alert"><p class="sc-aev" tabindex="-1"><i class="sc-sw" style="background:${alertColor(p.color)}"></i>${esc(p.event || 'Alert')}</p>` +
                             (rows.length ? '' : `<p>${esc(p.formal_headline || p.headline || p.area || '')}</p>`) +
                             dl([...rows,
                                 p.status === 'upcoming' ? ['Starts', localTime(p.onset || p.effective)] : null,
@@ -2412,8 +2416,9 @@
                         el.readout.querySelectorAll('[data-ai]').forEach((b) => b.addEventListener('click', () => this.show(Number(b.dataset.ai), true)));
                         const full = el.readout.querySelector('.sc-afull');
                         full.addEventListener('click', () => this.full(full));
-                        // The new alert's name goes in view, clear of the sticky header (the list was below it)
-                        if (user) { full.focus({ preventScroll: true }); el.readout.querySelector('h3').scrollIntoView({ block: 'nearest' }); }
+                        // The new alert's name takes focus and goes in view, clear of the sticky header (the list was below it). Full alert can sit below the fold of the desktop readout, so it only
+                        // gets focus on Tab, which scrolls it into view
+                        if (user) { el.readout.querySelector('.sc-aev').focus({ preventScroll: true }); el.readout.querySelector('h3').scrollIntoView({ block: 'nearest' }); }
                     },
                     // One alert's text as NWS wrote it, from /items/{id} (the map already has the outline, so no geometry)
                     async full(btn) {
