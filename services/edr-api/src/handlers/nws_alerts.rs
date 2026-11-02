@@ -589,6 +589,8 @@ fn find_self_contact(ring: &[Pt]) -> Option<(usize, usize)> {
     None
 }
 
+/// `west,south,east,north`. West greater than east is a box across the antimeridian (as in OGC API
+/// Features): `170,50,-170,60` is 20 degrees wide. A box with no width or no height is an error.
 pub fn parse_bbox(s: &str) -> Result<[f64; 4], String> {
     let n = nums(s)?;
     if n.len() != 4 {
@@ -596,8 +598,12 @@ pub fn parse_bbox(s: &str) -> Result<[f64; 4], String> {
     }
     check_lonlat(n[0], n[1])?;
     check_lonlat(n[2], n[3])?;
-    if n[0] >= n[2] || n[1] >= n[3] {
-        return Err("Invalid bbox: west must be < east and south < north".into());
+    if n[0] == n[2] || n[1] >= n[3] {
+        return Err(
+            "Invalid bbox: south must be < north and west must not equal east \
+             (west > east is a box across the antimeridian)"
+                .into(),
+        );
     }
     Ok([n[0], n[1], n[2], n[3]])
 }
@@ -734,7 +740,9 @@ pub fn parse_within(within: Option<&str>, units: Option<&str>) -> Result<f64, St
 /// Default simplification tolerance (degrees) for `/items` geometry: about one
 /// pixel of a 1500 px wide view of the bbox, capped at ~5 km.
 pub fn default_simplify(bbox: &[f64; 4]) -> f64 {
-    ((bbox[2] - bbox[0]).max(bbox[3] - bbox[1]) / 1500.0).clamp(0.0, 0.05)
+    // west > east is a box across the antimeridian
+    let width = (bbox[2] - bbox[0]).rem_euclid(360.0);
+    (width.max(bbox[3] - bbox[1]) / 1500.0).clamp(0.0, 0.05)
 }
 
 // =============================================================================
@@ -1707,8 +1715,11 @@ mod tests {
             parse_bbox("-106,39,-105,40").unwrap(),
             [-106.0, 39.0, -105.0, 40.0]
         );
-        assert!(parse_bbox("-105,39,-106,40").is_err());
         assert!(parse_bbox("1,2,3").is_err());
+        // no height, no width, south above north
+        for bad in ["-106,40,-105,40", "-106,41,-105,40", "-106,39,-106,40"] {
+            assert!(parse_bbox(bad).is_err(), "{bad}");
+        }
     }
 
     /// `POLYGON((x y, ...))` from points, written as the request would carry it (not closed).
@@ -1848,6 +1859,26 @@ mod tests {
             (0.2, 0.2),
             (0.2, 0.5),
         ]));
+    }
+
+    #[test]
+    fn a_bbox_with_west_above_east_crosses_the_antimeridian() {
+        assert_eq!(
+            parse_bbox("170,50,-170,60").unwrap(),
+            [170.0, 50.0, -170.0, 60.0]
+        );
+        assert_eq!(
+            parse_bbox("180,50,-179,60").unwrap(),
+            [180.0, 50.0, -179.0, 60.0]
+        );
+        assert_eq!(
+            parse_bbox("-180,50,180,60").unwrap(),
+            [-180.0, 50.0, 180.0, 60.0]
+        );
+        // longitudes beyond +-180 are still out of range
+        assert!(parse_bbox("170,50,190,60").is_err());
+        let e = parse_bbox("-100,50,-100,60").unwrap_err();
+        assert!(e.contains("antimeridian"), "{e}");
     }
 
     #[test]
@@ -2021,6 +2052,12 @@ mod tests {
         assert!(parse_within(Some("9999"), None).is_err());
         assert!(parse_within(None, None).is_err());
         assert!(default_simplify(&[-125.0, 24.0, -66.0, 50.0]) <= 0.05);
+        // a box across the antimeridian is as wide as it looks on the map, not 340 degrees
+        assert_eq!(
+            default_simplify(&[179.0, 50.0, -179.0, 51.0]),
+            default_simplify(&[0.0, 50.0, 2.0, 51.0])
+        );
+        assert!(default_simplify(&[179.0, 50.0, -179.0, 51.0]) < 0.002);
         assert!(default_simplify(&[-105.3, 39.9, -105.2, 40.0]) < 0.0001);
     }
 

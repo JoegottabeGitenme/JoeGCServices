@@ -307,7 +307,8 @@ pub enum AlertRegion {
         lon: f64,
         lat: f64,
     },
-    /// `[west, south, east, north]`.
+    /// `[west, south, east, north]`. West greater than east is a box across the antimeridian:
+    /// west to 180 and -180 to east.
     Bbox([f64; 4]),
     /// WKT `POLYGON((lon lat, ...))`, validated by the caller.
     Polygon {
@@ -817,11 +818,12 @@ impl NwsAlertCatalog {
             AlertRegion::Point { lon, lat } => query.bind(*lon).bind(*lat),
             AlertRegion::Bbox(b) => query.bind(b[0]).bind(b[1]).bind(b[2]).bind(b[3]),
             AlertRegion::Polygon { wkt } => query.bind(wkt.clone()),
-            AlertRegion::Radius { lon, lat, meters } => {
-                // Degrees that surely cover `meters` at this latitude (index prefilter only).
-                let deg = meters / (111_320.0 * lat.to_radians().cos().abs().max(0.05)) + 0.01;
-                query.bind(*lon).bind(*lat).bind(*meters).bind(deg)
-            }
+            AlertRegion::Radius { lon, lat, meters } => radius_boxes(*lon, *lat, *meters)
+                .iter()
+                .flatten()
+                .fold(query.bind(*lon).bind(*lat).bind(*meters), |query, edge| {
+                    query.bind(*edge)
+                }),
         };
         let mut tx = self.read_tx().await?;
         let rows = query.fetch_all(&mut *tx).await.map_err(read_db("search"))?;
@@ -864,25 +866,61 @@ pub fn search_sql(q: &AlertSearch) -> String {
             "",
             "nws_alerts a",
             "a.geom && ST_SetSRID(ST_MakePoint($7, $8), 4326) \
-             AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($7, $8), 4326))",
+             AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($7, $8), 4326))"
+                .to_string(),
         ),
+        // A box across the antimeridian is two boxes: the index finds what meets either (one
+        // bitmap-OR), then the exact test.
+        AlertRegion::Bbox(b) if b[0] > b[2] => {
+            let (east, west) = (
+                "ST_MakeEnvelope($7, $8, 180, $10, 4326)",
+                "ST_MakeEnvelope(-180, $8, $9, $10, 4326)",
+            );
+            (
+                "",
+                "nws_alerts a",
+                format!(
+                    "(a.geom && {east} OR a.geom && {west}) \
+                     AND (ST_Intersects(a.geom, {east}) OR ST_Intersects(a.geom, {west}))"
+                ),
+            )
+        }
         AlertRegion::Bbox(_) => (
             "",
             "nws_alerts a",
             "a.geom && ST_MakeEnvelope($7, $8, $9, $10, 4326) \
-             AND ST_Intersects(a.geom, ST_MakeEnvelope($7, $8, $9, $10, 4326))",
+             AND ST_Intersects(a.geom, ST_MakeEnvelope($7, $8, $9, $10, 4326))"
+                .to_string(),
         ),
         AlertRegion::Polygon { .. } => (
             "WITH q AS MATERIALIZED (SELECT ST_MakeValid(ST_GeomFromText($7, 4326)) AS g) ",
             "nws_alerts a, q",
-            "a.geom && q.g AND ST_Intersects(a.geom, q.g)",
+            "a.geom && q.g AND ST_Intersects(a.geom, q.g)".to_string(),
         ),
-        AlertRegion::Radius { .. } => (
-            "",
-            "nws_alerts a",
-            "a.geom && ST_Expand(ST_SetSRID(ST_MakePoint($7, $8), 4326), $10) \
-             AND ST_DWithin(a.geom::geography, ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography, $9)",
-        ),
+        // The planar boxes (see `radius_boxes`) only let the index discard what is far away; the
+        // distance itself is geodetic, so it is right across the antimeridian and at the poles.
+        AlertRegion::Radius { lon, lat, meters } => {
+            let boxes = (0..radius_boxes(*lon, *lat, *meters).len())
+                .map(|i| {
+                    let p = 10 + 4 * i;
+                    format!(
+                        "a.geom && ST_MakeEnvelope(${p}, ${}, ${}, ${}, 4326)",
+                        p + 1,
+                        p + 2,
+                        p + 3
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            (
+                "",
+                "nws_alerts a",
+                format!(
+                    "({boxes}) AND ST_DWithin(a.geom::geography, \
+                     ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography, $9)"
+                ),
+            )
+        }
     };
     format!(
         "{with}SELECT {COLS}, {geom} AS geometry_geojson FROM {from} \
@@ -892,6 +930,45 @@ pub fn search_sql(q: &AlertSearch) -> String {
          ORDER BY {SEVERITY_ORDER} LIMIT $6",
         actual = actual_only(q.include_non_actual),
     )
+}
+
+/// Longitude/latitude boxes `[west, south, east, north]` that together cover every point within
+/// `meters` of `(lon, lat)`: the planar prefilter the GiST index answers before the geodetic
+/// `ST_DWithin` runs. It must never drop a match, so it is generous: an arc degree is taken at its
+/// shortest (110.57 km, on the spheroid) and the width gets a margin.
+///
+/// One box, or two when the circle crosses the antimeridian (the part beyond 180 comes back in
+/// from -180, and the alerts NWS splits at the line are on either side of it), or every longitude
+/// when the circle reaches a pole. A single box at `lon +- deg` would go past +-180 and never meet
+/// a geometry on the far side.
+pub fn radius_boxes(lon: f64, lat: f64, meters: f64) -> Vec<[f64; 4]> {
+    let r = meters / 110_574.0;
+    let (south, north) = ((lat - r).max(-90.0), (lat + r).min(90.0));
+    // Half the width of a circle of angular radius r centred at lat (which has no pole inside it).
+    let half = if lat.abs() + r >= 90.0 {
+        180.0
+    } else {
+        (r.to_radians().sin() / lat.to_radians().cos())
+            .asin()
+            .to_degrees()
+            + 0.01
+    };
+    let (west, east) = (lon - half, lon + half);
+    if half >= 180.0 {
+        vec![[-180.0, south, 180.0, north]]
+    } else if west < -180.0 {
+        vec![
+            [-180.0, south, east, north],
+            [west + 360.0, south, 180.0, north],
+        ]
+    } else if east > 180.0 {
+        vec![
+            [west, south, 180.0, north],
+            [-180.0, south, east - 360.0, north],
+        ]
+    } else {
+        vec![[west, south, east, north]]
+    }
 }
 
 /// Take the writers' lock for the rest of the transaction. Feed polls and zone batches both
@@ -1231,6 +1308,144 @@ mod tests {
         let sql = search_sql(&point_search());
         assert!(sql.contains("WHERE a.superseded_by IS NULL AND a.ended_at IS NULL AND"));
         assert!(!sql.contains("COALESCE(a.effective"), "{sql}");
+    }
+
+    fn covered(boxes: &[[f64; 4]], lon: f64, lat: f64) -> bool {
+        boxes
+            .iter()
+            .any(|b| (b[0]..=b[2]).contains(&lon) && (b[1]..=b[3]).contains(&lat))
+    }
+
+    #[test]
+    fn a_radius_near_the_antimeridian_is_two_boxes_one_on_each_side() {
+        // 50 km at 57.5N is 0.85 degrees of longitude: 179.95 + 0.85 goes over the line
+        let b = radius_boxes(179.95, 57.5, 50_000.0);
+        assert_eq!(b.len(), 2, "{b:?}");
+        assert_eq!((b[0][2], b[1][0]), (180.0, -180.0));
+        assert!(b[0][0] > 179.0 && b[1][2] < -179.0 && b[1][2] > -180.0);
+        assert_eq!((b[0][1], b[0][3]), (b[1][1], b[1][3]), "the same latitudes");
+        // and the mirror image
+        let m = radius_boxes(-179.95, 57.5, 50_000.0);
+        assert_eq!(m.len(), 2);
+        assert_eq!((m[0][0], m[1][2]), (-180.0, 180.0));
+        // a circle centred on the line itself
+        assert_eq!(radius_boxes(180.0, 0.0, 10_000.0).len(), 2);
+        assert_eq!(radius_boxes(-180.0, 0.0, 10_000.0).len(), 2);
+        // far from the line it is one ordinary box, around the circle
+        let one = radius_boxes(-107.0, 37.5, 50_000.0);
+        assert_eq!(one.len(), 1);
+        assert!(one[0][0] < -107.5 && one[0][2] > -106.5 && one[0][1] < 37.1 && one[0][3] > 37.9);
+        assert!(one[0][0] >= -180.0 && one[0][2] <= 180.0);
+        // reaching a pole is every longitude
+        let polar = radius_boxes(10.0, 88.0, 300_000.0);
+        assert_eq!(polar.len(), 1);
+        assert_eq!((polar[0][0], polar[0][2]), (-180.0, 180.0));
+        assert_eq!(polar[0][3], 90.0);
+        // never outside the world
+        for (lon, lat, m) in [
+            (179.9, 89.9, 500_000.0),
+            (-179.9, -89.0, 500_000.0),
+            (0.0, 0.0, 500_000.0),
+        ] {
+            for b in radius_boxes(lon, lat, m) {
+                assert!(b[0] >= -180.0 && b[2] <= 180.0 && b[0] <= b[2], "{b:?}");
+                assert!(b[1] >= -90.0 && b[3] <= 90.0 && b[1] <= b[3], "{b:?}");
+            }
+        }
+    }
+
+    /// The boxes are only an index prefilter, so what matters is that no point of the circle is
+    /// outside them: walk a circle (on a sphere a touch smaller than the spheroid's, so every
+    /// point is really within `meters`) around many centres and radii, the dateline and the poles
+    /// among them.
+    #[test]
+    fn the_boxes_cover_every_point_within_the_radius() {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = |lo: f64, hi: f64| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            lo + (state >> 11) as f64 / (1u64 << 53) as f64 * (hi - lo)
+        };
+        let earth = 6_356_752.0; // polar radius: the smallest, so the widest angle per metre
+        let mut crossing = 0;
+        for i in 0..3000 {
+            let lon = match i % 3 {
+                0 => next(170.0, 180.0),
+                1 => next(-180.0, -170.0),
+                _ => next(-180.0, 180.0),
+            };
+            let lat = if i % 5 == 0 {
+                next(80.0, 90.0) * if i % 2 == 0 { 1.0 } else { -1.0 }
+            } else {
+                next(-75.0, 75.0)
+            };
+            let meters = next(1_000.0, 500_000.0);
+            let boxes = radius_boxes(lon, lat, meters);
+            crossing += (boxes.len() == 2) as i32;
+            let (phi1, lam1, delta) = (lat.to_radians(), lon.to_radians(), meters / earth);
+            for k in 0..72 {
+                let brg = (k as f64 * 5.0).to_radians();
+                let phi2 = (phi1.sin() * delta.cos() + phi1.cos() * delta.sin() * brg.cos()).asin();
+                let lam2 = lam1
+                    + (brg.sin() * delta.sin() * phi1.cos())
+                        .atan2(delta.cos() - phi1.sin() * phi2.sin());
+                let lon2 = (lam2.to_degrees() + 540.0).rem_euclid(360.0) - 180.0;
+                assert!(
+                    covered(&boxes, lon2, phi2.to_degrees()),
+                    "({lon}, {lat}) {meters} m: ({lon2}, {}) is outside {boxes:?}",
+                    phi2.to_degrees()
+                );
+            }
+        }
+        assert!(
+            crossing > 500,
+            "the sweep should cross the antimeridian a lot: {crossing}"
+        );
+    }
+
+    #[test]
+    fn a_box_across_the_antimeridian_is_two_envelopes_in_the_sql() {
+        let mut q = point_search();
+        q.region = AlertRegion::Bbox([170.0, 50.0, -170.0, 60.0]);
+        let sql = search_sql(&q);
+        assert!(
+            sql.contains("ST_MakeEnvelope($7, $8, 180, $10, 4326)"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("ST_MakeEnvelope(-180, $8, $9, $10, 4326)"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("4326) OR a.geom && ST_MakeEnvelope(-180,"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("OR ST_Intersects(a.geom, ST_MakeEnvelope(-180,"),
+            "{sql}"
+        );
+        // an ordinary box is the single envelope, as before
+        q.region = AlertRegion::Bbox([-170.0, 50.0, 170.0, 60.0]);
+        let sql = search_sql(&q);
+        assert!(
+            sql.contains("ST_MakeEnvelope($7, $8, $9, $10, 4326)") && !sql.contains(" OR a.geom"),
+            "{sql}"
+        );
+        // a radius across the line has one prefilter arm per box
+        q.region = AlertRegion::Radius {
+            lon: 179.95,
+            lat: 57.5,
+            meters: 50_000.0,
+        };
+        let sql = search_sql(&q);
+        assert!(sql.contains("a.geom && ST_MakeEnvelope($10, $11, $12, $13, 4326) OR a.geom && ST_MakeEnvelope($14, $15, $16, $17, 4326)"), "{sql}");
+        q.region = AlertRegion::Radius {
+            lon: -107.0,
+            lat: 37.5,
+            meters: 50_000.0,
+        };
+        assert!(!search_sql(&q).contains("$14"));
     }
 
     #[test]

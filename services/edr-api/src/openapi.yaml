@@ -287,7 +287,14 @@ paths:
     get:
       operationId: getRadius
       summary: Radius query
-      description: Sample data within a radius of a point
+      description: |
+        Sample data within a radius of a point.
+
+        **`nws-alerts`**: the alerts within `within` (default unit km, at most 500 km) of the point,
+        in the same compact GeoJSON as `/position`; `datetime` is read as on `/position`. The
+        distance is geodetic, so a radius across the antimeridian finds the alerts on both sides of
+        +-180 (NWS splits zones there), and one that reaches a pole sees every longitude. See
+        docs/nws-alerts-api.md.
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -586,7 +593,9 @@ paths:
         `first_seen_at`, `last_seen_at`). `featureId` is the NWS URN (`urn:oid:2.49.0.1.840.0....`), URL-encoded
         or raw. `geometry=false` omits the geometry.
 
-        `/items` for `nws-alerts` takes `bbox`, `datetime` (instant: the alerts in force then, as
+        `/items` for `nws-alerts` takes `bbox` (`west,south,east,north`; west greater than east is
+        a box across the antimeridian, e.g. `170,50,-170,60`, 20 degrees wide; no width or no
+        height is a 400), `datetime` (instant: the alerts in force then, as
         on `/position`; interval needs `status=all`), `status=active|all` (default active),
         `include_superseded=true` (`status=all` only: also messages a newer one replaced),
         `severity`, `event`, `limit`
