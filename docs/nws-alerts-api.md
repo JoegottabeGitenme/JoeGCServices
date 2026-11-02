@@ -6,7 +6,7 @@ it as GeoJSON. Config: `config/edr/nws-alerts.yaml`; code: `services/edr-api/src
 
 | Request | Use |
 |---|---|
-| `GET /edr/collections/nws-alerts/position?coords=POINT(lon lat)` | **Alerts in force at my location**, worst first |
+| `GET /edr/collections/nws-alerts/position?coords=POINT(lon lat)` | **Alerts in force at my location**, worst first (see **Order**, below) |
 | `GET /edr/collections/nws-alerts/items?bbox=w,s,e,n` | Alerts in the map view (geometry on by default); `bbox=170,50,-170,60` (west > east) crosses the antimeridian |
 | `GET /edr/collections/nws-alerts/items/{id}` | One alert in full (id is a URN; raw or `%3A`-encoded) |
 | `GET /edr/collections/nws-alerts/area?coords=POLYGON((...))` | Alerts intersecting a polygon |
@@ -49,6 +49,23 @@ under [Response](#response)).
 `/items` also takes `status=active|all` (with `all`, `datetime=from/to` returns history,
 default window the last 24 h; superseded messages hidden unless `include_superseded=true`),
 `limit` (default 500, max 2000; `"truncated": true` when cut).
+
+**Order.** `/position`, `/items`, `/area` and `/radius` list the worst alert first. The keys, in
+order, each breaking the ties of the one before:
+
+1. CAP `severity`: Extreme, Severe, Moderate, Minor, then anything else (`Unknown`, none);
+2. `significance`: `warning`, `watch`, `advisory`, `statement`, then `other`. NWS rates most watches
+   Severe, like the warnings, so severity alone would list a Flood Watch re-issued a minute ago
+   ahead of the Flood Warning it comes with. It is the `significance` the features carry: the first
+   VTEC code's letter (W, A, Y, S), else the event's name (`... Warning`, `... Watch`,
+   `... Advisory`, `... Statement`);
+3. `urgency`: Immediate, Expected, Future, Past, then anything else;
+4. `certainty`: Observed, Likely, Possible, Unlikely, then anything else;
+5. the newest `effective` first, then the `id`, so the order is the same on every request.
+
+An alert that has not started yet (`upcoming`) is ordered like any other. The first feature of
+`/position` is the one to show in full, and the rest the ones to list. A cut made by `limit` or by
+the response size limit (below) is made from the end of this order.
 
 **Answer size.** The geometry of one list answer (`/position`, `/items`, `/area`, `/radius`) is held
 to the collection's `limits.max_response_size_mb` (50 MB, `config/edr/nws-alerts.yaml`), whatever
