@@ -73,6 +73,9 @@ async fn run_server(args: Args) {
         .json()
         .init();
 
+    // the OpenAPI document as JSON is built once; fail here, not on the first request
+    handlers::api::init();
+
     info!("Starting EDR API server");
 
     // Initialize Prometheus metrics recorder

@@ -58,14 +58,27 @@ paths:
     get:
       operationId: getApiDefinition
       summary: OpenAPI definition
-      description: Returns the OpenAPI 3.0 definition for this API
+      description: |
+        Returns the OpenAPI 3.0 definition for this API: JSON
+        (`application/vnd.oai.openapi+json;version=3.0`), or with `f=yaml` the YAML source
+        (`application/vnd.oai.openapi;version=3.0`).
+      parameters:
+        - name: f
+          in: query
+          required: false
+          description: "`yaml` (or `yml`) for the YAML source; anything else is JSON."
+          schema:
+            type: string
       responses:
         '200':
           description: OpenAPI definition
           content:
-            application/openapi+json;version=3.0:
+            application/vnd.oai.openapi+json;version=3.0:
               schema:
                 type: object
+            application/vnd.oai.openapi;version=3.0:
+              schema:
+                type: string
 
   /conformance:
     get:
