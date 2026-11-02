@@ -1156,8 +1156,13 @@
             border: 1px solid rgba(46, 40, 24, 0.35);
         }
 
+        /* Long summaries stop at three lines; Full alert has the rest */
         .sc-alert .sc-dl dd {
             font-weight: 400;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+            overflow: hidden;
         }
 
         .sc-afull,
@@ -1172,8 +1177,32 @@
         }
 
         .sc-afull {
-            margin-top: 0.5rem;
+            margin-top: 0.3rem;
+            padding: 0.3rem 0;
             text-decoration: underline;
+        }
+
+        .sc-afull:disabled {
+            color: var(--ink-3);
+            cursor: default;
+            text-decoration: none;
+        }
+
+        .sc-atext {
+            margin-top: 0.5rem;
+            padding: 0.5rem 0.65rem;
+            max-height: 14rem;
+            overflow-y: auto;
+            white-space: pre-line;
+            font-size: 0.78rem;
+            color: var(--ink-2);
+            background: var(--paper-card);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 8px;
+        }
+
+        .sc-atext b {
+            color: var(--ink);
         }
 
         .sc-alist {
@@ -1182,13 +1211,29 @@
             padding-top: 0.6rem;
             border-top: 1px solid var(--paper-card-edge);
             display: grid;
-            gap: 0.35rem;
+            gap: 0.1rem;
+            max-height: 11rem;
+            overflow-y: auto;
         }
 
         .sc-alist button {
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             gap: 0.45rem;
+            padding: 0.25rem 0;
+        }
+
+        .sc-alist .sc-sw {
+            margin-top: 0.25rem;
+        }
+
+        .sc-adet {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+            font-size: 0.74rem;
+            color: var(--ink-3);
         }
 
         .sc-afoot {
@@ -1299,6 +1344,25 @@
 
         .sc .maplibregl-ctrl-attrib {
             font-size: 10px;
+        }
+
+        /* Beside the map, a long readout scrolls instead of stretching the row */
+        @media (min-width: 761px) {
+            .sc-side {
+                contain: size;
+            }
+
+            /* shadows at the edges show there is more to scroll to */
+            .sc-readout {
+                min-height: 0;
+                overflow-y: auto;
+                background:
+                    linear-gradient(var(--paper-bg) 30%, rgba(243, 236, 217, 0)) 0 0 / 100% 1.4rem no-repeat local,
+                    linear-gradient(rgba(243, 236, 217, 0), var(--paper-bg) 70%) 0 100% / 100% 1.4rem no-repeat local,
+                    radial-gradient(farthest-side at 50% 0, rgba(61, 53, 40, 0.22), rgba(61, 53, 40, 0)) 0 0 / 100% 0.5rem no-repeat,
+                    radial-gradient(farthest-side at 50% 100%, rgba(61, 53, 40, 0.22), rgba(61, 53, 40, 0)) 0 100% / 100% 0.5rem no-repeat;
+                background-color: var(--paper-bg);
+            }
         }
 
         @media (max-width: 760px) {
@@ -2232,7 +2296,7 @@
                     picked: false, last: null,
                     enter() {
                         this.picked = false; this.last = null;
-                        setHint(this.hint);
+                        this.note(this.hint);
                         setReadout('<p class="sc-muted">Loading alerts…</p>');
                         removeMapStuff(['sc-alert-sel', 'sc-alert-line', 'sc-alert-fill', 'sc-alerts']);
                         map.addSource('sc-alerts', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
@@ -2244,10 +2308,15 @@
                         map.addLayer({ id: 'sc-alert-sel', type: 'line', source: 'sc-alerts', filter: ['in', ['get', 'aid'], ['literal', []]], layout: { 'line-join': 'round' },
                             paint: { 'line-color': '#2e2818', 'line-width': 2.5 } }, before);
                     },
+                    // The hint line, with a way to query the map centre for anyone who can't click the map
+                    note(html) {
+                        setHint(html + ' <button type="button" id="sc-centre">Or query the map centre</button>');
+                        el.hint.querySelector('#sc-centre').addEventListener('click', () => { this.picked = 'user'; this.pick(map.getCenter().toArray()); });
+                    },
                     async moveend() {
                         const url = `/edr/collections/nws-alerts/items?bbox=${viewBbox()}&limit=1000`;
                         setRequest(url);
-                        setHint('<span class="sc-muted">Loading the alerts in this view…</span>');
+                        this.note('<span class="sc-muted">Loading the alerts in this view…</span>');
                         try {
                             const d = await getJson('q', url);
                             if (!live('alerts')) return;
@@ -2257,7 +2326,7 @@
                                 const p = f.properties || {}, c = alertColor(p.color);
                                 return { type: 'Feature', geometry: f.geometry, properties: { aid: f.id, color: c, edge: shade(c), rank: SEVERITY_RANK[p.severity] || 0 } };
                             }) });
-                            setHint(`${fs.length}${d.truncated ? '+' : ''} alert${fs.length === 1 ? '' : 's'} in this view. Click anywhere for the alerts at that spot.`);
+                            this.note(`${fs.length}${d.truncated ? '+' : ''} alert${fs.length === 1 ? '' : 's'} in this view. Click anywhere for the alerts at that spot.`);
                             // The first answer opens on an example, unless the user has already clicked
                             if (!this.picked) {
                                 const cands = this.start(fs);
@@ -2266,7 +2335,7 @@
                             }
                         } catch (err) {
                             if (err.name === 'AbortError' || !live('alerts')) return;
-                            setHint(`<span class="sc-err">${esc(err.message)}.</span> The alerts in this view didn't load. Pan or zoom to try again.`);
+                            this.note(`<span class="sc-err">${esc(err.message)}.</span> The alerts in this view didn't load. Pan or zoom to try again.`);
                             if (!this.picked) setError(err);
                         }
                     },
@@ -2309,42 +2378,58 @@
                         } catch (err) { setError(err); }
                         return true;
                     },
-                    // The alert at index i in full, the others at the spot as a list to switch to
-                    show(i) {
+                    // The alert at index i in full, the others at the spot as a list to switch to (user: picked from that list)
+                    show(i, user) {
                         const { fs, meta, lng, lat } = this.last;
-                        const age = meta.data_age_seconds;
-                        const foot = `<p class="sc-muted sc-afoot">From api.weather.gov${age != null ? `, checked ${age < 90 ? fmt(age) + ' s' : fmt(age / 60) + ' min'} ago` : ''}${meta.stale ? ' <span class="sc-err">(feed is stale)</span>' : ''}.</p>`;
+                        // The answer may have sat in a cache, so the data's age counts from the last poll, not from meta.data_age_seconds as sent
+                        const ls = Date.parse(meta.last_success_at), age = isNaN(ls) ? meta.data_age_seconds : Math.max(0, (Date.now() - ls) / 1000), stale = isNaN(ls) ? meta.stale : age > 300;
+                        const foot = `<p class="sc-muted sc-afoot">From api.weather.gov${age != null ? `, checked ${age < 90 ? fmt(age) + ' s' : fmt(age / 60) + ' min'} ago` : ''}${stale ? ' <span class="sc-err">(feed is stale)</span>' : ''}.</p>`;
                         if (!fs.length) { setReadout(`<h3>No alerts here</h3><p>NWS has nothing in force at ${where(lng, lat)}.</p>` + foot); return; }
+                        // Switching alerts drops a Full alert still loading and puts the Request and Response boxes back on this spot's query
+                        if (user) { if (slots.obs) slots.obs.abort(); if (curUrl !== abs(this.last.url)) { setRequest(this.last.url); setResponse(this.last.d); } }
                         const a = fs[i], p = a.properties, s = p.summary || {};
-                        const until = p.ends ? localTime(p.ends) : 'further notice';
+                        // A null `ends` means NWS gave none: the alert is over at `expires` at the latest
+                        const end = p.ends ? ['Until', localTime(p.ends)] : p.expires ? ['Expires', localTime(p.expires)] : ['Until', 'further notice'];
                         const rows = [['What', s.what || s.hazard], ['Where', s.where], ['When', s.when], ['Impacts', s.impacts || s.impact]].filter((r) => r[1]).map(([k, v]) => [k, esc(v)]);
+                        const span = (q) => (q.status === 'upcoming' ? 'starts ' + localTime(q.onset || q.effective) : q.ends ? 'until ' + localTime(q.ends) : q.expires ? 'expires ' + localTime(q.expires) : '');
                         const others = fs.map((f, j) => [f, j]).filter(([, j]) => j !== i);
                         setReadout(`<h3>${fs.length} alert${fs.length === 1 ? '' : 's'} at ${where(lng, lat)}</h3>` +
                             `<div class="sc-alert"><p class="sc-aev"><i class="sc-sw" style="background:${alertColor(p.color)}"></i>${esc(p.event || 'Alert')}</p>` +
-                            (rows.length ? '' : `<p>${esc(p.headline || p.area || '')}</p>`) +
+                            (rows.length ? '' : `<p>${esc(p.formal_headline || p.headline || p.area || '')}</p>`) +
                             dl([...rows,
                                 p.status === 'upcoming' ? ['Starts', localTime(p.onset || p.effective)] : null,
-                                ['Until', until],
+                                end,
                                 ['Severity', esc([p.severity, p.urgency].filter((x) => x && x !== 'Unknown').join(', ') || 'Unknown')],
                                 ['From', esc(p.sender || '')]]) +
-                            `<button type="button" class="sc-afull" data-id="${esc(a.id)}">Full alert</button></div>` +
-                            (others.length ? '<ul class="sc-alist">' + others.slice(0, 6).map(([f, j]) =>
-                                `<li><button type="button" data-ai="${j}"><i class="sc-sw" style="background:${alertColor(f.properties.color)}"></i>${esc(f.properties.event || 'Alert')}</button></li>`).join('') +
-                                (others.length > 6 ? `<li class="sc-muted">and ${others.length - 6} more in the response</li>` : '') + '</ul>' : '') + foot);
-                        el.readout.querySelectorAll('[data-ai]').forEach((b) => b.addEventListener('click', () => this.show(Number(b.dataset.ai))));
+                            `<button type="button" class="sc-afull" data-id="${esc(a.id)}">Full alert</button>` +
+                            '<div class="sc-atext" role="region" aria-label="Full text of this alert" hidden></div></div>' +
+                            (others.length ? '<ul class="sc-alist" aria-label="Other alerts here">' + others.map(([f, j]) => {
+                                const q = f.properties, area = q.area || '';
+                                return `<li><button type="button" data-ai="${j}" title="${esc(area)}"><i class="sc-sw" style="background:${alertColor(q.color)}"></i>` +
+                                    `<span>${esc(q.event || 'Alert')}<span class="sc-adet">${[span(q), esc(area)].filter(Boolean).join(' &middot; ')}</span></span></button></li>`;
+                            }).join('') + '</ul>' : '') + foot);
+                        el.readout.querySelectorAll('[data-ai]').forEach((b) => b.addEventListener('click', () => this.show(Number(b.dataset.ai), true)));
                         const full = el.readout.querySelector('.sc-afull');
-                        if (full) full.addEventListener('click', () => this.full(full.dataset.id));
+                        full.addEventListener('click', () => this.full(full));
+                        if (user) full.focus();
                     },
-                    // One alert with NWS' full text, shown in the Response box
-                    async full(id) {
-                        const url = `/edr/collections/nws-alerts/items/${encodeURIComponent(id)}`;
+                    // One alert's text as NWS wrote it, from /items/{id} (the map already has the outline, so no geometry)
+                    async full(btn) {
+                        const url = `/edr/collections/nws-alerts/items/${encodeURIComponent(btn.dataset.id)}?geometry=false`, box = btn.nextElementSibling;
                         setRequest(url);
+                        btn.disabled = true; btn.textContent = 'Loading…';
                         try {
                             const d = await getJson('obs', url);
-                            if (!live('alerts')) return;
+                            if (!live('alerts') || !btn.isConnected) return;
                             setResponseFor(url, d);
-                            el.resp.open = true;
-                        } catch (err) { setError(err); }
+                            const q = d.properties || {}, text = String(q.description || '').trim() || String(q.formal_headline || q.headline || '').trim(), inst = String(q.instruction || '').trim();
+                            box.innerHTML = esc(text || 'NWS sent no further text for this alert.') + (inst ? '\n\n<b>Instructions</b>\n' + esc(inst) : '');
+                            btn.hidden = true; box.hidden = false; box.tabIndex = 0;
+                            box.focus({ preventScroll: true }); box.scrollIntoView({ block: 'nearest' });
+                        } catch (err) {
+                            if (err.name === 'AbortError' || !live('alerts') || !btn.isConnected) return;
+                            btn.disabled = false; btn.textContent = err.message + '. Try again';
+                        }
                     },
                     leave() { clearPin(); removeMapStuff(['sc-alert-sel', 'sc-alert-line', 'sc-alert-fill', 'sc-alerts']); }
                 },
