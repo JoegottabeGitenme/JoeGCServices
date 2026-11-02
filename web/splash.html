@@ -1672,8 +1672,9 @@
 
         a:focus-visible,
         button:focus-visible,
+        summary:focus-visible,
         .sc-aev:focus-visible {
-            outline: 2px solid var(--ochre);
+            outline: 2px solid var(--ochre-ink);
             outline-offset: 2px;
             border-radius: 4px;
         }
@@ -1685,7 +1686,7 @@
             padding: 0.1rem 0.35rem;
             border-radius: 4px;
             font-family: var(--mono);
-            font-size: 0.85em;
+            font-size: max(0.85em, 0.75rem);
             color: var(--ink);
         }
     </style>
@@ -2243,7 +2244,7 @@
                 Coming Soon
             </h2>
             <div class="cards-grid">
-                <div class="card" style="opacity: 0.7;">
+                <div class="card" style="opacity: 0.9;">
                     <div class="card-header">
                         <span class="card-icon" aria-hidden="true">&#127754;</span>
                         <span class="card-title">NAM Model</span>
@@ -2335,6 +2336,8 @@
             const dl = (rows) => '<dl class="sc-dl">' + rows.filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('') + '</dl>';
             const COARSE = window.matchMedia && matchMedia('(pointer: coarse)').matches;
             const Tap = COARSE ? 'Tap' : 'Click';
+            // MapLibre animates in script, so the CSS reduced-motion rule doesn't reach it
+            const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
             const utc = (iso) => iso ? new Date(iso).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
 
             // ---- Layers for Maps mode (WMTS REST tiles; WMS GetMap shown for the current view) ----
@@ -2559,13 +2562,13 @@
                 map._wxErr = false;
                 removeMapStuff(['wx']);
                 map.addSource('wx', { type: 'raster', tiles: [abs(wmtsTemplate(l)).replace(/%7B/g, '{').replace(/%7D/g, '}')], tileSize: 256, minzoom: 0, maxzoom: 8 });
-                map.addLayer({ id: 'wx', type: 'raster', source: 'wx', paint: { 'raster-opacity': 0.8, 'raster-fade-duration': 250 } }, firstSymbol());
+                map.addLayer({ id: 'wx', type: 'raster', source: 'wx', paint: { 'raster-opacity': 0.8, 'raster-fade-duration': REDUCED ? 0 : 250 } }, firstSymbol());
                 setReadout(`<h3>${esc(l.title)}</h3><p>${esc(l.note)}</p>` +
                     `<p class="sc-valid" data-valid="${l.id}">${validCache[l.id] ? validHtml(validCache[l.id]) : '<span class="sc-muted">Checking the valid time&hellip;</span>'}</p>` +
                     scaleHtml(l.id) + `<p class="sc-tilenote sc-muted">Latest available data, drawn from WMTS tiles.</p>`);
                 if (!validCache[l.id]) fillValid(l.id);
                 setHint('Drag and zoom: the tiles and the request below follow the view.');
-                const opts = { duration: animate ? 1100 : 0, padding: 20 };
+                const opts = { duration: animate && !REDUCED ? 1100 : 0, padding: 20 };
                 if (l.bounds) map.fitBounds(l.bounds, opts);
                 else map.easeTo({ center: l.center, zoom: l.zoom - narrow(), duration: opts.duration });
                 updateMapsRequest();
