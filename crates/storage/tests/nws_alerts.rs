@@ -1755,3 +1755,316 @@ async fn a_polygon_search_repairs_a_bowtie_and_matches_its_lobes() {
         .unwrap();
     assert!(miss.is_empty());
 }
+
+// --- an explicit instant: what was in force then ---------------------------------------------
+
+/// 2026-11-01 `h:m`Z, the day of the fixture.
+fn at(h: u32, m: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 11, 1, h, m, 0).unwrap()
+}
+
+/// A copy of the fixture's Severe Thunderstorm Warning under `id` with its own polygon
+/// (`[west, south, east, north]`) and times: issued at `sent`, hazard from `onset` to `ends`,
+/// replacing the messages in `replaces` (then an `Update`).
+fn timed_alert(
+    id: &str,
+    bbox: [f64; 4],
+    sent: DateTime<Utc>,
+    onset: DateTime<Utc>,
+    ends: DateTime<Utc>,
+    replaces: &[&str],
+) -> ParsedAlert {
+    let mut f = features()
+        .into_iter()
+        .find(|f| f["properties"]["event"] == "Severe Thunderstorm Warning")
+        .unwrap();
+    f["geometry"] = serde_json::from_str(&square(bbox[0], bbox[1], bbox[2], bbox[3])).unwrap();
+    let p = &mut f["properties"];
+    p["id"] = json!(id);
+    p["sent"] = json!(sent.to_rfc3339());
+    p["effective"] = json!(sent.to_rfc3339());
+    p["onset"] = json!(onset.to_rfc3339());
+    p["ends"] = json!(ends.to_rfc3339());
+    p["expires"] = json!(ends.to_rfc3339());
+    p["messageType"] = json!(if replaces.is_empty() {
+        "Alert"
+    } else {
+        "Update"
+    });
+    p["references"] = json!(replaces
+        .iter()
+        .map(|r| json!({"identifier": r, "sent": sent.to_rfc3339()}))
+        .collect::<Vec<_>>());
+    parse_feature(&f).unwrap()
+}
+
+// Both squares lie in lon -107.5..-106.5; the small one covers only the eastern half.
+const BIG: [f64; 4] = [-107.5, 37.0, -106.5, 38.0];
+const SMALL: [f64; 4] = [-107.0, 37.0, -106.5, 38.0];
+/// In `BIG` only.
+const P: (f64, f64) = (-107.25, 37.5);
+/// In both.
+const Q: (f64, f64) = (-106.75, 37.5);
+
+struct Timeline {
+    /// Sent 10:00, hazard from 10:30 until 18:00, replaced at 11:00 by `a2` (smaller polygon).
+    a: String,
+    a2: String,
+    /// Sent 10:00 until 18:00, dropped from the feed at the 12:00 poll.
+    b: String,
+}
+
+/// Three polls: 10:01 shows A and B; 11:01 shows A2 (an update of A, sent 11:00) and B; 12:00
+/// shows A2 alone.
+async fn timeline(env: &Env) -> Timeline {
+    let a = timed_alert("urn:test:a", BIG, at(10, 0), at(10, 30), at(18, 0), &[]);
+    let b = timed_alert("urn:test:b", BIG, at(10, 0), at(10, 0), at(18, 0), &[]);
+    let a2 = timed_alert(
+        "urn:test:a2",
+        SMALL,
+        at(11, 0),
+        at(11, 0),
+        at(18, 0),
+        &["urn:test:a"],
+    );
+    let polls: [(DateTime<Utc>, Vec<ParsedAlert>); 3] = [
+        (at(10, 1), vec![a.clone(), b.clone()]),
+        (at(11, 1), vec![a2.clone(), b.clone()]),
+        (at(12, 0), vec![a2.clone()]),
+    ];
+    for (now, feed) in polls {
+        env.nws.apply_feed(&feed, Some(now), now).await.unwrap();
+    }
+    Timeline {
+        a: a.id,
+        a2: a2.id,
+        b: b.id,
+    }
+}
+
+fn point(p: (f64, f64)) -> AlertRegion {
+    AlertRegion::Point { lon: p.0, lat: p.1 }
+}
+
+fn bbox_around(p: (f64, f64)) -> AlertRegion {
+    AlertRegion::Bbox([p.0 - 0.01, p.1 - 0.01, p.0 + 0.01, p.1 + 0.01])
+}
+
+fn polygon_around(p: (f64, f64)) -> AlertRegion {
+    let (x, y, d) = (p.0, p.1, 0.01);
+    AlertRegion::Polygon {
+        wkt: format!(
+            "POLYGON(({} {}, {} {}, {} {}, {} {}, {} {}))",
+            x - d,
+            y - d,
+            x + d,
+            y - d,
+            x + d,
+            y + d,
+            x - d,
+            y + d,
+            x - d,
+            y - d
+        ),
+    }
+}
+
+fn radius_around(p: (f64, f64)) -> AlertRegion {
+    AlertRegion::Radius {
+        lon: p.0,
+        lat: p.1,
+        meters: 500.0,
+    }
+}
+
+fn sorted(mut v: Vec<&str>) -> Vec<String> {
+    v.sort();
+    v.into_iter().map(str::to_string).collect()
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn an_explicit_instant_returns_the_messages_in_force_then() {
+    let env = env().await;
+    let Timeline { a, a2, b } = timeline(&env).await;
+    let (a, a2, b) = (a.as_str(), a2.as_str(), b.as_str());
+
+    // What the poll records: A is over from the moment its replacement was issued (11:00), not
+    // from the poll that first showed it (11:01); B from the poll that no longer listed it.
+    let a_row = env.nws.get(a, false).await.unwrap().unwrap();
+    assert_eq!(a_row.superseded_by.as_deref(), Some(a2));
+    assert_eq!(a_row.superseded_at, Some(at(11, 0)));
+    assert_eq!(a_row.ended_at, None);
+    let b_row = env.nws.get(b, false).await.unwrap().unwrap();
+    assert_eq!(
+        (b_row.superseded_by, b_row.ended_at),
+        (None, Some(at(12, 0)))
+    );
+
+    // (instant, at P (BIG only), at Q (BIG and SMALL)). The row's own life is [issue, end): the
+    // instant it is issued counts, the instant it is replaced / ended / expires does not.
+    let cases: [(DateTime<Utc>, Vec<&str>, Vec<&str>); 13] = [
+        (at(9, 30), vec![], vec![]),          // before anything was issued
+        (at(10, 0), vec![a, b], vec![a, b]),  // T1: issued
+        (at(10, 15), vec![a, b], vec![a, b]), // A's hazard starts at 10:30
+        (at(10, 30), vec![a, b], vec![a, b]), // T2
+        (at(10, 45), vec![a, b], vec![a, b]), // before the update: A is still there
+        (at(10, 59), vec![a, b], vec![a, b]), // ...and the poll has not even run
+        (at(11, 0), vec![b], vec![a2, b]),    // T3: replaced; SMALL no longer covers P
+        (at(11, 30), vec![b], vec![a2, b]),   // B is in force until T4
+        (at(11, 59), vec![b], vec![a2, b]),   //
+        (at(12, 0), vec![], vec![a2]),        // T4: B ended
+        (at(12, 30), vec![], vec![a2]),       //
+        (at(17, 59), vec![], vec![a2]),       //
+        (at(18, 0), vec![], vec![]),          // the end time is exclusive
+    ];
+    for (t, at_p, at_q) in cases {
+        for (name, region) in [
+            ("point", point as fn((f64, f64)) -> AlertRegion),
+            ("bbox", bbox_around),
+            ("polygon", polygon_around),
+            ("radius", radius_around),
+        ] {
+            for (place, xy, want) in [("P", P, &at_p), ("Q", Q, &at_q)] {
+                let hits = env
+                    .nws
+                    .search(&search(region(xy), t0()).in_force_at(t))
+                    .await
+                    .unwrap();
+                let got: Vec<String> = ids(&hits)
+                    .into_iter()
+                    .map(|i| i.trim_start_matches("urn:test:").to_string())
+                    .collect();
+                let want: Vec<String> = sorted(
+                    want.iter()
+                        .map(|i| i.trim_start_matches("urn:test:"))
+                        .collect(),
+                );
+                assert_eq!(got, want, "{name} at {place}, instant {t}");
+            }
+        }
+    }
+
+    // The instant also reaches the status filters unchanged: severity / event / limit.
+    let mut only_extreme = search(point(Q), t0()).in_force_at(at(11, 30));
+    only_extreme.severities = vec!["extreme".into()];
+    assert!(env.nws.search(&only_extreme).await.unwrap().is_empty());
+    let mut one = search(point(Q), t0()).in_force_at(at(11, 30));
+    one.limit = 1;
+    assert_eq!(env.nws.search(&one).await.unwrap().len(), 1);
+
+    // A replacement issued after the poll that shows it (its clock is ahead) cannot make the old
+    // message "replaced in the future": the poll time caps it.
+    let c = timed_alert("urn:test:c", BIG, at(13, 0), at(13, 0), at(18, 0), &[]);
+    let c2 = timed_alert(
+        "urn:test:c2",
+        SMALL,
+        at(14, 0),
+        at(14, 0),
+        at(18, 0),
+        &["urn:test:c"],
+    );
+    env.nws
+        .apply_feed(&[c], Some(at(13, 1)), at(13, 1))
+        .await
+        .unwrap();
+    env.nws
+        .apply_feed(&[c2], Some(at(13, 2)), at(13, 2))
+        .await
+        .unwrap();
+    let c_row = env.nws.get("urn:test:c", false).await.unwrap().unwrap();
+    assert_eq!(c_row.superseded_at, Some(at(13, 2)));
+}
+
+/// A search without a window is what it always was: the lifecycle flags at `now`, on the partial
+/// index. The explicit-instant work must not move either.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_search_without_a_datetime_is_the_live_set_on_the_partial_index() {
+    let env = env().await;
+    // Replaced (A) and ended (B) rows from the timeline, plus one the feed still lists after its
+    // end time (D) and one issued whose hazard is hours away (LATER), both from the 12:01 poll.
+    let tl = timeline(&env).await;
+    let d = timed_alert("urn:test:d", BIG, at(9, 0), at(9, 0), at(11, 15), &[]);
+    let later = timed_alert("urn:test:later", BIG, at(12, 0), at(20, 0), at(23, 0), &[]);
+    let a2 = timed_alert(&tl.a2, SMALL, at(11, 0), at(11, 0), at(18, 0), &[&tl.a]);
+    env.nws
+        .apply_feed(&[a2, d, later], Some(at(12, 1)), at(12, 1))
+        .await
+        .unwrap();
+
+    // The same question asked the way it was asked before: the flags and the end time only.
+    for now in [
+        at(9, 0),
+        at(10, 30),
+        at(11, 30),
+        at(12, 30),
+        at(17, 59),
+        at(18, 0),
+        at(21, 0),
+        t0(),
+    ] {
+        for xy in [P, Q, (-100.0, 40.0)] {
+            let legacy: Vec<String> = sqlx::query_scalar(
+                "SELECT a.id FROM nws_alerts a \
+                 WHERE a.superseded_by IS NULL AND a.ended_at IS NULL \
+                   AND (a.end_time IS NULL OR a.end_time > $1) \
+                   AND COALESCE(lower(a.status), 'actual') = 'actual' \
+                   AND a.geom && ST_SetSRID(ST_MakePoint($2, $3), 4326) \
+                   AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($2, $3), 4326)) \
+                 ORDER BY a.id",
+            )
+            .bind(now)
+            .bind(xy.0)
+            .bind(xy.1)
+            .fetch_all(env.catalog.pool())
+            .await
+            .unwrap();
+            let live = env.nws.search(&search(point(xy), now)).await.unwrap();
+            assert_eq!(ids(&live), legacy, "live set at {now} for {xy:?}");
+            let by_point = env
+                .nws
+                .active_at_point(xy.0, xy.1, now, false)
+                .await
+                .unwrap();
+            assert_eq!(
+                ids(&by_point),
+                legacy,
+                "active_at_point at {now} for {xy:?}"
+            );
+        }
+    }
+    // Not time travel: at 10:30 the flags already hide A (replaced since) and B (ended since),
+    // and show D (over at 11:15, but the 10:30 end-time test passes) and LATER (not issued yet).
+    let q_live = env.nws.search(&search(point(Q), at(10, 30))).await.unwrap();
+    assert_eq!(
+        ids(&q_live),
+        vec!["urn:test:a2", "urn:test:d", "urn:test:later"]
+    );
+
+    // The plan, as Postgres would run the prepared statement (a generic plan, no parameter
+    // values): the wall-clock reads use the small partial GiST index of the live rows; the
+    // instant read must also see replaced and ended rows, so it uses the full one.
+    for region in [point(Q), bbox_around(Q)] {
+        let live = plan_of(&env, &search(region.clone(), t0())).await;
+        assert!(live.contains("idx_nws_alerts_geom_live"), "{live}");
+        let then = plan_of(&env, &search(region, t0()).in_force_at(at(11, 30))).await;
+        assert!(then.contains("idx_nws_alerts_geom"), "{then}");
+        assert!(!then.contains("idx_nws_alerts_geom_live"), "{then}");
+    }
+}
+
+/// How Postgres plans `search_sql(q)` with sequential scans off (the tables here are tiny).
+async fn plan_of(env: &Env, q: &AlertSearch) -> String {
+    use sqlx::Row;
+    let sql = format!(
+        "BEGIN; SET LOCAL enable_seqscan = off; EXPLAIN (GENERIC_PLAN) {}; ROLLBACK",
+        storage::nws_alerts::catalog::search_sql(q)
+    );
+    let mut conn = env.catalog.pool().acquire().await.unwrap();
+    let rows = sqlx::raw_sql(&sql).fetch_all(&mut *conn).await.unwrap();
+    rows.iter()
+        .map(|r| r.get::<String, _>(0))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
