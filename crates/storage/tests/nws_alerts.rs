@@ -1587,3 +1587,46 @@ async fn a_zone_whose_fetch_failed_is_recorded_retried_in_15_minutes_and_never_w
         .unwrap()
         .contains(&"county/MDC031".to_string()));
 }
+
+/// A bowtie is not a valid polygon; the guard (`ST_MakeValid`, once per query) repairs it and the
+/// search still finds what overlaps either lobe.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_polygon_search_repairs_a_bowtie_and_matches_its_lobes() {
+    let env = env().await;
+    let alerts = fixture_alerts();
+    env.nws.apply_feed(&alerts, Some(t0()), t0()).await.unwrap();
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/COZ068",
+                ZoneStatus::Ok,
+                Some(square(CO[0], CO[1], CO[2], CO[3])),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    let winter = id_of(&alerts, "Winter Storm Warning", |_| true);
+
+    // Colorado zone is lon -107.5..-106.5, lat 37..38. The lobes meet at (-107, 38.5) and
+    // cover its upper-left and lower-right.
+    let bowtie = "POLYGON((-108 37, -107 38.5, -108 40, -106 40, -107 38.5, -106 37, -108 37))";
+    let hit = env
+        .nws
+        .search(&search(AlertRegion::Polygon { wkt: bowtie.into() }, t0()))
+        .await
+        .unwrap();
+    assert!(ids(&hit).contains(&winter), "{:?}", ids(&hit));
+    let miss = env
+        .nws
+        .search(&search(
+            AlertRegion::Polygon {
+                wkt: "POLYGON((10 10, 11 10, 11 11, 10 10))".into(),
+            },
+            t0(),
+        ))
+        .await
+        .unwrap();
+    assert!(miss.is_empty());
+}
