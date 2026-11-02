@@ -186,9 +186,10 @@ async fn zone_only_alerts_get_geometry_as_zones_arrive_and_point_query_finds_the
         .await
         .unwrap();
     assert!(
-        n >= 3,
-        "at least winter, test message, marine updated (got {n})"
+        n.alerts_updated >= 3,
+        "at least winter, test message, marine updated (got {n:?})"
     );
+    assert_eq!((n.stored, n.invalid_geometry, n.failed), (3, 0, 0));
     assert_eq!(source_of(&env, &winter).await, ("zones".into(), true));
     assert_eq!(source_of(&env, &test_msg).await, ("zones".into(), true));
     // Marine alert has one of two zones: partial geometry, still pending.
@@ -886,4 +887,320 @@ async fn test_exercise_and_draft_alerts_are_stored_but_only_actual_ones_are_serv
 
 fn md_lonlat() -> (f64, f64) {
     ((MD[0] + MD[2]) / 2.0, (MD[1] + MD[3]) / 2.0)
+}
+
+/// GeoJSON that `ST_GeomFromGeoJSON` raises an error for (not just an empty or degenerate shape).
+const POISON_GEOJSON: &str = r#"{"type":"Polygon","coordinates":"not an array"}"#;
+const POISON_GEOJSON_2: &str = r#"{"type":"Polygon","coordinates":[[[0,0],[1,0,5],[1],[0,0]]]}"#;
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn an_alert_with_a_polygon_postgis_rejects_does_not_poison_the_feed() {
+    let env = env().await;
+    let mut alerts = fixture_alerts();
+    // One poisoned alert that has zones to fall back on, one with nothing to fall back on.
+    let mut with_zone = svr_with_status("urn:test:bad-with-zone", Some("Actual"));
+    with_zone.geometry_json = Some(POISON_GEOJSON.into());
+    with_zone.zone_keys = vec!["forecast/COZ068".into()];
+    let mut no_zone = svr_with_status("urn:test:bad-no-zone", Some("Actual"));
+    no_zone.geometry_json = Some(POISON_GEOJSON_2.into());
+    no_zone.zone_keys = vec![];
+    alerts.push(with_zone);
+    alerts.push(no_zone);
+
+    let r = env
+        .nws
+        .apply_feed(&alerts, Some(t0()), t0())
+        .await
+        .expect("one bad polygon must not fail the whole feed");
+    assert_eq!(r.received, alerts.len());
+    assert_eq!(r.upserted, alerts.len(), "every alert is stored");
+    assert_eq!((r.geometry_rejected, r.failed), (2, 0));
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM nws_alerts")
+        .fetch_one(env.catalog.pool())
+        .await
+        .unwrap();
+    assert_eq!(stored as usize, alerts.len());
+
+    // The valid ones are untouched, the bad ones are stored without their polygon.
+    let svr = id_of(&alerts, "Severe Thunderstorm Warning", |a| {
+        a.id.starts_with("urn:oid")
+    });
+    assert_eq!(source_of(&env, &svr).await, ("polygon".into(), true));
+    assert_eq!(
+        source_of(&env, "urn:test:bad-with-zone").await,
+        ("pending".into(), false),
+        "falls back to its zones"
+    );
+    assert_eq!(
+        source_of(&env, "urn:test:bad-no-zone").await,
+        ("none".into(), false),
+        "nothing to fall back on"
+    );
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/COZ068",
+                ZoneStatus::Ok,
+                Some(square(CO[0], CO[1], CO[2], CO[3])),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        source_of(&env, "urn:test:bad-with-zone").await,
+        ("zones".into(), true)
+    );
+
+    // The poll counts as a success: the status moved on (so the downloader keeps its ETag).
+    let st = env.nws.status().await.unwrap().unwrap();
+    assert_eq!(st.last_success_at, Some(t0()));
+    assert_eq!(st.feed_updated_at, Some(t0()));
+    assert_eq!(st.last_alert_count, Some(alerts.len() as i32));
+    assert!(st.last_error.is_none());
+
+    // The same feed next minute is just as fine (the bad row does not recur as a failure).
+    let r = env
+        .nws
+        .apply_feed(
+            &alerts,
+            Some(t0() + Duration::minutes(1)),
+            t0() + Duration::minutes(1),
+        )
+        .await
+        .unwrap();
+    assert_eq!((r.ended, r.upserted), (0, alerts.len()));
+    assert_eq!(
+        source_of(&env, "urn:test:bad-with-zone").await,
+        ("zones".into(), true),
+        "geometry from the zones is kept across polls"
+    );
+
+    // An alert that was fine and then arrives with a bad polygon stays live.
+    let mut next = alerts.clone();
+    next.iter_mut().find(|a| a.id == svr).unwrap().geometry_json = Some(POISON_GEOJSON.into());
+    env.nws
+        .apply_feed(
+            &next,
+            Some(t0() + Duration::minutes(2)),
+            t0() + Duration::minutes(2),
+        )
+        .await
+        .unwrap();
+    let row = env.nws.get(&svr, false).await.unwrap().unwrap();
+    assert!(row.ended_at.is_none() && row.superseded_by.is_none());
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn one_bad_zone_does_not_poison_the_batch() {
+    let env = env().await;
+    let alerts = fixture_alerts();
+    env.nws.apply_feed(&alerts, Some(t0()), t0()).await.unwrap();
+    let winter = id_of(&alerts, "Winter Storm Warning", |_| true);
+    let test_msg = id_of(&alerts, "Test Message", |_| true);
+    let sca = id_of(&alerts, "Small Craft Advisory", |a| a.zone_keys.len() == 2);
+
+    let r = env
+        .nws
+        .upsert_zones(
+            &[
+                zone(
+                    "forecast/COZ068",
+                    ZoneStatus::Ok,
+                    Some(square(CO[0], CO[1], CO[2], CO[3])),
+                ),
+                // the county zone's geometry makes PostGIS raise
+                zone("county/MDC031", ZoneStatus::Ok, Some(POISON_GEOJSON.into())),
+                zone(
+                    "forecast/PZZ455",
+                    ZoneStatus::Ok,
+                    Some(square(PZ_A[0], PZ_A[1], PZ_A[2], PZ_A[3])),
+                ),
+                zone(
+                    "forecast/PZZ475",
+                    ZoneStatus::Ok,
+                    Some(square(PZ_B[0], PZ_B[1], PZ_B[2], PZ_B[3])),
+                ),
+            ],
+            t0(),
+        )
+        .await
+        .expect("one bad zone must not fail the batch");
+    assert_eq!((r.stored, r.invalid_geometry, r.failed), (4, 1, 0));
+
+    // The good zones landed and their alerts have geometry...
+    assert_eq!(source_of(&env, &winter).await, ("zones".into(), true));
+    assert_eq!(source_of(&env, &sca).await, ("zones".into(), true));
+    // ...the bad one is recorded as such, with no geometry, so its alert settles on none.
+    let (status, has_geom): (String, bool) = sqlx::query_as(
+        "SELECT fetch_status, geom IS NOT NULL FROM nws_zones WHERE zone_key = 'county/MDC031'",
+    )
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap();
+    assert_eq!((status.as_str(), has_geom), ("invalid_geometry", false));
+    assert_eq!(source_of(&env, &test_msg).await, ("none".into(), false));
+
+    // It is retried after a day like any other zone without usable geometry, not every poll.
+    assert!(!env
+        .nws
+        .missing_zones(t0())
+        .await
+        .unwrap()
+        .contains(&"county/MDC031".to_string()));
+    assert!(env
+        .nws
+        .missing_zones(t0() + Duration::hours(25))
+        .await
+        .unwrap()
+        .contains(&"county/MDC031".to_string()));
+
+    // A later refresh that returns garbage never wipes a geometry we hold.
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/COZ068",
+                ZoneStatus::Ok,
+                Some(POISON_GEOJSON_2.into()),
+            )],
+            t0() + Duration::minutes(1),
+        )
+        .await
+        .unwrap();
+    assert_eq!(source_of(&env, &winter).await, ("zones".into(), true));
+}
+
+/// A trigger that raises (a stand-in for any per-row failure: a GEOS error in a union, text the
+/// database refuses) whenever the poison alert's geometry columns are written with `zones` or
+/// `pending`.
+async fn install_poison_trigger(env: &Env) {
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION nws_test_poison() RETURNS trigger LANGUAGE plpgsql AS $f$ \
+         BEGIN \
+           IF NEW.id = 'urn:test:poison' AND NEW.geometry_source IN ('zones', 'pending') THEN \
+             RAISE EXCEPTION 'poisoned row' USING ERRCODE = 'XX000'; \
+           END IF; \
+           RETURN NEW; \
+         END $f$",
+    )
+    .execute(env.catalog.pool())
+    .await
+    .unwrap();
+    sqlx::query("DROP TRIGGER IF EXISTS nws_test_poison ON nws_alerts")
+        .execute(env.catalog.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER nws_test_poison BEFORE UPDATE ON nws_alerts \
+         FOR EACH ROW EXECUTE FUNCTION nws_test_poison()",
+    )
+    .execute(env.catalog.pool())
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_row_the_database_refuses_is_skipped_in_the_feed_and_in_the_zone_recompute() {
+    let env = env().await;
+    let mut alerts = fixture_alerts();
+    let mut poison = svr_with_status("urn:test:poison", Some("Actual"));
+    poison.geometry_json = None;
+    poison.zone_keys = vec!["forecast/COZ068".into()];
+    alerts.push(poison);
+    let winter = id_of(&alerts, "Winter Storm Warning", |_| true);
+    let svr = id_of(&alerts, "Severe Thunderstorm Warning", |a| {
+        a.id.starts_with("urn:oid")
+    });
+    env.nws.apply_feed(&alerts, Some(t0()), t0()).await.unwrap();
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/COZ068",
+                ZoneStatus::Ok,
+                Some(square(CO[0], CO[1], CO[2], CO[3])),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        source_of(&env, "urn:test:poison").await,
+        ("zones".into(), true)
+    );
+
+    install_poison_trigger(&env).await;
+
+    // Feed: the poison row's update fails, the rest of the feed goes through.
+    let mut next = alerts.clone();
+    for a in &mut next {
+        if a.id == "urn:test:poison" || a.id == svr {
+            a.headline = Some("changed headline".into());
+            a.description = Some("changed description".into());
+        }
+    }
+    let t1 = t0() + Duration::minutes(1);
+    let r = env
+        .nws
+        .apply_feed(&next, Some(t1), t1)
+        .await
+        .expect("a refused row must not fail the feed");
+    assert_eq!((r.failed, r.upserted), (1, alerts.len() - 1));
+    assert_eq!(
+        env.nws
+            .get(&svr, false)
+            .await
+            .unwrap()
+            .unwrap()
+            .headline
+            .as_deref(),
+        Some("changed headline"),
+        "the rest of the feed was applied"
+    );
+    let p = env
+        .nws
+        .get("urn:test:poison", false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(p.headline.as_deref(), Some("changed headline"));
+    assert!(
+        p.ended_at.is_none() && p.superseded_by.is_none(),
+        "an alert that is still listed stays live even though its update was refused"
+    );
+    let st = env.nws.status().await.unwrap().unwrap();
+    assert_eq!(st.last_success_at, Some(t1));
+    assert_eq!(st.feed_updated_at, Some(t1));
+
+    // Zones: the poison alert's recomputation fails, the others are recomputed.
+    let z = env
+        .nws
+        .upsert_zones(
+            &[zone(
+                "forecast/COZ068",
+                ZoneStatus::Ok,
+                Some(square(CO[0] - 0.1, CO[1], CO[2], CO[3])),
+            )],
+            t1,
+        )
+        .await
+        .expect("a refused recomputation must not fail the zone batch");
+    assert_eq!((z.stored, z.alerts_failed), (1, 1));
+    assert!(z.alerts_updated >= 2, "{z:?}");
+    assert_eq!(
+        source_of(&env, "urn:test:poison").await,
+        ("none".into(), false)
+    );
+    assert_eq!(source_of(&env, &winter).await, ("zones".into(), true));
+    let hit = env
+        .nws
+        .active_at_point(CO[0] - 0.05, 37.5, t0() + Duration::hours(7), false)
+        .await
+        .unwrap();
+    assert!(
+        ids(&hit).contains(&winter),
+        "the refreshed zone geometry reached the other alerts"
+    );
 }

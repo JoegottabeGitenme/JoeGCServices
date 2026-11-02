@@ -19,7 +19,8 @@
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
+use tracing::warn;
 
 use wms_common::{WmsError, WmsResult};
 
@@ -43,6 +44,9 @@ pub enum ZoneStatus {
     NotFound,
     /// Fetched, but the zone has no usable polygon.
     NoGeometry,
+    /// Fetched, but PostGIS rejected the polygon. Set by the catalog when it stores a zone
+    /// whose geometry raised an error, never by a caller.
+    InvalidGeometry,
 }
 
 impl ZoneStatus {
@@ -51,6 +55,7 @@ impl ZoneStatus {
             Self::Ok => "ok",
             Self::NotFound => "not_found",
             Self::NoGeometry => "no_geometry",
+            Self::InvalidGeometry => "invalid_geometry",
         }
     }
 }
@@ -81,6 +86,28 @@ pub struct ApplyResult {
     pub ended: u64,
     /// Zone keys that need fetching (never fetched, or stale/failed past retry).
     pub missing_zones: Vec<String>,
+    /// Alerts whose own polygon PostGIS rejected: stored without it (geometry from their
+    /// zones, else none).
+    pub geometry_rejected: usize,
+    /// Alerts that could not be stored at all (skipped; an older stored version stays as is).
+    pub failed: usize,
+    /// Alerts whose geometry could not be recomputed from their zones (parked with none).
+    pub geometry_failed: usize,
+}
+
+/// What [`NwsAlertCatalog::upsert_zones`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ZonesResult {
+    /// Zone rows written (those stored as `invalid_geometry` included).
+    pub stored: usize,
+    /// Zones whose geometry PostGIS rejected: stored with no geometry, `invalid_geometry`.
+    pub invalid_geometry: usize,
+    /// Zones that could not be stored at all (skipped; asked for again later).
+    pub failed: usize,
+    /// Alerts whose geometry was recomputed.
+    pub alerts_updated: u64,
+    /// Alerts whose geometry could not be recomputed (parked with none).
+    pub alerts_failed: usize,
 }
 
 /// Poll health, for a data-age indicator.
@@ -276,53 +303,42 @@ impl NwsAlertCatalog {
         };
 
         for a in alerts {
-            sqlx::query(UPSERT_ALERT_SQL)
-                .bind(&a.id)
-                .bind(&a.event)
-                .bind(&a.severity)
-                .bind(&a.urgency)
-                .bind(&a.certainty)
-                .bind(&a.category)
-                .bind(&a.status)
-                .bind(&a.message_type)
-                .bind(&a.response)
-                .bind(&a.headline)
-                .bind(&a.nws_headline)
-                .bind(&a.description)
-                .bind(&a.instruction)
-                .bind(&a.description_text)
-                .bind(&a.instruction_text)
-                .bind(&a.area_desc)
-                .bind(&a.sender)
-                .bind(&a.sender_name)
-                .bind(&a.web)
-                .bind(a.sent)
-                .bind(a.effective)
-                .bind(a.onset)
-                .bind(a.expires)
-                .bind(a.ends)
-                .bind(&a.ugc)
-                .bind(&a.same)
-                .bind(&a.zone_keys)
-                .bind(a.is_marine)
-                .bind(serde_json::to_value(&a.vtec).unwrap_or(Value::Null))
-                .bind(a.vtec.first().map(|v| v.event_key()))
-                .bind(a.vtec.first().map(|v| v.office.clone()))
-                .bind(a.vtec.first().map(|v| v.phenomenon.clone()))
-                .bind(a.vtec.first().map(|v| v.significance.to_string()))
-                .bind(a.vtec.first().map(|v| v.action.clone()))
-                .bind(a.vtec.first().map(|v| v.etn as i32))
-                .bind(&a.sections)
-                .bind(&a.parameters)
-                .bind(&a.color)
-                .bind(&a.references)
-                .bind(&a.geometry_json)
-                .bind(a.ended_on_arrival)
-                .bind(now)
-                .execute(&mut *tx)
+            // Each alert is stored under its own savepoint: one the database rejects (a polygon
+            // PostGIS cannot parse, text it cannot hold) must not abort the rest of the feed.
+            let stored = match upsert_alert_isolated(&mut tx, a, a.geometry_json.as_deref(), now)
                 .await
-                .map_err(db("upsert"))?;
-            res.upserted += 1;
+            {
+                Ok(()) => Stored::Full,
+                Err(e) if !is_row_error(&e) => return Err(db("upsert")(e)),
+                Err(e) if a.geometry_json.is_some() => {
+                    warn!(alert = %a.id, error = %e, "NWS alert rejected by the database; retrying without its own polygon");
+                    match upsert_alert_isolated(&mut tx, a, None, now).await {
+                        Ok(()) => Stored::WithoutPolygon,
+                        Err(e) if !is_row_error(&e) => return Err(db("upsert")(e)),
+                        Err(e) => {
+                            warn!(alert = %a.id, error = %e, "NWS alert skipped: the database rejects it even without its polygon");
+                            Stored::Skipped
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(alert = %a.id, error = %e, "NWS alert skipped: the database rejected it");
+                    Stored::Skipped
+                }
+            };
+            match stored {
+                Stored::Full => res.upserted += 1,
+                Stored::WithoutPolygon => {
+                    res.upserted += 1;
+                    res.geometry_rejected += 1;
+                }
+                Stored::Skipped => {
+                    // Not stored, so it supersedes nothing; an older stored version of it stays
+                    // as it was (its id is in the feed, so the sweep below does not end it).
+                    res.failed += 1;
+                    continue;
+                }
+            }
 
             let targets = lifecycle::supersede_targets(&a.id, &a.references);
             if !targets.is_empty() {
@@ -362,13 +378,15 @@ impl NwsAlertCatalog {
             .execute(&mut *tx)
             .await
             .map_err(db("polygon fallback"))?;
-            sqlx::query(&recompute_geometry_sql(
-                "a2.id = ANY($1) AND a2.geometry_source = 'pending' AND a2.geom IS NULL",
-            ))
+            let pending: Vec<String> = sqlx::query_scalar(
+                "SELECT id FROM nws_alerts \
+                 WHERE id = ANY($1) AND geometry_source = 'pending' AND geom IS NULL",
+            )
             .bind(&ids)
-            .execute(&mut *tx)
+            .fetch_all(&mut *tx)
             .await
-            .map_err(db("geometry"))?;
+            .map_err(db("pending alerts"))?;
+            res.geometry_failed = recompute_alerts(&mut tx, &pending).await?.1;
 
             sqlx::query(
                 "INSERT INTO nws_alerts_status (id, last_attempt_at, last_success_at, last_change_at, \
@@ -441,50 +459,71 @@ impl NwsAlertCatalog {
     }
 
     /// Store fetched zones and recompute the geometry of every alert that uses them.
-    /// Returns the number of alerts whose geometry was recomputed.
-    pub async fn upsert_zones(&self, zones: &[ZoneRecord], now: DateTime<Utc>) -> WmsResult<u64> {
+    ///
+    /// Each zone and each alert recomputation runs under its own savepoint, so one zone
+    /// PostGIS rejects (stored as `invalid_geometry`, no geometry) or one union that fails
+    /// cannot take the rest of the batch down with it.
+    pub async fn upsert_zones(
+        &self,
+        zones: &[ZoneRecord],
+        now: DateTime<Utc>,
+    ) -> WmsResult<ZonesResult> {
+        let mut res = ZonesResult::default();
         if zones.is_empty() {
-            return Ok(0);
+            return Ok(res);
         }
         let mut tx = self.pool.begin().await.map_err(db("begin"))?;
         for z in zones {
-            let (ty, id) = z.zone_key.split_once('/').unwrap_or(("", &z.zone_key));
-            sqlx::query(
-                "INSERT INTO nws_zones (zone_key, zone_type, zone_id, name, state, kind, geom, fetch_status, fetched_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, \
-                    nws_clean_geom(ST_SetSRID(ST_GeomFromGeoJSON($7::text), 4326)), $8, $9) \
-                 ON CONFLICT (zone_key) DO UPDATE SET \
-                    name = COALESCE(EXCLUDED.name, nws_zones.name), \
-                    state = COALESCE(EXCLUDED.state, nws_zones.state), \
-                    kind = COALESCE(EXCLUDED.kind, nws_zones.kind), \
-                    geom = COALESCE(EXCLUDED.geom, nws_zones.geom), \
-                    fetch_status = CASE WHEN EXCLUDED.geom IS NULL AND nws_zones.geom IS NOT NULL \
-                                        THEN nws_zones.fetch_status ELSE EXCLUDED.fetch_status END, \
-                    fetched_at = EXCLUDED.fetched_at",
+            let stored = match upsert_zone_isolated(
+                &mut tx,
+                z,
+                z.geometry_json.as_deref(),
+                z.status,
+                now,
             )
-            .bind(&z.zone_key)
-            .bind(ty)
-            .bind(id)
-            .bind(&z.name)
-            .bind(&z.state)
-            .bind(&z.kind)
-            .bind(&z.geometry_json)
-            .bind(z.status.as_str())
-            .bind(now)
-            .execute(&mut *tx)
             .await
-            .map_err(db("zone upsert"))?;
+            {
+                Ok(()) => Some(false),
+                Err(e) if !is_row_error(&e) => return Err(db("zone upsert")(e)),
+                Err(e) if z.geometry_json.is_some() => {
+                    warn!(zone = %z.zone_key, error = %e, "NWS zone geometry rejected by the database; storing the zone without it");
+                    match upsert_zone_isolated(&mut tx, z, None, ZoneStatus::InvalidGeometry, now)
+                        .await
+                    {
+                        Ok(()) => Some(true),
+                        Err(e) if !is_row_error(&e) => return Err(db("zone upsert")(e)),
+                        Err(e) => {
+                            warn!(zone = %z.zone_key, error = %e, "NWS zone skipped: the database rejects it even without geometry");
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(zone = %z.zone_key, error = %e, "NWS zone skipped: the database rejected it");
+                    None
+                }
+            };
+            match stored {
+                Some(invalid) => {
+                    res.stored += 1;
+                    res.invalid_geometry += usize::from(invalid);
+                }
+                None => res.failed += 1,
+            }
         }
         let keys: Vec<&str> = zones.iter().map(|z| z.zone_key.as_str()).collect();
-        let r = sqlx::query(&recompute_geometry_sql(
-            "a2.zone_keys && $1 AND a2.geometry_source IN ('pending', 'zones')",
-        ))
+        let affected: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM nws_alerts WHERE zone_keys && $1 AND geometry_source IN ('pending', 'zones')",
+        )
         .bind(&keys)
-        .execute(&mut *tx)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(db("geometry"))?;
+        .map_err(db("affected alerts"))?;
+        let (updated, failed) = recompute_alerts(&mut tx, &affected).await?;
+        res.alerts_updated = updated;
+        res.alerts_failed = failed;
         tx.commit().await.map_err(db("commit"))?;
-        Ok(r.rows_affected())
+        Ok(res)
     }
 
     /// Delete alerts that ended (or expired, or were superseded) before `cutoff` and
@@ -670,6 +709,214 @@ impl NwsAlertCatalog {
             .await
             .map_err(db("get"))
     }
+}
+
+/// How one alert of a feed was stored.
+enum Stored {
+    Full,
+    /// Its own polygon was rejected; stored without it.
+    WithoutPolygon,
+    Skipped,
+}
+
+/// Errors that belong to one row's data (data exceptions, constraint violations, PostGIS/GEOS
+/// "internal" errors on bad shapes), as opposed to the connection or the transaction being in
+/// trouble. Only these are isolated and skipped; anything else fails the call.
+fn is_row_error(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .and_then(|d| d.code())
+        .is_some_and(|c| c.starts_with("22") || c.starts_with("23") || c.starts_with("XX"))
+}
+
+async fn savepoint(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SAVEPOINT nws_row").execute(conn).await?;
+    Ok(())
+}
+
+/// Release the savepoint when `r` is Ok; roll back to it (and pop it) when it is not, so the
+/// surrounding transaction is usable again. If the rollback itself fails the connection is in
+/// trouble and that error is the one returned.
+async fn finish_savepoint<T>(
+    conn: &mut PgConnection,
+    r: Result<T, sqlx::Error>,
+) -> Result<T, sqlx::Error> {
+    match r {
+        Ok(v) => {
+            sqlx::query("RELEASE SAVEPOINT nws_row")
+                .execute(conn)
+                .await?;
+            Ok(v)
+        }
+        Err(e) => {
+            sqlx::query("ROLLBACK TO SAVEPOINT nws_row")
+                .execute(&mut *conn)
+                .await?;
+            sqlx::query("RELEASE SAVEPOINT nws_row")
+                .execute(conn)
+                .await?;
+            Err(e)
+        }
+    }
+}
+
+async fn upsert_alert_isolated(
+    conn: &mut PgConnection,
+    a: &ParsedAlert,
+    polygon: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    savepoint(conn).await?;
+    let r = upsert_alert(conn, a, polygon, now).await;
+    finish_savepoint(conn, r).await
+}
+
+/// `polygon` is the alert's own GeoJSON geometry (passed separately so a rejected one can be
+/// retried as `None`).
+async fn upsert_alert(
+    conn: &mut PgConnection,
+    a: &ParsedAlert,
+    polygon: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(UPSERT_ALERT_SQL)
+        .bind(&a.id)
+        .bind(&a.event)
+        .bind(&a.severity)
+        .bind(&a.urgency)
+        .bind(&a.certainty)
+        .bind(&a.category)
+        .bind(&a.status)
+        .bind(&a.message_type)
+        .bind(&a.response)
+        .bind(&a.headline)
+        .bind(&a.nws_headline)
+        .bind(&a.description)
+        .bind(&a.instruction)
+        .bind(&a.description_text)
+        .bind(&a.instruction_text)
+        .bind(&a.area_desc)
+        .bind(&a.sender)
+        .bind(&a.sender_name)
+        .bind(&a.web)
+        .bind(a.sent)
+        .bind(a.effective)
+        .bind(a.onset)
+        .bind(a.expires)
+        .bind(a.ends)
+        .bind(&a.ugc)
+        .bind(&a.same)
+        .bind(&a.zone_keys)
+        .bind(a.is_marine)
+        .bind(serde_json::to_value(&a.vtec).unwrap_or(Value::Null))
+        .bind(a.vtec.first().map(|v| v.event_key()))
+        .bind(a.vtec.first().map(|v| v.office.clone()))
+        .bind(a.vtec.first().map(|v| v.phenomenon.clone()))
+        .bind(a.vtec.first().map(|v| v.significance.to_string()))
+        .bind(a.vtec.first().map(|v| v.action.clone()))
+        .bind(a.vtec.first().map(|v| v.etn as i32))
+        .bind(&a.sections)
+        .bind(&a.parameters)
+        .bind(&a.color)
+        .bind(&a.references)
+        .bind(polygon)
+        .bind(a.ended_on_arrival)
+        .bind(now)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_zone_isolated(
+    conn: &mut PgConnection,
+    z: &ZoneRecord,
+    geometry: Option<&str>,
+    status: ZoneStatus,
+    now: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    savepoint(conn).await?;
+    let r = upsert_zone(conn, z, geometry, status, now).await;
+    finish_savepoint(conn, r).await
+}
+
+async fn upsert_zone(
+    conn: &mut PgConnection,
+    z: &ZoneRecord,
+    geometry: Option<&str>,
+    status: ZoneStatus,
+    now: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    let (ty, id) = z.zone_key.split_once('/').unwrap_or(("", &z.zone_key));
+    sqlx::query(
+        "INSERT INTO nws_zones (zone_key, zone_type, zone_id, name, state, kind, geom, fetch_status, fetched_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, \
+            nws_clean_geom(ST_SetSRID(ST_GeomFromGeoJSON($7::text), 4326)), $8, $9) \
+         ON CONFLICT (zone_key) DO UPDATE SET \
+            name = COALESCE(EXCLUDED.name, nws_zones.name), \
+            state = COALESCE(EXCLUDED.state, nws_zones.state), \
+            kind = COALESCE(EXCLUDED.kind, nws_zones.kind), \
+            geom = COALESCE(EXCLUDED.geom, nws_zones.geom), \
+            fetch_status = CASE WHEN EXCLUDED.geom IS NULL AND nws_zones.geom IS NOT NULL \
+                                THEN nws_zones.fetch_status ELSE EXCLUDED.fetch_status END, \
+            fetched_at = EXCLUDED.fetched_at",
+    )
+    .bind(&z.zone_key)
+    .bind(ty)
+    .bind(id)
+    .bind(&z.name)
+    .bind(&z.state)
+    .bind(&z.kind)
+    .bind(geometry)
+    .bind(status.as_str())
+    .bind(now)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Recompute the geometry of these zone-based alerts. One statement under a savepoint in the
+/// normal case; if the database rejects it (a union GEOS cannot compute), redo it alert by alert
+/// so the rest still get theirs, and park the culprit with no geometry. Returns
+/// `(recomputed, failed)`.
+async fn recompute_alerts(conn: &mut PgConnection, ids: &[String]) -> WmsResult<(u64, usize)> {
+    if ids.is_empty() {
+        return Ok((0, 0));
+    }
+    match recompute_isolated(&mut *conn, ids).await {
+        Ok(n) => return Ok((n, 0)),
+        Err(e) if !is_row_error(&e) => return Err(db("geometry")(e)),
+        Err(e) => {
+            warn!(alerts = ids.len(), error = %e, "NWS alert geometry recompute failed; redoing it one alert at a time")
+        }
+    }
+    let (mut done, mut failed) = (0u64, 0usize);
+    for id in ids {
+        match recompute_isolated(&mut *conn, std::slice::from_ref(id)).await {
+            Ok(n) => done += n,
+            Err(e) if !is_row_error(&e) => return Err(db("geometry")(e)),
+            Err(e) => {
+                warn!(alert = %id, error = %e, "NWS alert geometry could not be computed from its zones; leaving it without");
+                sqlx::query(
+                    "UPDATE nws_alerts SET geom = NULL, geometry_source = 'none' WHERE id = $1",
+                )
+                .bind(id)
+                .execute(&mut *conn)
+                .await
+                .map_err(db("geometry"))?;
+                failed += 1;
+            }
+        }
+    }
+    Ok((done, failed))
+}
+
+async fn recompute_isolated(conn: &mut PgConnection, ids: &[String]) -> Result<u64, sqlx::Error> {
+    savepoint(conn).await?;
+    let r = sqlx::query(&recompute_geometry_sql("a2.id = ANY($1)"))
+        .bind(ids)
+        .execute(&mut *conn)
+        .await
+        .map(|r| r.rows_affected());
+    finish_savepoint(conn, r).await
 }
 
 /// Recompute `geom`/`geometry_source` for the zone-based alerts selected by `cond`
