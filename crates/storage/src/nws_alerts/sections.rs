@@ -62,7 +62,9 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, Offset, Timelike, Utc,
+};
 use serde_json::{json, Value};
 
 /// One period of a zone forecast: `.TUE NIGHT...SE wind 50 kt. Seas 20 ft.`
@@ -385,34 +387,112 @@ pub const FREE_TEXT_MAX: usize = 200;
 /// name a day that is over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ForecastClock {
+    zone: Zone,
     sent: DateTime<FixedOffset>,
     now: DateTime<FixedOffset>,
+    /// The local day that `TODAY`, `REST OF TODAY` and `THIS AFTERNOON` mean.
+    today: NaiveDate,
+    /// The local day that the night `TONIGHT`, `REST OF TONIGHT` and `OVERNIGHT` mean began on.
+    tonight: NaiveDate,
 }
+
+const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 impl ForecastClock {
     /// `None` when the office's time zone is not known: `formal_headline` is NWS' own headline,
     /// "Gale Warning issued November 2 at 3:20AM AKST until November 3 at 5:00PM AKST by NWS
-    /// Anchorage AK", whose first time zone is where `sent` is local.
+    /// Anchorage AK", whose first time zone is where `sent` is local. The zone is kept, not just
+    /// its offset on `sent`, so that `now` and the 6 AM and 6 PM of the forecast are on the right
+    /// side of a change to or from daylight time.
+    ///
+    /// `TODAY` and `TONIGHT` are the day of `sent` until the periods say otherwise (see
+    /// [`ForecastClock::dated_by`]).
     pub fn new(sent: DateTime<Utc>, now: DateTime<Utc>, formal_headline: &str) -> Option<Self> {
-        let offset = utc_offset(formal_headline)?;
+        let zone = Zone::named(formal_headline, sent)?;
+        let sent = sent.with_timezone(&zone.offset_at(sent));
+        let now = now.with_timezone(&zone.offset_at(now));
         Some(Self {
-            sent: sent.with_timezone(&offset),
-            now: now.with_timezone(&offset),
+            zone,
+            sent,
+            now,
+            today: sent.date_naive(),
+            tonight: sent.date_naive(),
         })
     }
 
-    /// Whole local days from the day the forecast was written to the day it is read.
-    fn days_late(&self) -> i64 {
-        (self.now.date_naive() - self.sent.date_naive()).num_days()
+    /// The clock with `TODAY` and `TONIGHT` dated from the forecast itself, `names` being the names
+    /// of its periods in order, not from the day it was sent. NWS Juneau sends some forecasts just
+    /// after midnight with `TONIGHT` first: the night that began the evening before, and `WED`
+    /// follows it in a forecast sent on a Wednesday.
+    ///
+    /// The periods before the first one a weekday names are the half days (a day, a night) right
+    /// before it, counted back: `TONIGHT, WED` is Tuesday night, `TODAY, TONIGHT, THU` is Wednesday
+    /// and its night. That counts only when it gives the day of `sent` or the one before. Without
+    /// a weekday to count from, a forecast that starts with a night and was sent between midnight
+    /// and 6 AM has the night that began the evening before.
+    fn dated_by<'a>(mut self, names: impl IntoIterator<Item = &'a str>) -> Self {
+        let sent = self.sent.date_naive();
+        // (the relative periods in front of the first one that a weekday names)
+        let mut relative = Vec::new();
+        let mut anchor = None;
+        for name in names {
+            let slots = period_slots(name);
+            match slots.as_slice() {
+                [Slot {
+                    weekday: None,
+                    night,
+                }] => relative.push(*night),
+                [first, ..] if first.weekday.is_some() => {
+                    anchor = Some(*first);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if let Some(anchor) = anchor {
+            // half days: the day is 2 x (days from CE), its night is one more
+            let mut half =
+                2 * i64::from(self.date_of(anchor).num_days_from_ce()) + i64::from(anchor.night);
+            let mut dated = Vec::new();
+            for &night in relative.iter().rev() {
+                half -= 1;
+                if (half.rem_euclid(2) == 1) != night {
+                    half -= 1;
+                }
+                let date = i32::try_from(half.div_euclid(2))
+                    .ok()
+                    .and_then(NaiveDate::from_num_days_from_ce_opt);
+                dated.push((night, date));
+            }
+            let valid =
+                |d: Option<NaiveDate>| d.filter(|d| *d == sent || *d == sent - Duration::days(1));
+            if dated.iter().all(|(_, d)| valid(*d).is_some()) {
+                for (night, date) in dated {
+                    let date = date.unwrap_or(sent);
+                    if night {
+                        self.tonight = date;
+                    } else {
+                        self.today = date;
+                    }
+                }
+                return self;
+            }
+        }
+        if relative.first() == Some(&true) && self.sent.hour() < 6 {
+            self.tonight = sent - Duration::days(1);
+        }
+        self
     }
 
-    /// The local day a slot of the forecast falls on: `TODAY` and `TONIGHT` are the day it was
-    /// written, a weekday the next one of that name (the day itself too).
+    /// The local day a slot of the forecast falls on: `TODAY` and `TONIGHT` the days they were
+    /// dated to, a weekday the next one of that name from the day it was sent (the day itself
+    /// too).
     fn date_of(&self, slot: Slot) -> NaiveDate {
-        let from = self.sent.date_naive();
         match slot.weekday {
-            None => from,
+            None if slot.night => self.tonight,
+            None => self.today,
             Some(w) => {
+                let from = self.sent.date_naive();
                 let ahead =
                     (i64::from(w) - i64::from(from.weekday().num_days_from_monday())).rem_euclid(7);
                 from + Duration::days(ahead)
@@ -427,13 +507,7 @@ impl ForecastClock {
         let Some(start) = self.date_of(slot).and_hms_opt(start_hour, 0, 0) else {
             return false;
         };
-        let Some(end) = (start + Duration::hours(12))
-            .and_local_timezone(*self.now.offset())
-            .single()
-        else {
-            return false;
-        };
-        end <= self.now
+        self.zone.utc_of(start + Duration::hours(12)) <= self.now.with_timezone(&Utc)
     }
 
     /// Whether every slot a period covers is over (a period that covers none is never over).
@@ -442,46 +516,120 @@ impl ForecastClock {
         !slots.is_empty() && slots.iter().all(|s| self.is_over(*s))
     }
 
-    /// `TODAY`, `REST OF TODAY` and `TONIGHT` as the day they meant when the forecast was written
-    /// (`Sun`, `Sun night`), once that day is over. The other names are dated already.
+    /// `TODAY`, `TONIGHT` and the other periods that name the day the forecast was written for
+    /// as the day they meant (`Sun`, `Sun night`), once the date has gone by. The other names are
+    /// dated already.
     fn relabel(&self, name: &str) -> Option<String> {
-        if self.days_late() < 1 {
+        let slots = period_slots(name);
+        let [slot @ Slot { weekday: None, .. }] = slots.as_slice() else {
+            return None;
+        };
+        let date = self.date_of(*slot);
+        if date >= self.now.date_naive() {
             return None;
         }
-        let day = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-            [self.sent.weekday().num_days_from_monday() as usize];
-        match name {
-            "TODAY" | "REST OF TODAY" => Some(day.to_string()),
-            "TONIGHT" => Some(format!("{day} night")),
-            _ => None,
-        }
+        let day = DAYS[date.weekday().num_days_from_monday() as usize];
+        Some(if slot.night {
+            format!("{day} night")
+        } else {
+            day.to_string()
+        })
     }
 }
 
-/// The UTC offset of the first time zone that a formal headline names (`3:20AM AKST`). The zones
-/// NWS writes in the United States and its territories.
-fn utc_offset(formal_headline: &str) -> Option<FixedOffset> {
-    let hours = formal_headline.split_whitespace().find_map(|w| {
-        Some(match w.trim_matches(|c: char| !c.is_ascii_alphanumeric()) {
-            "AKST" => -9,
-            "AKDT" => -8,
-            "HST" => -10,
-            "HDT" => -9,
-            "PST" => -8,
-            "PDT" => -7,
-            "MST" => -7,
-            "MDT" => -6,
-            "CST" => -6,
-            "CDT" => -5,
-            "EST" => -5,
-            "EDT" => -4,
-            "AST" => -4,
-            "SST" => -11,
-            "ChST" => 10,
-            _ => return None,
+/// A time zone NWS writes in a headline, with its offset on any day: a zone of the United States
+/// that follows daylight saving time changes at 2 AM local time on the second Sunday of March
+/// and the first Sunday of November.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Zone {
+    /// Hours east of UTC in standard time; for a zone that does not follow daylight saving time,
+    /// the offset it has all year.
+    base: i32,
+    follows_dst: bool,
+}
+
+impl Zone {
+    /// The first time zone a formal headline names (`3:20AM AKST`), as of `sent`. The abbreviation
+    /// says whether daylight time was in force when the headline was written; a zone for which
+    /// the rules say otherwise (`MST` in a Phoenix headline of July) does not follow them.
+    fn named(formal_headline: &str, sent: DateTime<Utc>) -> Option<Self> {
+        let (written, daylight, follows) = formal_headline.split_whitespace().find_map(|w| {
+            let word = w.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+            ZONES
+                .iter()
+                .find(|(abbreviation, ..)| *abbreviation == word)
+                .map(|&(_, hours, daylight, follows)| (hours, daylight, follows))
+        })?;
+        let base = written - i32::from(daylight);
+        Some(if follows && us_daylight_time(sent, base) == daylight {
+            Self {
+                base,
+                follows_dst: true,
+            }
+        } else {
+            Self {
+                base: written,
+                follows_dst: false,
+            }
         })
-    })?;
-    FixedOffset::east_opt(hours * 3600)
+    }
+
+    fn offset_at(&self, t: DateTime<Utc>) -> FixedOffset {
+        let hours = self.base + i32::from(self.follows_dst && us_daylight_time(t, self.base));
+        FixedOffset::east_opt(hours * 3600).unwrap_or_else(|| Utc.fix())
+    }
+
+    /// The instant of a local time. Of a time that happens twice when the clocks go back, the
+    /// first; one that is skipped when they go forward is read as standard time.
+    fn utc_of(&self, local: NaiveDateTime) -> DateTime<Utc> {
+        let at = |hours: i32| local.and_utc() - Duration::hours(i64::from(hours));
+        if self.follows_dst {
+            let t = at(self.base + 1);
+            if self.offset_at(t).local_minus_utc() == (self.base + 1) * 3600 {
+                return t;
+            }
+        }
+        at(self.base)
+    }
+}
+
+/// Time zone abbreviations that NWS writes in the United States and its territories: the
+/// abbreviation, its hours east of UTC, whether it is daylight time, and whether the zone follows
+/// the daylight saving rules (Hawaii, Puerto Rico, American Samoa and Guam do not).
+const ZONES: [(&str, i32, bool, bool); 15] = [
+    ("AKST", -9, false, true),
+    ("AKDT", -8, true, true),
+    ("HST", -10, false, false),
+    ("HDT", -9, true, true),
+    ("PST", -8, false, true),
+    ("PDT", -7, true, true),
+    ("MST", -7, false, true),
+    ("MDT", -6, true, true),
+    ("CST", -6, false, true),
+    ("CDT", -5, true, true),
+    ("EST", -5, false, true),
+    ("EDT", -4, true, true),
+    ("AST", -4, false, false),
+    ("SST", -11, false, false),
+    ("ChST", 10, false, false),
+];
+
+/// Whether daylight time is in force at `t` in a US zone whose standard time is `standard` hours
+/// east of UTC: from 2 AM standard time on the second Sunday of March to 2 AM daylight time (1 AM
+/// standard time) on the first Sunday of November.
+fn us_daylight_time(t: DateTime<Utc>, standard: i32) -> bool {
+    let nth_sunday = |month: u32, n: i64| {
+        let first = NaiveDate::from_ymd_opt(t.year(), month, 1)?;
+        let to_sunday = i64::from((7 - first.weekday().num_days_from_sunday()) % 7);
+        Some(first + Duration::days(to_sunday + 7 * (n - 1)))
+    };
+    let at = |date: Option<NaiveDate>, hour: u32| {
+        Some(date?.and_hms_opt(hour, 0, 0)?.and_utc() - Duration::hours(i64::from(standard)))
+    };
+    match (at(nth_sunday(3, 2), 2), at(nth_sunday(11, 1), 1)) {
+        (Some(start), Some(end)) => start <= t && t < end,
+        _ => false,
+    }
 }
 
 /// What a card says about an alert whose text has no `WHAT...` or `HAZARD...`, from the stored
@@ -497,7 +645,9 @@ fn utc_offset(formal_headline: &str) -> Option<FixedOffset> {
 ///   last B names, and `THROUGH B` alone every period from the first one, the one in force now,
 ///   to the last B names (`SMALL CRAFT ADVISORY THROUGH MONDAY` is TODAY, TONIGHT and MON). With
 ///   no day words, or none that a period carries, the first period.
-///   The forecast says `TODAY` and `TONIGHT` for the day it was written. Given the clock
+///   The forecast says `TODAY` and `TONIGHT` (also `REST OF TONIGHT`, `THIS AFTERNOON`, ...) for
+///   the day it was written, which is the day of `sent` unless the periods say otherwise: a
+///   `TONIGHT` ahead of `WED` is Tuesday night, whenever it was sent. Given the clock
 ///   ([`ForecastClock`]), a period that is over by now is left out when others remain (or, when
 ///   the headline names none that is still to come, the first one that is not over is taken), and
 ///   `TODAY` and `TONIGHT` are labelled with the weekday they meant (`Sun`, `Sun night`) once that
@@ -566,6 +716,8 @@ pub fn derived_what(
 /// wind 25 kt. Seas 7 ft. .TONIGHT...SE wind 25 kt. .TUE...`. The paragraph has to start with a
 /// period; each period runs to the next header, which is a dot after a space.
 fn joined_periods(paragraph: &str) -> Option<Vec<(&str, &str)>> {
+    // (period_header trims what it is given, so the offsets below must count from the trimmed start)
+    let paragraph = paragraph.trim_start();
     let (first, _) = period_header(paragraph)?;
     // (the header of a period is its name between a dot and three dots)
     let mut headers: Vec<(usize, &str)> = vec![(0, first)];
@@ -582,7 +734,7 @@ fn joined_periods(paragraph: &str) -> Option<Vec<(&str, &str)>> {
             let to = headers
                 .get(n + 1)
                 .map_or(paragraph.len(), |(next, _)| *next);
-            (*name, paragraph[from..to].trim())
+            (*name, paragraph.get(from..to).unwrap_or_default().trim())
         })
         .collect();
     Some(periods)
@@ -620,8 +772,10 @@ fn weekday(word: &str) -> Option<u8> {
     })
 }
 
-/// The slots a period's name covers: `TODAY`, `REST OF TODAY`, `TONIGHT`, `TUE`, `TUE NIGHT`,
-/// `TUE AND TUE NIGHT`, and `WED THROUGH THU` (every day and night from the one to the other).
+/// The slots a period's name covers: `TODAY`, `REST OF TODAY`, `THIS MORNING`, `THIS AFTERNOON`
+/// (the day the forecast was written), `TONIGHT`, `REST OF TONIGHT`, `LATE TONIGHT`, `THIS EVENING`,
+/// `OVERNIGHT` (its night), `TUE`, `TUE NIGHT`, `TUE AND TUE NIGHT`, and `WED THROUGH THU` (every
+/// day and night from the one to the other).
 fn period_slots(name: &str) -> Vec<Slot> {
     let mut out = Vec::new();
     for part in name.split(" AND ") {
@@ -648,8 +802,14 @@ fn period_slots(name: &str) -> Vec<Slot> {
             continue;
         }
         let slot = match words.as_slice() {
-            ["TODAY"] | ["REST", "OF", "TODAY"] => Some((None, false)),
-            ["TONIGHT"] => Some((None, true)),
+            ["TODAY"] | ["REST", "OF", "TODAY"] | ["THIS", "MORNING" | "AFTERNOON"] => {
+                Some((None, false))
+            }
+            ["TONIGHT"]
+            | ["REST", "OF", "TONIGHT"]
+            | ["LATE" | "EARLY", "TONIGHT"]
+            | ["THIS", "EVENING"]
+            | ["OVERNIGHT"] => Some((None, true)),
             [d] => weekday(d).map(|d| (Some(d), false)),
             [d, "NIGHT"] => weekday(d).map(|d| (Some(d), true)),
             _ => None,
@@ -784,6 +944,8 @@ fn period_summary(
     if picked.is_empty() {
         picked.push(0);
     }
+    let clock = clock.map(|c| c.dated_by(periods.iter().map(|(name, _)| *name)));
+    let clock = clock.as_ref();
     if let Some(clock) = clock {
         // what is over is not what the alert is about now; if all of it is, the alert is about the
         // first period that is not
@@ -1707,7 +1869,10 @@ mod tests {
 
     #[test]
     fn the_office_time_zone_is_the_first_one_the_formal_headline_names() {
-        let hours = |h: &str| utc_offset(h).map(|o| o.local_minus_utc() / 3600);
+        let hours = |h: &str| {
+            Zone::named(h, utc(1, 12, 0))
+                .map(|z| z.offset_at(utc(1, 12, 0)).local_minus_utc() / 3600)
+        };
         assert_eq!(hours(JUNEAU_FORMAL), Some(-9));
         assert_eq!(
             hours("Gale Warning issued June 2 at 3:20AM AKDT until June 3"),
@@ -1826,5 +1991,320 @@ mod tests {
             derived_what(&j, None, clock.as_ref()).unwrap(),
             "Late: Calm."
         );
+    }
+    // --- a forecast dated by its own periods ---------------------------------------------------------
+
+    fn utc_on(month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2026, month, day, hour, minute, 0).unwrap()
+    }
+
+    /// The shape of NWS Juneau's Small Craft Advisories of Wednesday 2026-10-28 (12 of them in the
+    /// feed of 2026-11-02): sent at 00:28 AKDT with `TONIGHT` first, the night that began the
+    /// evening before, then `WED`.
+    const JUNEAU_AFTER_MIDNIGHT: &str = "Southeast Alaska Coastal Waters from Cape Suckling to Cape Fairweather out 100 NM\n\nWind forecasts reflect the predominant speed and direction\nexpected. Seas forecasts represent the average of the highest\none-third of the combined windwave and swell height.\n\n.TONIGHT...N wind 25 kt. Seas 11 ft.\n.WED...NE wind 20 kt. Seas 8 ft.\n.WED NIGHT...NE wind 15 kt. Seas 6 ft.\n.THU...E wind 10 kt. Seas 5 ft.\n.FRI...E wind 15 kt. Seas 6 ft.\n.SAT...SE wind 20 kt. Seas 8 ft.";
+    const JUNEAU_AFTER_MIDNIGHT_FORMAL: &str = "Small Craft Advisory issued October 28 at 12:28AM AKDT until October 28 at 12:00PM AKDT by NWS Juneau AK";
+
+    #[test]
+    fn a_tonight_written_just_after_midnight_is_the_night_before() {
+        let sent = utc_on(10, 28, 8, 28); // Wednesday 00:28 AKDT
+        let h = "SMALL CRAFT ADVISORY THROUGH WEDNESDAY MORNING";
+        let what = |headline: &str, now: DateTime<Utc>| {
+            what_at(
+                JUNEAU_AFTER_MIDNIGHT,
+                headline,
+                JUNEAU_AFTER_MIDNIGHT_FORMAL,
+                sent,
+                now,
+            )
+        };
+        // Wednesday 00:30, right after: TONIGHT is Tuesday's night, which ends at 06:00, and WED
+        // follows it (not "Wed night" for TONIGHT, listed ahead of Wed)
+        assert_eq!(
+            what(h, utc_on(10, 28, 8, 30)),
+            "Tue night: N wind 25 kt. Seas 11 ft. Wed: NE wind 20 kt. Seas 8 ft."
+        );
+        // Wednesday 07:00: Tuesday night is over
+        assert_eq!(
+            what(h, utc_on(10, 28, 15, 0)),
+            "Wed: NE wind 20 kt. Seas 8 ft."
+        );
+        // Wednesday 19:00 and Thursday 01:00: both periods the headline names are over, Wednesday
+        // night is in force, not the old TONIGHT
+        for now in [utc_on(10, 29, 3, 0), utc_on(10, 29, 9, 0)] {
+            assert_eq!(what(h, now), "Wed night: NE wind 15 kt. Seas 6 ft.");
+        }
+        // through Wednesday night: one Wed night entry, the forecast's own
+        assert_eq!(
+            what(
+                "SMALL CRAFT ADVISORY THROUGH WEDNESDAY NIGHT",
+                utc_on(10, 29, 9, 0)
+            ),
+            "Wed night: NE wind 15 kt. Seas 6 ft."
+        );
+
+        // the same shape on a Monday at 00:10 AKST (standard time)
+        let sent = utc_on(11, 2, 9, 10);
+        let formal = "Gale Warning issued November 2 at 12:10AM AKST until November 3 at 5:00PM AKST by NWS Juneau AK";
+        let monday = "Coastal Waters\n\n.TONIGHT...N wind 30 kt. Seas 12 ft.\n.MON...N wind 25 kt. Seas 10 ft.\n.MON NIGHT...NE wind 10 kt. Seas 6 ft.\n.TUE...E wind 10 kt. Seas 5 ft.";
+        let h = "GALE WARNING THROUGH MONDAY";
+        assert_eq!(
+            what_at(monday, h, formal, sent, utc_on(11, 3, 10, 0)),
+            "Mon night: NE wind 10 kt. Seas 6 ft."
+        );
+        assert_eq!(
+            what_at(monday, h, formal, sent, utc_on(11, 2, 9, 30)),
+            "Sun night: N wind 30 kt. Seas 12 ft. Mon: N wind 25 kt. Seas 10 ft."
+        );
+
+        // a forecast written in the evening is dated to the day it was sent: its TONIGHT is that
+        // night until the date changes (Sunday 21:00, Monday 03:00)
+        let formal = "Gale Warning issued November 1 at 7:10PM AKST until November 2 at 5:00PM AKST by NWS Juneau AK";
+        let sent = utc_on(11, 2, 4, 10);
+        let h = "GALE WARNING TONIGHT";
+        assert_eq!(
+            what_at(monday, h, formal, sent, utc_on(11, 2, 6, 0)),
+            "Tonight: N wind 30 kt. Seas 12 ft."
+        );
+        assert_eq!(
+            what_at(monday, h, formal, sent, utc_on(11, 2, 12, 0)),
+            "Sun night: N wind 30 kt. Seas 12 ft."
+        );
+    }
+
+    #[test]
+    fn the_periods_date_today_and_tonight() {
+        let clock = |sent, formal| ForecastClock::new(sent, utc_on(11, 5, 0, 0), formal).unwrap();
+        let sent = utc_on(11, 2, 9, 10); // Monday 00:10 AKST
+        let formal = "Gale Warning issued November 2 at 12:10AM AKST until x";
+        let date = |c: &ForecastClock, night| {
+            c.date_of(Slot {
+                weekday: None,
+                night,
+            })
+        };
+        let monday = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let sunday = NaiveDate::from_ymd_opt(2026, 11, 1).unwrap();
+        let c = clock(sent, formal);
+        // undated: the day it was sent
+        assert_eq!((date(&c, false), date(&c, true)), (monday, monday));
+        // a night first, then the day: the night before
+        let night = c.dated_by(["TONIGHT", "MON", "MON NIGHT"]);
+        assert_eq!(date(&night, true), sunday);
+        // a day, its night, then the next day: both are the day before it
+        let both = c.dated_by(["TODAY", "TONIGHT", "TUE"]);
+        assert_eq!((date(&both, false), date(&both, true)), (monday, monday));
+        // the same forecast sent in the evening
+        let evening = clock(
+            utc_on(11, 2, 4, 10),
+            "Gale Warning issued November 1 at 7:10PM AKST until x",
+        )
+        .dated_by(["TONIGHT", "MON", "MON NIGHT"]);
+        assert_eq!(date(&evening, true), sunday);
+        // with no weekday to count from, a night first and sent before 6 AM is the night before
+        let alone = c.dated_by(["TONIGHT"]);
+        assert_eq!(date(&alone, true), sunday);
+        let day_first = c.dated_by(["REST OF TODAY", "TONIGHT"]);
+        assert_eq!(
+            (date(&day_first, false), date(&day_first, true)),
+            (monday, monday)
+        );
+        // ... and after 6 AM it is the day sent
+        let later = clock(
+            utc_on(11, 2, 16, 10),
+            "Gale Warning issued November 2 at 7:10AM AKST until x",
+        )
+        .dated_by(["TONIGHT"]);
+        assert_eq!(date(&later, true), monday);
+        // weekdays that would put TODAY more than a day from the day sent are not counted from
+        let odd = c.dated_by(["TODAY", "TONIGHT", "FRI"]);
+        assert_eq!((date(&odd, false), date(&odd, true)), (monday, monday));
+    }
+
+    #[test]
+    fn the_other_relative_period_names_have_slots_and_are_relabelled() {
+        let night = Slot {
+            weekday: None,
+            night: true,
+        };
+        let day = Slot {
+            weekday: None,
+            night: false,
+        };
+        for name in [
+            "TONIGHT",
+            "REST OF TONIGHT",
+            "LATE TONIGHT",
+            "THIS EVENING",
+            "OVERNIGHT",
+        ] {
+            assert_eq!(period_slots(name), vec![night], "{name}");
+        }
+        for name in ["TODAY", "REST OF TODAY", "THIS MORNING", "THIS AFTERNOON"] {
+            assert_eq!(period_slots(name), vec![day], "{name}");
+        }
+
+        // sent Sunday 21:05 AKST with REST OF TONIGHT first
+        let sent = utc_on(11, 2, 6, 5);
+        let formal = "Gale Warning issued November 1 at 9:05PM AKST until November 3 at 5:00PM AKST by NWS Anchorage AK";
+        let d = "Coastal Waters\n\n.REST OF TONIGHT...SE wind 35 kt. Seas 12 ft.\n.MON...S wind 30 kt. Seas 10 ft.\n.MON NIGHT...S wind 20 kt. Seas 8 ft.\n.TUE...SW wind 15 kt. Seas 6 ft.\n.WED...W wind 10 kt. Seas 4 ft.";
+        let h = "GALE WARNING THROUGH MONDAY";
+        assert_eq!(
+            what_at(d, h, formal, sent, utc_on(11, 2, 7, 0)),
+            "Rest of tonight: SE wind 35 kt. Seas 12 ft. Mon: S wind 30 kt. Seas 10 ft."
+        );
+        // Monday 01:00: Sunday night is in force, and is called that
+        assert_eq!(
+            what_at(d, h, formal, sent, utc_on(11, 2, 10, 0)),
+            "Sun night: SE wind 35 kt. Seas 12 ft. Mon: S wind 30 kt. Seas 10 ft."
+        );
+        // Tuesday 10 AM: Sunday night and Monday are over, Tuesday is in force
+        assert_eq!(
+            what_at(d, h, formal, sent, utc_on(11, 3, 19, 0)),
+            "Tue: SW wind 15 kt. Seas 6 ft."
+        );
+        // every period over, a THIS AFTERNOON is the day it meant
+        let clock = ForecastClock::new(sent, utc_on(11, 20, 0, 0), formal).unwrap();
+        assert_eq!(clock.relabel("THIS AFTERNOON").as_deref(), Some("Sun"));
+        assert_eq!(clock.relabel("OVERNIGHT").as_deref(), Some("Sun night"));
+        assert_eq!(clock.relabel("TUE"), None);
+    }
+
+    #[test]
+    fn the_hours_of_a_forecast_follow_the_clocks_of_the_office() {
+        // Small Craft Advisory sent Sunday 2026-11-01 01:46 AKDT, "until November 2 at 5:00PM AKST":
+        // the clocks went back at 02:00 that morning. Sunday night runs to 06:00 AKST Monday, 15:00Z.
+        let formal = "Small Craft Advisory issued November 1 at 1:46AM AKDT until November 2 at 5:00PM AKST by NWS Juneau AK";
+        let d = "Coastal Waters\n\n.TODAY...E wind 20 kt. Seas 8 ft.\n.TONIGHT...E wind 25 kt. Seas 9 ft.\n.MON...E wind 25 kt. Seas 9 ft.\n.MON NIGHT...E wind 15 kt. Seas 6 ft.\n.TUE...E wind 10 kt. Seas 5 ft.";
+        let h = "SMALL CRAFT ADVISORY TONIGHT AND MONDAY";
+        let sent = utc_on(11, 1, 9, 46);
+        let both = "Sun night: E wind 25 kt. Seas 9 ft. Mon: E wind 25 kt. Seas 9 ft.";
+        assert_eq!(what_at(d, h, formal, sent, utc_on(11, 2, 13, 55)), both);
+        // 05:05 AKST, an hour before the night ends
+        assert_eq!(what_at(d, h, formal, sent, utc_on(11, 2, 14, 5)), both);
+        assert_eq!(what_at(d, h, formal, sent, utc_on(11, 2, 14, 55)), both);
+        assert_eq!(
+            what_at(d, h, formal, sent, utc_on(11, 2, 15, 5)),
+            "Mon: E wind 25 kt. Seas 9 ft."
+        );
+        // read the same morning, before the clocks went back (01:50 AKDT), it is as NWS wrote it
+        assert_eq!(
+            what_at(d, h, formal, sent, utc_on(11, 1, 9, 50)),
+            "Tonight: E wind 25 kt. Seas 9 ft. Mon: E wind 25 kt. Seas 9 ft."
+        );
+
+        // the zone is more than the offset it had when the headline was written
+        let z = Zone::named(formal, sent).unwrap();
+        assert_eq!(z.offset_at(sent).local_minus_utc(), -8 * 3600);
+        assert_eq!(
+            z.offset_at(utc_on(11, 1, 9, 59)).local_minus_utc(),
+            -8 * 3600
+        );
+        assert_eq!(
+            z.offset_at(utc_on(11, 1, 10, 0)).local_minus_utc(),
+            -9 * 3600
+        );
+        assert_eq!(
+            z.offset_at(utc_on(3, 8, 10, 59)).local_minus_utc(),
+            -9 * 3600
+        );
+        assert_eq!(
+            z.offset_at(utc_on(3, 8, 11, 0)).local_minus_utc(),
+            -8 * 3600
+        );
+        // Pacific time changes at 10:00Z and 09:00Z
+        let pt = Zone::named(
+            "Gale Warning issued March 1 at 3:20PM PST until x",
+            utc_on(3, 1, 23, 20),
+        )
+        .unwrap();
+        assert_eq!(
+            pt.offset_at(utc_on(3, 8, 9, 59)).local_minus_utc(),
+            -8 * 3600
+        );
+        assert_eq!(
+            pt.offset_at(utc_on(3, 8, 10, 0)).local_minus_utc(),
+            -7 * 3600
+        );
+        assert_eq!(
+            pt.offset_at(utc_on(11, 1, 8, 59)).local_minus_utc(),
+            -7 * 3600
+        );
+        assert_eq!(
+            pt.offset_at(utc_on(11, 1, 9, 0)).local_minus_utc(),
+            -8 * 3600
+        );
+        // a local time on either side: 06:00 on the day the clocks went back is standard time, on
+        // the day before, daylight time
+        let at_six = |month, day| {
+            z.utc_of(
+                NaiveDate::from_ymd_opt(2026, month, day)
+                    .unwrap()
+                    .and_hms_opt(6, 0, 0)
+                    .unwrap(),
+            )
+        };
+        assert_eq!(at_six(11, 1), utc_on(11, 1, 15, 0));
+        assert_eq!(at_six(10, 31), utc_on(10, 31, 14, 0));
+
+        // zones that keep one offset: Hawaii, and Arizona (MST in a July headline)
+        let hst = Zone::named(
+            "Gale Warning issued July 1 at 3:20PM HST until x",
+            utc_on(7, 2, 1, 20),
+        )
+        .unwrap();
+        assert_eq!(
+            hst.offset_at(utc_on(12, 1, 0, 0)).local_minus_utc(),
+            -10 * 3600
+        );
+        let az = Zone::named(
+            "Heat Advisory issued July 1 at 3:20PM MST until x",
+            utc_on(7, 1, 22, 20),
+        )
+        .unwrap();
+        assert_eq!(
+            az.offset_at(utc_on(7, 20, 0, 0)).local_minus_utc(),
+            -7 * 3600
+        );
+        assert_eq!(
+            az.offset_at(utc_on(12, 20, 0, 0)).local_minus_utc(),
+            -7 * 3600
+        );
+        // and daylight time named in winter is that offset all year
+        let odd = Zone::named(
+            "Gale Warning issued January 1 at 3:20PM MDT until x",
+            utc_on(1, 1, 22, 20),
+        )
+        .unwrap();
+        assert_eq!(
+            odd.offset_at(utc_on(7, 20, 0, 0)).local_minus_utc(),
+            -6 * 3600
+        );
+    }
+
+    #[test]
+    fn a_paragraph_that_starts_with_blanks_is_still_a_run_of_periods() {
+        // (it made a second header start before the first one ended and panicked)
+        assert_eq!(joined_periods(" .AB...x"), Some(vec![("AB", "x")]));
+        assert_eq!(
+            joined_periods("\n\t .TODAY...E wind 25 kt. .TONIGHT...Rain."),
+            Some(vec![("TODAY", "E wind 25 kt."), ("TONIGHT", "Rain.")])
+        );
+        assert_eq!(
+            derived_what(&json!({"narrative": [" .AB...x"]}), None, None).as_deref(),
+            Some("Ab: x")
+        );
+        // never a panic, whatever the blanks and dots
+        for text in [
+            " .AB...",
+            "  .AB... .CD...",
+            " . .AB...x",
+            ".AB... ",
+            " ",
+            " ... .",
+            " .A... .AB...x",
+        ] {
+            let _ = joined_periods(text);
+            let _ = derived_what(&json!({"narrative": [text]}), None, None);
+        }
     }
 }
