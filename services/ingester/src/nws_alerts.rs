@@ -47,6 +47,10 @@ pub struct NwsAlertsIngestResponse {
     pub success: bool,
     pub message: String,
     pub received: usize,
+    /// Alerts written: new, changed, or back after having been marked ended.
+    pub upserted: usize,
+    /// Alerts NWS has not changed since they were stored: only their `last_seen_at` moved.
+    pub unchanged: usize,
     pub parse_errors: usize,
     pub superseded: u64,
     pub ended: u64,
@@ -145,6 +149,8 @@ pub async fn ingest_nws_alerts_handler(
         Ok(r) => {
             info!(
                 received = r.received,
+                upserted = r.upserted,
+                unchanged = r.unchanged,
                 superseded = r.superseded,
                 ended = r.ended,
                 missing_zones = r.missing_zones.len(),
@@ -165,6 +171,8 @@ pub async fn ingest_nws_alerts_handler(
                         format!("Applied {} alerts", r.received)
                     },
                     received: r.received,
+                    upserted: r.upserted,
+                    unchanged: r.unchanged,
                     parse_errors,
                     superseded: r.superseded,
                     ended: r.ended,
@@ -590,6 +598,10 @@ mod tests {
         assert_eq!(st, StatusCode::OK, "{body}");
         assert_eq!(body["received"], n);
         assert_eq!(body["parse_errors"], 0);
+        assert_eq!(
+            (body["upserted"].as_u64(), body["unchanged"].as_u64()),
+            (Some(n as u64), Some(0))
+        );
         let missing: Vec<String> = body["missing_zones"]
             .as_array()
             .unwrap()
@@ -597,6 +609,23 @@ mod tests {
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
         assert!(missing.contains(&"forecast/COZ068".to_string()));
+
+        // 1a. NWS' own stamp moves every minute, the alerts in it do not: the same alerts again
+        // are acknowledged without rewriting any of them.
+        let (st, body) = post(
+            &router,
+            "/ingest/nws-alerts",
+            serde_json::json!({
+                "features": feed["features"], "feed_updated": "2026-11-01T23:41:00Z"
+            }),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["received"], n);
+        assert_eq!(
+            (body["upserted"].as_u64(), body["unchanged"].as_u64()),
+            (Some(0), Some(n as u64))
+        );
 
         // 1b. A feed older than the one just applied (a lagging CDN node) is acknowledged as a
         // poll but applied to nothing: the alerts it no longer lists are not ended.
