@@ -34,6 +34,7 @@ use std::sync::Arc;
 use storage::{AlertRegion, AlertSearch, FeedStatus, StoredAlert};
 use wms_common::WmsError;
 
+use crate::content_negotiation::check_accept_header;
 use crate::state::AppState;
 
 /// `observation_source` value in `config/edr/nws-alerts.yaml`.
@@ -368,6 +369,8 @@ pub struct NwsQuery {
     pub include_superseded: Option<String>,
     /// `true` also returns CAP status Test / Exercise / System / Draft alerts (default: Actual only).
     pub include_non_actual: Option<String>,
+    /// Output format: GeoJSON, the only one there is (see [`check_format`]).
+    pub f: Option<String>,
 }
 
 fn nums(s: &str) -> Result<Vec<f64>, String> {
@@ -819,6 +822,36 @@ pub fn query_from_raw(raw: Option<&str>) -> Result<NwsQuery, Response> {
         .map_err(|e| bad_request(e.body_text()))
 }
 
+/// The alerts are GeoJSON and nothing else: `f=` may name GeoJSON (or plain `json`, which GeoJSON
+/// is), and without `f` the `Accept` header must admit `application/geo+json` or `application/json`
+/// (`*/*` does). Asking for CoverageJSON, PNG or anything else is refused rather than answered
+/// with GeoJSON the client then parses as the format it asked for: an unknown `f` is a 400, as on
+/// the grid collections, and an `Accept` that excludes GeoJSON a 406.
+#[allow(clippy::result_large_err)]
+pub fn check_format(headers: &HeaderMap, f: Option<&str>) -> Result<(), Response> {
+    let Some(f) = f.map(str::trim).filter(|f| !f.is_empty()) else {
+        return check_accept_header(headers, &["application/geo+json", "application/json"]);
+    };
+    // (an unencoded `+` in `application/geo+json` arrives as a space)
+    let wanted = f.to_ascii_lowercase().replace(' ', "+");
+    match wanted.as_str() {
+        "geojson" | "geo+json" | "application/geo+json" | "json" | "application/json" => Ok(()),
+        _ => Err(bad_request(format!(
+            "Unsupported output format '{f}': nws-alerts is served as GeoJSON \
+             (application/geo+json) only"
+        ))),
+    }
+}
+
+/// The query string of an `nws-alerts` request, read as an [`NwsQuery`], and its output format
+/// checked: the response to send instead when either is wrong.
+#[allow(clippy::result_large_err)]
+fn request_query(raw: Option<&str>, headers: &HeaderMap) -> Result<NwsQuery, Response> {
+    let q = query_from_raw(raw)?;
+    check_format(headers, q.f.as_deref())?;
+    Ok(q)
+}
+
 /// `GET /collections/:collection_id/position`: alerts at the point for
 /// `nws-alerts`, otherwise the grid position query.
 ///
@@ -833,7 +866,7 @@ pub async fn position_route(
     headers: HeaderMap,
 ) -> Response {
     if is_nws_collection(&state, &collection_id).await {
-        return match query_from_raw(raw.as_deref()) {
+        return match request_query(raw.as_deref(), &headers) {
             Ok(q) => position(state, q).await,
             Err(r) => r,
         };
@@ -861,7 +894,7 @@ pub async fn area_route(
     headers: HeaderMap,
 ) -> Response {
     if is_nws_collection(&state, &collection_id).await {
-        return match query_from_raw(raw.as_deref()) {
+        return match request_query(raw.as_deref(), &headers) {
             Ok(q) => area(state, q).await,
             Err(r) => r,
         };
@@ -883,7 +916,7 @@ pub async fn radius_route(
     headers: HeaderMap,
 ) -> Response {
     if is_nws_collection(&state, &collection_id).await {
-        return match query_from_raw(raw.as_deref()) {
+        return match request_query(raw.as_deref(), &headers) {
             Ok(q) => radius(state, q).await,
             Err(r) => r,
         };
@@ -903,9 +936,10 @@ pub async fn items_route(
     Path(collection_id): Path<String>,
     params: Result<Query<super::items::ItemsQueryParams>, QueryRejection>,
     RawQuery(raw): RawQuery,
+    headers: HeaderMap,
 ) -> Response {
     if is_nws_collection(&state, &collection_id).await {
-        return match query_from_raw(raw.as_deref()) {
+        return match request_query(raw.as_deref(), &headers) {
             Ok(q) => items(state, q).await,
             Err(r) => r,
         };
@@ -1217,6 +1251,7 @@ pub async fn item_route_handler(
     Extension(state): Extension<Arc<AppState>>,
     Path((collection_id, feature_id)): Path<(String, String)>,
     RawQuery(raw): RawQuery,
+    headers: HeaderMap,
 ) -> Response {
     if !is_nws_collection(&state, &collection_id).await {
         return error(
@@ -1226,7 +1261,7 @@ pub async fn item_route_handler(
             )),
         );
     }
-    match query_from_raw(raw.as_deref()) {
+    match request_query(raw.as_deref(), &headers) {
         Ok(q) => item(state, feature_id, q).await,
         Err(r) => r,
     }
@@ -2096,6 +2131,80 @@ mod tests {
             );
         }
         assert!(query_from_raw(Some("limit=5&simplify=0.1&event=Flood%20Watch")).is_ok());
+    }
+
+    fn accept(a: Option<&str>) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        if let Some(a) = a {
+            h.insert(header::ACCEPT, a.parse().unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn only_geojson_can_be_asked_for() {
+        // the formats that are GeoJSON, in the spellings clients use
+        for f in [
+            "GeoJSON",
+            "geojson",
+            "geo+json",
+            "application/geo+json",
+            "application/geo json", // an unencoded `+`
+            "json",
+            "application/json",
+            " GeoJSON ",
+            "",
+        ] {
+            assert!(check_format(&accept(None), Some(f)).is_ok(), "{f:?}");
+        }
+        assert!(check_format(&accept(None), None).is_ok());
+        // everything else is a 400 that says what is served
+        for f in [
+            "CoverageJSON",
+            "covjson",
+            "application/vnd.cov+json",
+            "png",
+            "html",
+            "zzz",
+            "CSV",
+        ] {
+            let r = check_format(&accept(None), Some(f)).unwrap_err();
+            assert_eq!(r.status(), StatusCode::BAD_REQUEST, "{f}");
+            assert_eq!(r.headers()[header::CONTENT_TYPE], "application/json", "{f}");
+        }
+        // an explicit f wins over the Accept header, as on the grid collections
+        assert!(check_format(&accept(Some("image/png")), Some("GeoJSON")).is_ok());
+        assert!(check_format(&accept(Some("*/*")), Some("CoverageJSON")).is_err());
+    }
+
+    #[test]
+    fn accept_must_admit_geojson() {
+        for ok in [
+            "application/geo+json",
+            "application/json",
+            "*/*",
+            "application/*",
+            "application/vnd.cov+json, application/geo+json;q=0.5",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "application/vnd.cov+json, */*;q=0.1",
+        ] {
+            assert!(check_format(&accept(Some(ok)), None).is_ok(), "{ok}");
+        }
+        for bad in [
+            "application/vnd.cov+json",
+            "application/prs.coverage+json",
+            "image/png",
+            "text/html",
+            "application/vnd.cov+json, image/png, text/html",
+        ] {
+            let r = check_format(&accept(Some(bad)), None).unwrap_err();
+            assert_eq!(r.status(), StatusCode::NOT_ACCEPTABLE, "{bad}");
+            assert_eq!(
+                r.headers()[header::CONTENT_TYPE],
+                "application/json",
+                "{bad}"
+            );
+        }
     }
 
     #[test]

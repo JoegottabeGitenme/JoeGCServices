@@ -206,10 +206,23 @@ impl Env {
     }
 
     async fn get(&self, uri: &str) -> (u16, axum::http::HeaderMap, Value, usize) {
+        self.get_accepting(uri, None).await
+    }
+
+    /// `get` with an `Accept` header.
+    async fn get_accepting(
+        &self,
+        uri: &str,
+        accept: Option<&str>,
+    ) -> (u16, axum::http::HeaderMap, Value, usize) {
+        let mut req = Request::builder().uri(uri);
+        if let Some(a) = accept {
+            req = req.header("accept", a);
+        }
         let resp = self
             .app
             .clone()
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .oneshot(req.body(Body::empty()).unwrap())
             .await
             .unwrap();
         let (parts, b) = resp.into_parts();
@@ -503,6 +516,80 @@ async fn one_alert_in_full_by_raw_or_encoded_urn() {
     let (st, _, v, _) = e.get("/edr/collections/tornado/items/123").await;
     assert_eq!(st, 404, "{v}");
     let (_, _, _, _) = e.get("/edr/collections/trails/items/1/conditions").await;
+}
+
+/// Every alert route answers GeoJSON and says so: asking for CoverageJSON (or any other format) by
+/// `f=` is a 400 and by `Accept` alone a 406, not GeoJSON the client would parse as a coverage.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn only_geojson_is_offered_and_asking_for_anything_else_is_refused() {
+    let e = env().await;
+    e.load().await;
+    let c = "/edr/collections/nws-alerts";
+    let id = handlers::nws_alerts::encode_id(&e.id("Severe Thunderstorm Warning"));
+    let routes = [
+        format!("{c}/position?coords=POINT(-107%2037.5)&datetime={AT}"),
+        format!("{c}/area?coords=POLYGON((-108%2037,-106%2037,-106%2038.5,-108%2038.5,-108%2037))&datetime={AT}"),
+        format!("{c}/radius?coords=POINT(-106.1%2037.5)&within=100&datetime={AT}"),
+        format!("{c}/items?bbox=-108,36.5,-106,38.5&datetime={AT}"),
+        format!("{c}/items/{id}"),
+    ];
+    for route in &routes {
+        let sep = if route.contains('?') { '&' } else { '?' };
+        // GeoJSON by any name, with or without an Accept header, is the answer
+        for f in ["GeoJSON", "geojson", "application%2Fgeo%2Bjson", "json"] {
+            let (st, h, v, _) = e.get(&format!("{route}{sep}f={f}")).await;
+            assert_eq!(st, 200, "{route} f={f}: {v}");
+            assert_eq!(h["content-type"], "application/geo+json");
+        }
+        for accept in [
+            "application/geo+json",
+            "application/json",
+            "*/*",
+            "application/vnd.cov+json, */*;q=0.1",
+        ] {
+            let (st, h, v, _) = e.get_accepting(route, Some(accept)).await;
+            assert_eq!(st, 200, "{route} Accept: {accept}: {v}");
+            assert_eq!(h["content-type"], "application/geo+json");
+        }
+        // CoverageJSON and the rest by f=: 400, JSON, says what is served
+        for f in [
+            "CoverageJSON",
+            "coveragejson",
+            "application%2Fvnd.cov%2Bjson",
+            "png",
+            "zzz",
+        ] {
+            let (st, h, v, _) = e.get(&format!("{route}{sep}f={f}")).await;
+            assert_eq!(st, 400, "{route} f={f}: {v}");
+            assert_eq!(h["content-type"], "application/json");
+            assert!(
+                v["detail"].as_str().unwrap().contains("GeoJSON"),
+                "{route} f={f}: {v}"
+            );
+        }
+        // by Accept alone: 406
+        for accept in [
+            "application/vnd.cov+json",
+            "application/vnd.cov+json, image/png, text/html",
+            "text/html",
+        ] {
+            let (st, h, v, _) = e.get_accepting(route, Some(accept)).await;
+            assert_eq!(st, 406, "{route} Accept: {accept}: {v}");
+            assert_eq!(h["content-type"], "application/json");
+        }
+        // an explicit f overrides the Accept header, as on the grid collections
+        let (st, _, v, _) = e
+            .get_accepting(
+                &format!("{route}{sep}f=GeoJSON"),
+                Some("application/vnd.cov+json"),
+            )
+            .await;
+        assert_eq!(st, 200, "{route}: {v}");
+    }
+    // the collection document is not a data query: it still says what it always did
+    let (st, _, _, _) = e.get_accepting(c, Some("application/vnd.cov+json")).await;
+    assert_eq!(st, 406);
 }
 
 /// Client mistakes are 4xx with the JSON exception body on every alert route: never a 500 (a NUL

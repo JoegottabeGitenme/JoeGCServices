@@ -147,6 +147,12 @@ paths:
         far as retention keeps ended and replaced alerts (7 days by default); an older instant
         returns what is still stored, not an error.
 
+        **Output format on `nws-alerts`** is GeoJSON only (`application/geo+json`) on this and
+        every other `nws-alerts` query: `f=GeoJSON` (or `json`) is accepted, any other `f`
+        (`CoverageJSON`, `png`, ...) is a 400, and without `f` an `Accept` that excludes
+        `application/geo+json` and `application/json` (`Accept: application/vnd.cov+json` alone)
+        is a 406.
+
         **Errors on `nws-alerts`** are 4xx with the JSON exception body (`status`, `detail`),
         never plain text or a 5xx: a query string that does not parse (`limit=abc`, a repeated
         parameter), `limit` below 1, `simplify` negative or not finite, a control character in
