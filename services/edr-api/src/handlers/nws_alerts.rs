@@ -160,6 +160,10 @@ pub fn significance(a: &StoredAlert) -> &'static str {
     }
 }
 
+/// The card headline: NWS' broadcast text (`NWSheadline`, e.g. "FLOOD WARNING IN EFFECT UNTIL 730 PM
+/// MST MONDAY") when it gave one, else its formal headline ("Flood Warning issued November 1 at
+/// 7:26PM MST until November 2 at 7:30PM MST by NWS Pueblo CO"). New short-fused warnings have no
+/// broadcast text, so the style can change between the messages of one event.
 fn headline(a: &StoredAlert) -> Option<&str> {
     a.nws_headline
         .as_deref()
@@ -281,6 +285,8 @@ pub fn compact_feature(a: &StoredAlert, now: DateTime<Utc>, base_url: &str) -> V
 /// text, sections, VTEC, parameters, zones and lifecycle.
 pub fn full_feature(a: &StoredAlert, now: DateTime<Utc>, base_url: &str) -> Value {
     let mut p = common_properties(a, now, base_url, false);
+    // NWS' own `headline` property, which `headline` above replaces with the broadcast text
+    p.insert("formal_headline".into(), json!(a.headline));
     p.insert("message_type".into(), json!(a.message_type));
     p.insert("category".into(), json!(a.category));
     p.insert("response".into(), json!(a.response));
@@ -1580,6 +1586,34 @@ mod tests {
         a.nws_headline = None;
         a.headline = None;
         assert_eq!(headline(&a), None);
+    }
+
+    #[test]
+    fn the_full_record_keeps_the_formal_headline_the_card_headline_replaces() {
+        let mut a = by_event("Flash Flood Warning");
+        a.headline = Some("Flood Warning issued November 1 at 7:26PM MST by NWS Pueblo CO".into());
+        a.nws_headline = Some("FLOOD WARNING IN EFFECT UNTIL 730 PM MST MONDAY".into());
+        let p = |f: Value| f["properties"].clone();
+        let (compact, full) = (
+            p(compact_feature(&a, t0(), "")),
+            p(full_feature(&a, t0(), "")),
+        );
+        assert_eq!(
+            compact["headline"],
+            "FLOOD WARNING IN EFFECT UNTIL 730 PM MST MONDAY"
+        );
+        assert_eq!(full["headline"], compact["headline"]);
+        assert_eq!(
+            full["formal_headline"],
+            "Flood Warning issued November 1 at 7:26PM MST by NWS Pueblo CO"
+        );
+        assert!(compact.get("formal_headline").is_none(), "not in the card");
+        // without broadcast text the two are the same
+        a.nws_headline = None;
+        let full = p(full_feature(&a, t0(), ""));
+        assert_eq!(full["headline"], full["formal_headline"]);
+        a.headline = None;
+        assert!(p(full_feature(&a, t0(), ""))["formal_headline"].is_null());
     }
 
     #[test]
