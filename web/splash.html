@@ -1255,16 +1255,72 @@
         }
 
         .sc-atext {
-            margin-top: 0.5rem;
+            margin-top: 0.4rem;
             padding: 0.5rem 0.65rem;
-            max-height: 14rem;
-            overflow-y: auto;
-            white-space: pre-line;
-            font-size: 0.78rem;
+            font-size: 0.8rem;
             color: var(--ink-2);
             background: var(--paper-card);
             border: 1px solid var(--paper-card-edge);
             border-radius: 8px;
+        }
+
+        .sc-abody {
+            white-space: pre-line;
+        }
+
+        .sc-readout .sc-anote {
+            font-size: 0.75rem;
+            margin: 0.35rem 0 0;
+        }
+
+        .sc-readout .sc-atext .sc-anote {
+            margin: 0 0 0.4rem;
+        }
+
+        /* The alert's name stays in view while its full text runs on below it */
+        .sc-alert .sc-aev {
+            position: sticky;
+            top: var(--sc-stick, 0px);
+            z-index: 2;
+            margin: 0 -1rem;
+            padding: 0.4rem 1rem;
+            background: var(--paper-bg);
+            box-shadow: 0 1px 0 var(--paper-card-edge);
+        }
+
+        .sc-key {
+            background: var(--paper-bg);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 10px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.75rem;
+            color: var(--ink-2);
+        }
+
+        .sc-keyhead {
+            display: block;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ochre-ink);
+            margin-bottom: 0.2rem;
+        }
+
+        .sc-key ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.15rem 0.85rem;
+        }
+
+        .sc-key li {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .sc-keymore {
+            color: var(--ink-3);
         }
 
         .sc-atext b {
@@ -1438,6 +1494,11 @@
             .sc-map {
                 height: 320px;
             }
+
+            /* The page scrolls, not the readout: the alert's name sticks just under the header */
+            .sc-alert .sc-aev {
+                top: var(--hdr, 3.5rem);
+            }
         }
 
         @media (max-width: 400px) {
@@ -1519,6 +1580,12 @@
 
             .sc-alist button {
                 display: flex;
+            }
+
+            /* Its own line, so the 44px target doesn't stretch the sentence before it */
+            .sc-hint button {
+                display: flex;
+                margin-top: 0.15rem;
             }
 
             .sc-resp summary {
@@ -1623,6 +1690,7 @@
                     </div>
                     <div class="sc-side">
                         <div class="sc-readout" id="sc-readout" aria-live="polite"></div>
+                        <div class="sc-key" id="sc-key" role="group" aria-label="Alert colours in this view" hidden></div>
                         <p class="sc-hint" id="sc-hint"></p>
                     </div>
                 </div>
@@ -2185,6 +2253,11 @@
             upd();
             return upd;
         }
+        const hdr = document.querySelector('.header');
+        if (hdr) {
+            const setHdr = () => document.documentElement.style.setProperty('--hdr', hdr.offsetHeight + 'px');
+            setHdr(); window.addEventListener('resize', setHdr);
+        }
         const navRow = document.getElementById('nav-links');
         if (navRow) bindFade(navRow);
 
@@ -2196,7 +2269,7 @@
             const el = {
                 map: $('#sc-map'), chips: $('#sc-chips'), readout: $('#sc-readout'), hint: $('#sc-hint'),
                 url: $('#sc-url'), copy: $('#sc-copy'), open: $('#sc-open'), kind: $('#sc-kind'),
-                resp: $('#sc-resp'), respPre: $('#sc-resp-pre'), panel: $('#sc-panel')
+                resp: $('#sc-resp'), respPre: $('#sc-resp-pre'), panel: $('#sc-panel'), key: $('#sc-key')
             };
             const tabs = Array.from(root.querySelectorAll('.sc-tab'));
             const abs = (p) => new URL(p, location.href).href;
@@ -2409,7 +2482,68 @@
                 const n = parseInt(c.slice(1), 16), ink = [0x2e, 0x28, 0x18];
                 return '#' + [n >> 16, (n >> 8) & 255, n & 255].map((v, i) => Math.round(v * 0.6 + ink[i] * 0.4).toString(16).padStart(2, '0')).join('');
             }
-            const localTime = (iso) => (iso ? esc(new Date(iso).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })) : '');
+            // ---- NWS text: older products arrive in ALL CAPS. Paragraphs that are mostly capitals become sentence case; mixed-case text is left alone ----
+            const STATE_NAMES = ['alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut', 'delaware', 'florida', 'georgia', 'hawaii', 'idaho', 'illinois', 'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota', 'mississippi', 'missouri', 'montana', 'nebraska', 'nevada', 'new hampshire', 'new jersey', 'new mexico', 'new york', 'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon', 'pennsylvania', 'rhode island', 'south carolina', 'south dakota', 'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington', 'west virginia', 'wisconsin', 'wyoming', 'puerto rico', 'guam', 'american samoa', 'district of columbia'];
+            const STATE_RE = new RegExp('\\b(' + STATE_NAMES.sort((a, b) => b.length - a.length).join('|') + ')\\b', 'g');
+            const STATE_CODES = new Set('al ak az ar ca co ct de fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok or pa ri sc sd tn tx ut vt va wa wv wi wy dc pr gu as vi mp'.split(' '));
+            const CODE_WORDS = new Set(['in', 'or', 'me', 'hi', 'oh', 'ok', 'as', 'id']);
+            const KEEP_UPPER = /\b(nws|noaa|fema|utc|gmt|[aecmp]st|[aecmp]dt|akst|akdt|hst|nne|nnw|sse|ssw|ene|ese|wnw|wsw|ne|nw|se|sw|ef[0-5])\b/g;
+            const DAYS_MONTHS = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|april|june|july|august|september|october|november|december)\b/g;
+            const FUNC = new Set(['the', 'is', 'are', 'was', 'were', 'will', 'has', 'have', 'been', 'be', 'for', 'with', 'from', 'until', 'this', 'that', 'these', 'those', 'includes', 'in', 'on', 'at', 'to', 'by', 'a', 'an', 'it', 'its', 'not', 'may', 'can', 'near', 'expected', 'issued']);
+            const SMALL = new Set(['and', 'of', 'the', 'in', 'on', 'at', 'to', 'or', 'for']);
+            const cap1 = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+            // Place names: every word capitalised (McPherson, St. John, Winston-Salem), small joining words left down
+            function titleCase(str) {
+                return str.replace(/[a-z][a-z'’]*\.?/g, (w, off) => {
+                    const bare = w.replace(/\.$/, '');
+                    if (off > 0 && SMALL.has(bare)) return w;
+                    if (/^mc[a-z]{3,}/.test(bare)) return 'Mc' + cap1(w.slice(2));
+                    if (/^o['’][a-z]/.test(bare)) return 'O' + w.charAt(1) + cap1(w.slice(2));
+                    return cap1(w);
+                });
+            }
+            const noFunc = (str) => str.split(/[\s,.]+/).filter(Boolean).every((w) => !FUNC.has(w));
+            function caseParagraph(p, first, event) {
+                const letters = p.replace(/[^A-Za-z]/g, '');
+                if (letters.length < 3 || letters.replace(/[^A-Z]/g, '').length / letters.length < 0.8) return p;
+                // A lone short token that opens the text is a product code (SVROUN), not shouting
+                if (first && !/\s/.test(p.trim()) && letters.length <= 8) return p;
+                let x = p.toLowerCase();
+                const body = x.trim();
+                if (/^[a-z][a-z\s.,'’-]*$/.test(body) && body.split(/\s+/).length <= 40 && noFunc(body)) {
+                    // A bare run of place names or a short heading
+                    x = x.replace(body, titleCase(body));
+                } else {
+                    const lead = body.match(/^(in|for|across|over)\s+([a-z][a-z\s'’-]*)$/);
+                    if (lead && lead[2].split(/\s+/).length <= 6 && noFunc(lead[2])) x = x.replace(body, cap1(lead[1]) + ' ' + titleCase(lead[2]));
+                    // "the cities of A, B, and C" and "locations impacted include... A, B": the list is places
+                    x = x.replace(/\b((?:cities|counties|communities|towns|parishes|boroughs|municipalities)\s+(?:of|in)\s+)([^\n]*)/g, (m, a, b) => a + titleCase(b));
+                    x = x.replace(/\b((?:locations impacted include|including|include)(?:\.{3}|:)?\s+)([^\n]*)/g, (m, a, b) => a + titleCase(b));
+                    x = x.replace(STATE_RE, (m) => titleCase(m));
+                }
+                if (event && x.includes(event.toLowerCase())) x = x.split(event.toLowerCase()).join(event);
+                x = x.replace(/\bnational weather service\b/g, 'National Weather Service')
+                    .replace(/\bmc([a-z]{3,})/g, (m, a) => 'Mc' + cap1(a))
+                    .replace(/(?<!\d\s?)\b(st|mt|ft)\.(?=\s+[a-z])/g, cap1)
+                    .replace(DAYS_MONTHS, cap1)
+                    .replace(/\b(may|march)(\s+\d)/g, (m, a, b) => cap1(a) + b)
+                    .replace(KEEP_UPPER, (m) => m.toUpperCase())
+                    .replace(/(\d\s?)(am|pm)\b/g, (m, a, b) => a + b.toUpperCase())
+                    .replace(/\b(us|sr|cr|fm|rm)([- ]?\d+)\b/g, (m, a, b) => a.toUpperCase() + b)
+                    .replace(/\bi(-\d+)\b/g, (m, a) => 'I' + a)
+                    .replace(/\bu\.s\./g, 'U.S.')
+                    .replace(/(,\s*)([A-Za-z]{2})\b(?=\s*(?:[;)]|$)|(?!\s*\w))/gm, (m, a, c) => (STATE_CODES.has(c.toLowerCase()) ? a + c.toUpperCase() : m))
+                    .replace(/(,\s*)([A-Za-z]{2})\b/g, (m, a, c) => (STATE_CODES.has(c.toLowerCase()) && !CODE_WORDS.has(c.toLowerCase()) ? a + c.toUpperCase() : m));
+                // Sentence starts: the paragraph, after . ! ? or an ellipsis, and at a * bullet
+                return x.replace(/(^[\s*•-]*|[.!?]\s+|\.{3}\s*|\n\s*\*\s*)([a-z])/g, (m, a, c) => a + c.toUpperCase());
+            }
+            const nwsCase = (text, event) => String(text == null ? '' : text).split(/(\n\s*\n)/).map((part, i) => (i % 2 ? part : caseParagraph(part, i === 0, event))).join('');
+            // Times are the viewer's own: "Mon 4:00 PM (your time)". NWS's own wording keeps the alert area's zone, and the readout says so
+            const localTime = (iso) => (iso ? esc(new Date(iso).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })) + ' (your time)' : '');
+            // Plain words for CAP's severity and urgency: "Extreme · expected later". Certainty only when it says something (Likely is the usual case)
+            const URGENCY_WORDS = { Immediate: 'now', Expected: 'expected soon', Future: 'expected later', Past: 'past' };
+            const CERTAINTY_WORDS = { Observed: 'already happening', Possible: 'possible, not likely', Unlikely: 'unlikely' };
+            const severityText = (p) => [SEVERITY_RANK[p.severity] ? p.severity : '', URGENCY_WORDS[p.urgency], CERTAINTY_WORDS[p.certainty]].filter(Boolean).join(' \u00b7 ') || 'Unknown';
             // The view as an EDR bbox; west > east when it crosses the antimeridian
             function viewBbox() {
                 const b = map.getBounds();
@@ -2483,6 +2617,20 @@
                         map.addLayer({ id: 'sc-alert-sel', type: 'line', source: 'sc-alerts', filter: ['in', ['get', 'aid'], ['literal', []]], layout: { 'line-join': 'round' },
                             paint: { 'line-color': '#2e2818', 'line-width': 2.5 } }, before);
                     },
+                    // A key to the colours on the map: the event types in view, worst first, the top few with a count of the rest
+                    key(fs) {
+                        const m = new Map();
+                        fs.filter((f) => f.geometry).forEach((f) => {
+                            const p = f.properties || {}, name = p.event || 'Alert', r = SEVERITY_RANK[p.severity] || 0, e = m.get(name) || { n: 0, r: 0, c: alertColor(p.color) };
+                            e.n++; e.r = Math.max(e.r, r); m.set(name, e);
+                        });
+                        const rows = Array.from(m.entries()).sort((a, b) => b[1].r - a[1].r || b[1].n - a[1].n || a[0].localeCompare(b[0]));
+                        const top = rows.slice(0, 6), more = rows.length - top.length;
+                        // Swatches are drawn like the map: the colour at 35% inside its darker outline
+                        el.key.innerHTML = '<span class="sc-keyhead">On the map</span><ul>' + top.map(([name, e]) => `<li><i class="sc-sw" style="background:${e.c}59;border-color:${shade(e.c)}"></i>${esc(name)}</li>`).join('') +
+                            (more > 0 ? `<li class="sc-keymore">+${more} more</li>` : '') + '</ul>';
+                        el.key.hidden = !rows.length;
+                    },
                     // The hint line's text, in front of the button that queries the map centre for anyone who can't click the map
                     note(html) { const t = el.hint.querySelector('#sc-hint-text'); if (t) t.innerHTML = html; },
                     async moveend() {
@@ -2498,6 +2646,7 @@
                                 const p = f.properties || {}, c = alertColor(p.color);
                                 return { type: 'Feature', geometry: f.geometry, properties: { aid: f.id, color: c, edge: shade(c), rank: SEVERITY_RANK[p.severity] || 0 } };
                             }) });
+                            this.key(fs);
                             this.note(`${fs.length}${d.truncated ? '+' : ''} alert${fs.length === 1 ? '' : 's'} in this view. ${Tap} anywhere for the alerts at that spot.`);
                             // The first answer opens on an example, unless the user has already clicked
                             if (!this.picked) {
@@ -2566,18 +2715,19 @@
                         const a = fs[i], p = a.properties, s = p.summary || {};
                         // A null `ends` means NWS gave none: the alert is over at `expires` at the latest
                         const end = p.ends ? ['Until', localTime(p.ends)] : p.expires ? ['Expires', localTime(p.expires)] : ['Until', 'further notice'];
-                        const rows = [['What', s.what || s.hazard], ['Where', s.where], ['When', s.when], ['Impacts', s.impacts || s.impact]].filter((r) => r[1]).map(([k, v]) => [k, esc(v)]);
+                        const rows = [['What', s.what || s.hazard], ['Where', s.where], ['When', s.when], ['Impacts', s.impacts || s.impact]].filter((r) => r[1]).map(([k, v]) => [k, esc(nwsCase(v, p.event))]);
                         const span = (q) => (q.status === 'upcoming' ? 'starts ' + localTime(q.onset || q.effective) : q.ends ? 'until ' + localTime(q.ends) : q.expires ? 'expires ' + localTime(q.expires) : '');
                         const others = fs.map((f, j) => [f, j]).filter(([, j]) => j !== i);
                         setReadout(`<h3>${fs.length} alert${fs.length === 1 ? '' : 's'} at ${where(lng, lat)}</h3>` +
                             `<div class="sc-alert"><p class="sc-aev" tabindex="-1"><i class="sc-sw" style="background:${alertColor(p.color)}"></i>${esc(p.event || 'Alert')}</p>` +
-                            (rows.length ? '' : `<p>${esc(p.formal_headline || p.headline || p.area || '')}</p>`) +
+                            (rows.length ? '' : `<p>${esc(nwsCase(p.formal_headline || p.headline || p.area || '', p.event))}</p>`) +
                             dl([...rows,
                                 p.status === 'upcoming' ? ['Starts', localTime(p.onset || p.effective)] : null,
                                 end,
-                                ['Severity', esc([p.severity, p.urgency].filter((x) => x && x !== 'Unknown').join(', ') || 'Unknown')],
+                                ['Severity', esc(severityText(p))],
                                 ['From', esc(p.sender || '')]]) +
-                            `<button type="button" class="sc-afull" data-id="${esc(a.id)}">Full alert</button>` +
+                            `<p class="sc-muted sc-anote">Times marked (your time) are in your time zone. NWS's own wording keeps the alert area's.</p>` +
+                            `<button type="button" class="sc-afull" aria-expanded="false" data-id="${esc(a.id)}">Full alert</button>` +
                             '<div class="sc-atext" role="region" aria-label="Full text of this alert" hidden></div></div>' +
                             (others.length ? '<ul class="sc-alist" aria-label="Other alerts here">' + others.map(([f, j]) => {
                                 const q = f.properties, area = q.area || '';
@@ -2597,6 +2747,13 @@
                         const url = `/edr/collections/nws-alerts/items/${encodeURIComponent(btn.dataset.id)}?geometry=false`, box = btn.nextElementSibling;
                         // aria-disabled, not disabled, so a focused button keeps the focus while it loads and after a failure
                         if (btn.getAttribute('aria-disabled') === 'true') return;
+                        // Opened once: the button then just shows and hides the text, inside the readout, with the alert's name still above it
+                        if (box.dataset.loaded) {
+                            const open = box.hidden;
+                            box.hidden = !open; btn.setAttribute('aria-expanded', String(open)); btn.textContent = open ? 'Hide full alert' : 'Full alert';
+                            if (open) setRequest(url);
+                            return;
+                        }
                         setRequest(url);
                         btn.setAttribute('aria-disabled', 'true'); btn.textContent = 'Loading…';
                         try {
@@ -2604,15 +2761,17 @@
                             if (!live('alerts') || !btn.isConnected) return;
                             setResponseFor(url, d);
                             const q = d.properties || {}, text = String(q.description || '').trim() || String(q.formal_headline || q.headline || '').trim(), inst = String(q.instruction || '').trim();
-                            box.innerHTML = esc(text || 'NWS sent no further text for this alert.') + (inst ? '\n\n<b>Instructions</b>\n' + esc(inst) : '');
-                            btn.hidden = true; box.hidden = false; box.tabIndex = 0;
-                            box.focus({ preventScroll: true }); box.scrollIntoView({ block: 'nearest' });
+                            box.innerHTML = '<p class="sc-muted sc-anote">As NWS wrote it: times here are in the alert area\'s time zone.</p><div class="sc-abody">' + esc(nwsCase(text || 'NWS sent no further text for this alert.', q.event)) +
+                                (inst ? '\n\n<b>Instructions</b>\n' + esc(nwsCase(inst, q.event)) : '') + '</div>';
+                            box.dataset.loaded = '1'; box.hidden = false;
+                            btn.removeAttribute('aria-disabled'); btn.setAttribute('aria-expanded', 'true'); btn.textContent = 'Hide full alert';
+                            box.scrollIntoView({ block: 'nearest' });
                         } catch (err) {
                             if (err.name === 'AbortError' || !live('alerts') || !btn.isConnected) return;
                             btn.removeAttribute('aria-disabled'); btn.textContent = err.message + '. Try again';
                         }
                     },
-                    leave() { clearPin(); removeMapStuff(['sc-alert-sel', 'sc-alert-line', 'sc-alert-fill', 'sc-alerts']); }
+                    leave() { clearPin(); removeMapStuff(['sc-alert-sel', 'sc-alert-line', 'sc-alert-fill', 'sc-alerts']); el.key.hidden = true; }
                 },
                 pointPreset({
                     id: 'waves', label: 'Waves', coll: 'gfswave-surface-latest', params: 'HTSGW,PERPW,DIRPW',
