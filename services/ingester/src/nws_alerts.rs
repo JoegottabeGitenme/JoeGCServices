@@ -55,6 +55,8 @@ pub struct NwsAlertsIngestResponse {
     pub geometry_rejected: usize,
     /// Alerts the database rejected outright (skipped).
     pub failed: usize,
+    /// The feed was older than the one already applied: counted as a successful poll, not applied.
+    pub stale_ignored: bool,
 }
 
 fn fail(status: StatusCode, msg: impl Into<String>) -> (StatusCode, Json<NwsAlertsIngestResponse>) {
@@ -150,13 +152,18 @@ pub async fn ingest_nws_alerts_handler(
                 geometry_rejected = r.geometry_rejected,
                 failed = r.failed,
                 geometry_failed = r.geometry_failed,
+                stale_ignored = r.stale_ignored,
                 "NWS alerts applied"
             );
             (
                 StatusCode::OK,
                 Json(NwsAlertsIngestResponse {
                     success: true,
-                    message: format!("Applied {} alerts", r.received),
+                    message: if r.stale_ignored {
+                        format!("Ignored a stale feed of {} alerts", r.received)
+                    } else {
+                        format!("Applied {} alerts", r.received)
+                    },
                     received: r.received,
                     parse_errors,
                     superseded: r.superseded,
@@ -164,6 +171,7 @@ pub async fn ingest_nws_alerts_handler(
                     missing_zones: r.missing_zones,
                     geometry_rejected: r.geometry_rejected,
                     failed: r.failed,
+                    stale_ignored: r.stale_ignored,
                 }),
             )
         }
@@ -561,6 +569,28 @@ mod tests {
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
         assert!(missing.contains(&"forecast/COZ068".to_string()));
+
+        // 1b. A feed older than the one just applied (a lagging CDN node) is acknowledged as a
+        // poll but applied to nothing: the alerts it no longer lists are not ended.
+        let fewer: Vec<_> = feed["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .skip(1)
+            .cloned()
+            .collect();
+        let (st, body) = post(
+            &router,
+            "/ingest/nws-alerts",
+            serde_json::json!({"features": fewer, "feed_updated": "2026-11-01T23:20:00Z"}),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["stale_ignored"], true);
+        assert_eq!(
+            (body["ended"].as_u64(), body["superseded"].as_u64()),
+            (Some(0), Some(0))
+        );
 
         // 2. A zone arrives (and one 404s): geometry fills in.
         let (st, body) = post(&router, "/ingest/nws-zones", serde_json::json!({"zones": [

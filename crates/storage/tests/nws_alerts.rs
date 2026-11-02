@@ -1318,3 +1318,116 @@ async fn feed_polls_and_zone_batches_wait_for_each_other() {
             .unwrap();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn an_older_feed_counts_as_a_poll_but_changes_no_alert() {
+    let env = env().await;
+    let alerts = fixture_alerts();
+    let svr = id_of(&alerts, "Severe Thunderstorm Warning", |a| {
+        a.id.starts_with("urn:oid")
+    });
+    let fresh = t0(); // the feed's own `updated`
+    env.nws
+        .apply_feed(&alerts, Some(fresh), t0())
+        .await
+        .unwrap();
+
+    // A lagging cache node answers with a feed from three minutes earlier: it does not list the
+    // SVR (issued since) and lists an alert that has since gone.
+    let mut old: Vec<ParsedAlert> = alerts.iter().filter(|a| a.id != svr).cloned().collect();
+    old.push(svr_with_status("urn:test:old-only", Some("Actual")));
+    let t1 = t0() + Duration::minutes(1);
+    let r = env
+        .nws
+        .apply_feed(&old, Some(fresh - Duration::minutes(3)), t1)
+        .await
+        .unwrap();
+    assert!(r.stale_ignored);
+    assert_eq!((r.upserted, r.ended, r.superseded), (0, 0, 0));
+    assert!(
+        env.nws
+            .get(&svr, false)
+            .await
+            .unwrap()
+            .unwrap()
+            .ended_at
+            .is_none(),
+        "the stale feed must not end an alert it does not list"
+    );
+    assert!(
+        env.nws
+            .get("urn:test:old-only", false)
+            .await
+            .unwrap()
+            .is_none(),
+        "...nor store what it lists"
+    );
+    // It was a valid answer, so the data age moves; nothing else about the feed does.
+    let st = env.nws.status().await.unwrap().unwrap();
+    assert_eq!(st.last_attempt_at, Some(t1));
+    assert_eq!(st.last_success_at, Some(t1));
+    assert_eq!(st.last_change_at, Some(t0()), "no change was applied");
+    assert_eq!(
+        st.feed_updated_at,
+        Some(fresh),
+        "the held stamp does not go backwards"
+    );
+    assert_eq!(st.last_alert_count, Some(alerts.len() as i32));
+
+    // The same stamp is processed normally (a 200 with unchanged `updated` is still a real answer).
+    let t2 = t0() + Duration::minutes(2);
+    let r = env.nws.apply_feed(&old, Some(fresh), t2).await.unwrap();
+    assert!(!r.stale_ignored);
+    assert_eq!((r.upserted, r.ended), (old.len(), 1));
+    assert!(env
+        .nws
+        .get(&svr, false)
+        .await
+        .unwrap()
+        .unwrap()
+        .ended_at
+        .is_some());
+    assert!(env
+        .nws
+        .get("urn:test:old-only", false)
+        .await
+        .unwrap()
+        .is_some());
+
+    // A newer stamp is processed and moves the held one forward; so is a feed with no stamp.
+    let t3 = t0() + Duration::minutes(3);
+    let newer = fresh + Duration::minutes(2);
+    let r = env.nws.apply_feed(&alerts, Some(newer), t3).await.unwrap();
+    assert!(!r.stale_ignored);
+    assert_eq!(
+        env.nws.status().await.unwrap().unwrap().feed_updated_at,
+        Some(newer)
+    );
+    assert!(env
+        .nws
+        .get(&svr, false)
+        .await
+        .unwrap()
+        .unwrap()
+        .ended_at
+        .is_none());
+    let r = env
+        .nws
+        .apply_feed(&alerts, None, t0() + Duration::minutes(4))
+        .await
+        .unwrap();
+    assert!(!r.stale_ignored);
+
+    // Nothing held yet (first poll ever): nothing to be older than.
+    sqlx::query("TRUNCATE nws_alerts, nws_alerts_status")
+        .execute(env.catalog.pool())
+        .await
+        .unwrap();
+    let r = env
+        .nws
+        .apply_feed(&alerts, Some(fresh - Duration::days(1)), t0())
+        .await
+        .unwrap();
+    assert!(!r.stale_ignored && r.upserted == alerts.len());
+}
