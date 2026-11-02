@@ -1588,6 +1588,131 @@ async fn a_zone_whose_fetch_failed_is_recorded_retried_in_15_minutes_and_never_w
         .contains(&"county/MDC031".to_string()));
 }
 
+/// Every read the EDR API uses is cut off at the catalog's read timeout and fails as
+/// `ServiceUnavailable` (SQLSTATE 57014), the limit ends with the read instead of staying on the
+/// pooled connection, and the writers never see it.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn reads_are_cut_off_at_the_read_timeout_and_the_limit_does_not_leak() {
+    use wms_common::WmsError;
+
+    let env = env().await;
+    let alerts = fixture_alerts();
+    env.nws.apply_feed(&alerts, Some(t0()), t0()).await.unwrap();
+    let id = alerts[0].id.clone();
+    let reader = NwsAlertCatalog::new(env.catalog.pool_clone())
+        .with_read_timeout(std::time::Duration::from_millis(300));
+
+    // Somebody holds both tables exclusively: every read queues behind the lock until the
+    // timeout cancels it.
+    let mut holder = env.catalog.pool().begin().await.unwrap();
+    sqlx::query("LOCK TABLE nws_alerts, nws_alerts_status IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let region = |r| search(r, t0());
+    let bbox = [-108.0, 36.0, -106.0, 39.0];
+    let ring = "POLYGON((-108 36, -106 36, -106 39, -108 39, -108 36))".to_string();
+    let started = std::time::Instant::now();
+    let results = [
+        ("status", reader.status().await.err()),
+        (
+            "point",
+            reader
+                .active_at_point(-107.0, 37.5, t0(), false)
+                .await
+                .err(),
+        ),
+        (
+            "bbox",
+            reader
+                .in_bbox(bbox, t0(), t0(), true, false, t0(), 10, false)
+                .await
+                .err(),
+        ),
+        (
+            "search point",
+            reader
+                .search(&region(AlertRegion::Point {
+                    lon: -107.0,
+                    lat: 37.5,
+                }))
+                .await
+                .err(),
+        ),
+        (
+            "search bbox",
+            reader.search(&region(AlertRegion::Bbox(bbox))).await.err(),
+        ),
+        (
+            "search polygon",
+            reader
+                .search(&region(AlertRegion::Polygon { wkt: ring.clone() }))
+                .await
+                .err(),
+        ),
+        (
+            "search radius",
+            reader
+                .search(&region(AlertRegion::Radius {
+                    lon: -107.0,
+                    lat: 37.5,
+                    meters: 50_000.0,
+                }))
+                .await
+                .err(),
+        ),
+        ("get", reader.get(&id, true).await.err()),
+    ];
+    for (what, err) in results {
+        assert!(
+            matches!(err, Some(WmsError::ServiceUnavailable(_))),
+            "{what}: {err:?}"
+        );
+    }
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(8 * 250),
+        "each read waited out its limit"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "and none of them hung"
+    );
+    holder.rollback().await.unwrap();
+
+    // The lock is gone: the same reads answer, and the limit left no trace on any connection.
+    assert!(
+        reader.status().await.unwrap().is_some(),
+        "the poll was recorded"
+    );
+    assert!(reader.get(&id, false).await.unwrap().is_some());
+    let hits = reader
+        .search(&region(AlertRegion::Polygon { wkt: ring }))
+        .await
+        .unwrap();
+    assert!(hits.len() <= 100);
+    let mut held = Vec::new();
+    for _ in 0..10 {
+        held.push(env.catalog.pool().acquire().await.unwrap());
+    }
+    for conn in &mut held {
+        let t: String = sqlx::query_scalar("SHOW statement_timeout")
+            .fetch_one(&mut **conn)
+            .await
+            .unwrap();
+        assert_eq!(t, "0", "no pooled connection kept the read timeout");
+    }
+    drop(held);
+
+    // Writers share the pool but not the limit: a feed poll under a 1 ms read timeout is fine.
+    let strict = NwsAlertCatalog::new(env.catalog.pool_clone())
+        .with_read_timeout(std::time::Duration::from_millis(1));
+    let t1 = t0() + Duration::minutes(1);
+    let applied = strict.apply_feed(&alerts, Some(t1), t1).await.unwrap();
+    assert_eq!(applied.failed, 0);
+    assert_eq!(applied.received, alerts.len());
+}
+
 /// A bowtie is not a valid polygon; the guard (`ST_MakeValid`, once per query) repairs it and the
 /// search still finds what overlaps either lobe.
 #[tokio::test]

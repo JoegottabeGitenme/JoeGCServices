@@ -149,6 +149,11 @@ paths:
           description: Invalid request parameters
         '404':
           description: Collection not found
+        '503':
+          description: |
+            `nws-alerts` only: the query took longer than the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s) and was cancelled. JSON exception body
+            (`status: 503`); ask for a smaller or simpler area.
 
   /collections/{collectionId}/area:
     get:
@@ -239,6 +244,11 @@ paths:
           description: Invalid request parameters
         '404':
           description: Collection not found, or (instance path) a run or time the instance does not hold
+        '503':
+          description: |
+            `nws-alerts` only: the query took longer than the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s) and was cancelled. JSON exception body
+            (`status: 503`); ask for a smaller or simpler area.
 
   /collections/{collectionId}/radius:
     get:
@@ -305,6 +315,11 @@ paths:
           description: Invalid request parameters
         '404':
           description: Collection not found
+        '503':
+          description: |
+            `nws-alerts` only: the query took longer than the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s) and was cancelled. JSON exception body
+            (`status: 503`); ask for a smaller or simpler area.
 
   /collections/{collectionId}/trajectory:
     get:
@@ -519,6 +534,11 @@ paths:
           description: Invalid request parameters, or the collection does not support /items
         '404':
           description: Collection not found
+        '503':
+          description: |
+            `nws-alerts` only: the query took longer than the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s) and was cancelled. JSON exception body
+            (`status: 503`); ask for a smaller or simpler area.
 
   /collections/{collectionId}/items/{featureId}:
     get:
@@ -553,6 +573,11 @@ paths:
                 $ref: '#/components/schemas/GeoJSON'
         '404':
           description: Collection or alert not found
+        '503':
+          description: |
+            `nws-alerts` only: the query took longer than the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s) and was cancelled. JSON exception body
+            (`status: 503`); ask for a smaller or simpler area.
 
   /collections/{collectionId}/items/{featureId}/conditions:
     get:

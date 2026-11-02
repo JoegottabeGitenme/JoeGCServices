@@ -31,6 +31,7 @@ use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
 use storage::{AlertRegion, AlertSearch, FeedStatus, StoredAlert};
+use wms_common::WmsError;
 
 use crate::state::AppState;
 
@@ -50,6 +51,8 @@ const MAX_RADIUS_M: f64 = 500_000.0;
 /// ring is checked for self-intersection pairwise, and PostGIS repairs an invalid one at a cost
 /// that explodes with the crossings, so the size is capped well below what a URL could carry.
 const MAX_POLYGON_VERTICES: usize = 500;
+/// Default for the `NWS_ALERTS_QUERY_TIMEOUT_MS` environment variable.
+pub const DEFAULT_QUERY_TIMEOUT_MS: u64 = 10_000;
 /// Compact-mode text caps.
 const INSTRUCTION_MAX: usize = 600;
 const SUMMARY_MAX: usize = 500;
@@ -714,6 +717,44 @@ fn internal(msg: impl std::fmt::Display) -> Response {
     )
 }
 
+/// A catalog failure as a response. A read the database cancelled at its time limit
+/// (`NWS_ALERTS_QUERY_TIMEOUT_MS`) is the request being too expensive, a 503 and only a warning;
+/// anything else is a fault.
+fn catalog_failure(e: WmsError) -> Response {
+    match e {
+        WmsError::ServiceUnavailable(msg) => {
+            tracing::warn!("nws-alerts: {msg}");
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ExceptionResponse::service_unavailable(
+                    "The alerts query was too expensive and timed out; \
+                     ask for a smaller or simpler area",
+                ),
+            )
+        }
+        other => internal(other),
+    }
+}
+
+/// The alerts read time limit from `NWS_ALERTS_QUERY_TIMEOUT_MS`: a positive number of
+/// milliseconds; unset, zero or unreadable means [`DEFAULT_QUERY_TIMEOUT_MS`].
+pub fn query_timeout(env_value: Option<&str>) -> std::time::Duration {
+    let ms = match env_value.map(str::trim).filter(|v| !v.is_empty()) {
+        None => DEFAULT_QUERY_TIMEOUT_MS,
+        Some(v) => match v.parse::<u64>() {
+            Ok(ms) if ms > 0 => ms,
+            _ => {
+                tracing::warn!(
+                    "NWS_ALERTS_QUERY_TIMEOUT_MS={v:?} is not a positive number of milliseconds; \
+                     using {DEFAULT_QUERY_TIMEOUT_MS}"
+                );
+                DEFAULT_QUERY_TIMEOUT_MS
+            }
+        },
+    };
+    std::time::Duration::from_millis(ms)
+}
+
 fn geojson(value: Value) -> Response {
     Response::builder()
         .status(StatusCode::OK)
@@ -830,7 +871,7 @@ async fn respond(state: &AppState, search: AlertSearch, extra: Vec<(&str, Value)
         .await
     {
         Ok(r) => r,
-        Err(e) => return internal(e),
+        Err(e) => return catalog_failure(e),
     };
     let truncated = rows.len() as i64 > limit;
     rows.truncate(limit as usize);
@@ -1059,7 +1100,7 @@ pub async fn item(state: Arc<AppState>, id: String, q: NwsQuery) -> Response {
             StatusCode::NOT_FOUND,
             ExceptionResponse::not_found(format!("Alert not found: {id}")),
         ),
-        Err(e) => internal(e),
+        Err(e) => catalog_failure(e),
     }
 }
 
@@ -1679,6 +1720,26 @@ mod tests {
                 "took {:?}",
                 start.elapsed()
             );
+        }
+    }
+
+    #[test]
+    fn a_timed_out_read_is_a_503_and_other_failures_a_500() {
+        let r = catalog_failure(WmsError::ServiceUnavailable("search cancelled".into()));
+        assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(r.headers()[header::CONTENT_TYPE], "application/json");
+        let r = catalog_failure(WmsError::DatabaseError("connection reset".into()));
+        assert_eq!(r.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn query_timeout_defaults_to_ten_seconds() {
+        use std::time::Duration;
+        assert_eq!(query_timeout(None), Duration::from_secs(10));
+        assert_eq!(query_timeout(Some("2500")), Duration::from_millis(2500));
+        assert_eq!(query_timeout(Some(" 750 ")), Duration::from_millis(750));
+        for bad in ["", "0", "-5", "10s", "1.5", "soon"] {
+            assert_eq!(query_timeout(Some(bad)), Duration::from_secs(10), "{bad:?}");
         }
     }
 

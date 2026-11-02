@@ -52,6 +52,20 @@ fn db(what: &'static str) -> impl Fn(sqlx::Error) -> WmsError {
     move |e| WmsError::DatabaseError(format!("NWS alerts {what} failed: {e}"))
 }
 
+/// [`db`] for the reads, which run under a `statement_timeout`: Postgres' "query canceled"
+/// (SQLSTATE 57014) is the read outlasting its time limit, reported as `ServiceUnavailable` so the
+/// caller can answer "too expensive" (503) instead of a fault (500).
+fn read_db(what: &'static str) -> impl Fn(sqlx::Error) -> WmsError {
+    move |e| match &e {
+        sqlx::Error::Database(d) if d.code().as_deref() == Some("57014") => {
+            WmsError::ServiceUnavailable(format!(
+                "NWS alerts {what} cancelled: it exceeded its time limit"
+            ))
+        }
+        _ => WmsError::DatabaseError(format!("NWS alerts {what} failed: {e}")),
+    }
+}
+
 /// Outcome of fetching one zone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoneStatus {
@@ -298,11 +312,47 @@ pub struct AlertSearch {
 #[derive(Clone)]
 pub struct NwsAlertCatalog {
     pool: PgPool,
+    /// `statement_timeout` for every read (see [`Self::with_read_timeout`]); `None`: the
+    /// server's own setting.
+    read_timeout: Option<std::time::Duration>,
 }
 
 impl NwsAlertCatalog {
+    /// Longest a read may run when the caller sets none of its own (the EDR API's default).
+    pub const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            read_timeout: None,
+        }
+    }
+
+    /// Cap every read ([`Self::status`], [`Self::active_at_point`], [`Self::in_bbox`],
+    /// [`Self::search`], [`Self::get`]) at `timeout`. Postgres cancels a read that runs longer
+    /// and it fails as `WmsError::ServiceUnavailable`. The limit is a `SET LOCAL` inside the
+    /// read's own transaction, so it ends with the read: it never reaches the next user of the
+    /// pooled connection, and the writers (which never use it) stay unlimited.
+    ///
+    /// Postgres checks for the cancel between operations, not inside one long GEOS call, so a
+    /// single pathological geometry operation still has to be kept out by validating the input.
+    pub fn with_read_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.read_timeout = Some(timeout);
+        self
+    }
+
+    /// A transaction for one read, with the read timeout set when there is one.
+    async fn read_tx(&self) -> WmsResult<sqlx::Transaction<'static, sqlx::Postgres>> {
+        let mut tx = self.pool.begin().await.map_err(db("begin"))?;
+        if let Some(timeout) = self.read_timeout {
+            // `set_config(.., true)` is `SET LOCAL` that takes a bind parameter (milliseconds).
+            sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+                .bind(timeout.as_millis().max(1).to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(db("set statement_timeout"))?;
+        }
+        Ok(tx)
     }
 
     // --- writes ---------------------------------------------------------------
@@ -600,13 +650,16 @@ impl NwsAlertCatalog {
     // --- reads (what the EDR layer will use) ----------------------------------
 
     pub async fn status(&self) -> WmsResult<Option<FeedStatus>> {
-        sqlx::query_as::<_, FeedStatus>(
+        let mut tx = self.read_tx().await?;
+        let status = sqlx::query_as::<_, FeedStatus>(
             "SELECT last_attempt_at, last_success_at, last_change_at, feed_updated_at, \
                     last_alert_count, last_error, last_error_at FROM nws_alerts_status WHERE id = 1",
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(db("status read"))
+        .map_err(read_db("status read"))?;
+        tx.commit().await.map_err(db("commit"))?;
+        Ok(status)
     }
 
     /// `Actual` alerts in force at a point, worst first.
@@ -627,13 +680,16 @@ impl NwsAlertCatalog {
             active = active_predicate("$3"),
             actual = actual_only(false),
         );
-        sqlx::query_as(&sql)
+        let mut tx = self.read_tx().await?;
+        let rows = sqlx::query_as(&sql)
             .bind(lon)
             .bind(lat)
             .bind(now)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
-            .map_err(db("point query"))
+            .map_err(read_db("point query"))?;
+        tx.commit().await.map_err(db("commit"))?;
+        Ok(rows)
     }
 
     /// `Actual` alerts intersecting a lon/lat box whose life overlaps `[from, to]`.
@@ -669,7 +725,8 @@ impl NwsAlertCatalog {
             geom = geom_col(with_geometry),
             actual = actual_only(false),
         );
-        sqlx::query_as(&sql)
+        let mut tx = self.read_tx().await?;
+        let rows = sqlx::query_as(&sql)
             .bind(bbox[0])
             .bind(bbox[1])
             .bind(bbox[2])
@@ -678,9 +735,11 @@ impl NwsAlertCatalog {
             .bind(to)
             .bind(now)
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
-            .map_err(db("bbox query"))
+            .map_err(read_db("bbox query"))?;
+        tx.commit().await.map_err(db("commit"))?;
+        Ok(rows)
     }
 
     /// Filtered search over a point, box, polygon or radius; worst alerts first.
@@ -760,7 +819,10 @@ impl NwsAlertCatalog {
                 query.bind(*lon).bind(*lat).bind(*meters).bind(deg)
             }
         };
-        query.fetch_all(&self.pool).await.map_err(db("search"))
+        let mut tx = self.read_tx().await?;
+        let rows = query.fetch_all(&mut *tx).await.map_err(read_db("search"))?;
+        tx.commit().await.map_err(db("commit"))?;
+        Ok(rows)
     }
 
     /// One alert by NWS id (any state).
@@ -769,11 +831,14 @@ impl NwsAlertCatalog {
             "SELECT {COLS}, {geom} AS geometry_geojson FROM nws_alerts a WHERE a.id = $1",
             geom = geom_col(with_geometry),
         );
-        sqlx::query_as(&sql)
+        let mut tx = self.read_tx().await?;
+        let alert = sqlx::query_as(&sql)
             .bind(id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await
-            .map_err(db("get"))
+            .map_err(read_db("get"))?;
+        tx.commit().await.map_err(db("commit"))?;
+        Ok(alert)
     }
 }
 

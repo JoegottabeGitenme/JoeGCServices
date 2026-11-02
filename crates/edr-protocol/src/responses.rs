@@ -194,6 +194,16 @@ impl ExceptionResponse {
         )
         .with_title("Internal Server Error")
     }
+
+    /// Create a 503 Service Unavailable exception.
+    pub fn service_unavailable(detail: impl Into<String>) -> Self {
+        Self::new(
+            "http://www.opengis.net/def/exceptions/ogcapi-edr-1/1.0/server-error",
+            503,
+            detail,
+        )
+        .with_title("Service Unavailable")
+    }
 }
 
 #[cfg(test)]
@@ -307,6 +317,14 @@ mod tests {
         let exc = ExceptionResponse::internal_error("Database connection failed");
 
         assert_eq!(exc.status, Some(500));
+    }
+
+    #[test]
+    fn test_exception_service_unavailable() {
+        let exc = ExceptionResponse::service_unavailable("Query timed out");
+
+        assert_eq!(exc.status, Some(503));
+        assert_eq!(exc.title.as_deref(), Some("Service Unavailable"));
     }
 
     #[test]

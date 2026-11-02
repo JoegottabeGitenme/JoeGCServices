@@ -37,6 +37,14 @@ that crosses itself costs the database seconds to minutes, so the ring must:
 
 The polygon is read as planar lon/lat. Text after the closing parentheses is a `400` too.
 
+**Query time limit.** Every database read behind these endpoints is capped at
+`NWS_ALERTS_QUERY_TIMEOUT_MS` milliseconds (an edr-api environment variable, default `10000`; a
+value that is not a positive number is ignored). A query that outlasts it is cancelled by
+Postgres and the request answers `503` with the usual JSON exception body (`"status": 503`,
+"too expensive and timed out"); the server logs a warning, not an error. Retrying the same request
+will not help: ask for a smaller or simpler area. The limit applies to these reads only, not to
+the ingester's writes or to the API's other collections.
+
 **Test alerts.** NWS' feed also carries messages whose CAP status is not `Actual` (`Test`,
 `Exercise`, `System`, `Draft`; e.g. the periodic "Test Message"). They are all stored, but every
 list query (`/position`, `/items`, `/area`, `/radius`, history windows included) returns only

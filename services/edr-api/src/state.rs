@@ -139,7 +139,15 @@ impl AppState {
         // GLM lightning flashes (written by the ingester)
         let lightning_catalog = Arc::new(LightningCatalog::new(catalog.pool_clone()));
 
-        let nws_alert_catalog = Arc::new(NwsAlertCatalog::new(catalog.pool_clone()));
+        // Every alert read gets a server-side time limit, so one expensive request cannot hold a
+        // Postgres core and a pool connection for minutes.
+        let nws_alert_catalog = Arc::new(
+            NwsAlertCatalog::new(catalog.pool_clone()).with_read_timeout(
+                crate::handlers::nws_alerts::query_timeout(
+                    std::env::var("NWS_ALERTS_QUERY_TIMEOUT_MS").ok().as_deref(),
+                ),
+            ),
+        );
 
         // Load EDR config
         let edr_dir = format!("{}/edr", config_dir);
