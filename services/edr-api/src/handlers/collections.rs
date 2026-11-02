@@ -587,6 +587,22 @@ pub async fn build_collections_list_json(state: &Arc<AppState>) -> Option<String
             // Lightning is ALWAYS listed, even with zero flashes stored: over CONUS
             // a quiet sky is normal, and a collection that vanishes whenever it is
             // not currently storming would look like an outage to a client.
+            // Always listed, like lightning: "no alerts" is a normal answer.
+            if model_config.observation_source.as_deref()
+                == Some(crate::handlers::nws_alerts::OBSERVATION_SOURCE)
+            {
+                collections.push(
+                    crate::handlers::nws_alerts::collection_metadata(
+                        state,
+                        &collection_def.id,
+                        &coll_def.title,
+                        &coll_def.description,
+                    )
+                    .await,
+                );
+                continue;
+            }
+
             if model_config.observation_source.as_deref() == Some("lightning") {
                 collections.push(build_lightning_collection(
                     &state,
@@ -923,6 +939,28 @@ pub async fn get_collection_handler(
             .iter()
             .map(|p| p.name.clone())
             .collect();
+
+        if model_config.observation_source.as_deref()
+            == Some(crate::handlers::nws_alerts::OBSERVATION_SOURCE)
+        {
+            let doc = crate::handlers::nws_alerts::collection_metadata(
+                &state,
+                &collection_def.id,
+                &collection_def.title,
+                &collection_def.description,
+            )
+            .await;
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CACHE_CONTROL, "max-age=60")
+                .body(
+                    serde_json::to_string_pretty(&doc)
+                        .unwrap_or_default()
+                        .into(),
+                )
+                .unwrap();
+        }
 
         if model_config.observation_source.as_deref() == Some("lightning") {
             let collection = build_lightning_collection(&state, collection_def, &available_params);

@@ -178,7 +178,7 @@ async fn run_server(args: Args) {
         // Position query
         .route(
             "/edr/collections/:collection_id/position",
-            get(handlers::position::position_handler),
+            get(handlers::nws_alerts::position_route),
         )
         .route(
             "/edr/collections/:collection_id/instances/:instance_id/position",
@@ -187,7 +187,7 @@ async fn run_server(args: Args) {
         // Area query
         .route(
             "/edr/collections/:collection_id/area",
-            get(handlers::area::area_handler),
+            get(handlers::nws_alerts::area_route),
         )
         .route(
             "/edr/collections/:collection_id/instances/:instance_id/area",
@@ -196,7 +196,7 @@ async fn run_server(args: Args) {
         // Radius query
         .route(
             "/edr/collections/:collection_id/radius",
-            get(handlers::radius::radius_handler),
+            get(handlers::nws_alerts::radius_route),
         )
         .route(
             "/edr/collections/:collection_id/instances/:instance_id/radius",
@@ -207,6 +207,12 @@ async fn run_server(args: Args) {
         .route(
             "/edr/collections/:collection_id/items",
             get(handlers::items::items_handler),
+        )
+        // One item by id (nws-alerts: ids are URNs like urn:oid:2.49.0.1.840.0.<hash>;
+        // raw or %3A-encoded both work). `/items/:id/conditions` below is longer, so no clash.
+        .route(
+            "/edr/collections/:collection_id/items/:feature_id",
+            get(handlers::nws_alerts::item_route_handler),
         )
         // Per-trail forecast conditions timeseries (linear_features only;
         // Session 14). Distinct from `?conditions=latest` on /items, which
