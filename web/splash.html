@@ -1331,6 +1331,10 @@
 
         /* Accessibility */
         @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
+
             * {
                 animation: none !important;
                 transition: none !important;
@@ -1375,7 +1379,7 @@
     <section class="hero">
         <div class="hero-content">
             <div class="construction-banner">
-                <span class="icon">&#128679;</span>
+                <span class="icon" aria-hidden="true">&#128679;</span>
                 <span class="text">Under Construction - More features coming soon!</span>
             </div>
             <h1>Weather for <span>Everyone</span></h1>
@@ -1394,7 +1398,7 @@
         <!-- MCP Server Section -->
         <section class="section" id="mcp">
             <h2 class="section-title">
-                <span class="icon">&#128172;</span>
+                <span class="icon" aria-hidden="true">&#128172;</span>
                 Weather for your AI assistant
             </h2>
 
@@ -1433,7 +1437,7 @@
             <div class="mcp-connect">
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#128172;</span>
+                        <span class="card-icon" aria-hidden="true">&#128172;</span>
                         <span class="card-title">Claude</span>
                     </div>
                     <a class="mcp-add" href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=FolkWeather&amp;connectorUrl=https%3A%2F%2Ffolkweather.com%2Fmcp" rel="noopener">Add to Claude</a>
@@ -1447,7 +1451,7 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#128187;</span>
+                        <span class="card-icon" aria-hidden="true">&#128187;</span>
                         <span class="card-title">Claude Code</span>
                     </div>
                     <p class="card-description">Run this once in your terminal:</p>
@@ -1459,7 +1463,7 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#129513;</span>
+                        <span class="card-icon" aria-hidden="true">&#129513;</span>
                         <span class="card-title">ChatGPT</span>
                     </div>
                     <p class="card-description" style="margin-bottom: 0;">
@@ -1471,7 +1475,7 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#128279;</span>
+                        <span class="card-icon" aria-hidden="true">&#128279;</span>
                         <span class="card-title">Any MCP client</span>
                     </div>
                     <p class="card-description" style="margin-bottom: 0;">
@@ -1490,7 +1494,7 @@
             <div class="mcp-tools-grid">
                 <div class="mcp-group">
                     <div class="edr-example-header">
-                        <span class="location-icon">&#127774;</span>
+                        <span class="location-icon" aria-hidden="true">&#127774;</span>
                         <span class="location-name">Daily read</span>
                         <span class="location-id">weather + lore</span>
                     </div>
@@ -1512,7 +1516,7 @@
 
                 <div class="mcp-group">
                     <div class="edr-example-header">
-                        <span class="location-icon">&#128202;</span>
+                        <span class="location-icon" aria-hidden="true">&#128202;</span>
                         <span class="location-name">Data</span>
                         <span class="location-id">numbers only</span>
                     </div>
@@ -1587,13 +1591,13 @@
         <!-- Services Section -->
         <section class="section" id="services">
             <h2 class="section-title">
-                <span class="icon">&#128268;</span>
+                <span class="icon" aria-hidden="true">&#128268;</span>
                 Available Services
             </h2>
             <div class="cards-grid">
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127758;</span>
+                        <span class="card-icon" aria-hidden="true">&#127758;</span>
                         <span class="card-title">WMS - Web Map Service</span>
                     </div>
                     <p class="card-description">
@@ -1607,7 +1611,7 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#129518;</span>
+                        <span class="card-icon" aria-hidden="true">&#129518;</span>
                         <span class="card-title">WMTS - Tiled Map Service</span>
                     </div>
                     <p class="card-description">
@@ -1621,7 +1625,7 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#128200;</span>
+                        <span class="card-icon" aria-hidden="true">&#128200;</span>
                         <span class="card-title">EDR - Environmental Data</span>
                     </div>
                     <p class="card-description">
@@ -1638,7 +1642,7 @@
         <!-- Showcase: one interactive map for the WMS/WMTS layers and EDR queries -->
         <section class="section" id="showcase">
             <h2 class="section-title">
-                <span class="icon">&#128506;</span>
+                <span class="icon" aria-hidden="true">&#128506;&#65039;</span>
                 See it working
             </h2>
             <div class="sc">
@@ -1681,7 +1685,7 @@
         <!-- API Endpoints Section -->
         <section class="section" id="api">
             <h2 class="section-title">
-                <span class="icon">&#128187;</span>
+                <span class="icon" aria-hidden="true">&#128187;</span>
                 API Endpoints
             </h2>
             <div class="endpoint-list">
@@ -1731,13 +1735,13 @@
         <!-- Data Sources Section -->
         <section class="section">
             <h2 class="section-title">
-                <span class="icon">&#128202;</span>
+                <span class="icon" aria-hidden="true">&#128202;</span>
                 Available Data Sources
             </h2>
             <div class="cards-grid">
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127758;</span>
+                        <span class="card-icon" aria-hidden="true">&#127758;</span>
                         <span class="card-title">GFS - Global Forecast</span>
                     </div>
                     <p class="card-description">
@@ -1746,16 +1750,16 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127782;</span>
+                        <span class="card-icon" aria-hidden="true">&#127782;&#65039;</span>
                         <span class="card-title">HRRR - High Resolution</span>
                     </div>
                     <p class="card-description">
-                        High-Resolution Rapid Refresh with 3km resolution and hourly updates. Best for short-term forecasts over CONUS.
+                        High-Resolution Rapid Refresh with 3km resolution and hourly updates. Best for short-term forecasts over CONUS. Reflectivity and precipitation type also come every 15 minutes.
                     </p>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#128752;</span>
+                        <span class="card-icon" aria-hidden="true">&#128752;&#65039;</span>
                         <span class="card-title">MRMS Radar</span>
                     </div>
                     <p class="card-description">
@@ -1764,7 +1768,7 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#128225;</span>
+                        <span class="card-icon" aria-hidden="true">&#128225;</span>
                         <span class="card-title">GOES-18 Satellite</span>
                     </div>
                     <p class="card-description">
@@ -1773,7 +1777,7 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127774;</span>
+                        <span class="card-icon" aria-hidden="true">&#127774;</span>
                         <span class="card-title">GOES-19 Satellite</span>
                     </div>
                     <p class="card-description">
@@ -1782,7 +1786,7 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127777;</span>
+                        <span class="card-icon" aria-hidden="true">&#127777;&#65039;</span>
                         <span class="card-title">NBM - National Blend</span>
                     </div>
                     <p class="card-description">
@@ -1791,16 +1795,25 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127754;</span>
-                        <span class="card-title">GFS-Wave (WAVEWATCH III)</span>
+                        <span class="card-icon" aria-hidden="true">&#128197;</span>
+                        <span class="card-title">NDFD - National Digital Forecast</span>
                     </div>
                     <p class="card-description">
-                        Global wave forecasts at 0.25&deg; resolution. Significant wave height, period, direction, wind waves, and surface wind. Updated every 6 hours with forecasts to 120 hours.
+                        The National Weather Service&rsquo;s own forecast grids for the contiguous US. Temperature, dew point, humidity, wind, sky cover, and chance of precipitation.
                     </p>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127757;</span>
+                        <span class="card-icon" aria-hidden="true">&#127754;</span>
+                        <span class="card-title">GFS-Wave (WAVEWATCH III)</span>
+                    </div>
+                    <p class="card-description">
+                        Global wave forecasts at 0.25&deg; resolution. Significant wave height, period, direction, wind waves, and surface wind. Updated every 6 hours with 3-hourly forecasts out to 384 hours (16 days).
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#127757;</span>
                         <span class="card-title">SST &amp; Sea Ice</span>
                     </div>
                     <p class="card-description">
@@ -1809,47 +1822,83 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127793;</span>
-                        <span class="card-title">NLDAS-2 Noah Land Surface</span>
+                        <span class="card-icon" aria-hidden="true">&#127793;</span>
+                        <span class="card-title">GLDAS-2.1 Noah Land Surface</span>
                     </div>
                     <p class="card-description">
-                        NASA NLDAS-2 Noah land surface model at 0.125&deg; hourly resolution. 37 variables including soil moisture, soil temperature, snow, radiation, and evapotranspiration over CONUS.
+                        NASA GLDAS-2.1 Noah land surface model, global at 0.25&deg; and 3-hourly. Soil moisture and temperature, snow, evapotranspiration, surface fluxes, and forcing. Runs about a month behind real time.
                     </p>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#9729;</span>
-                        <span class="card-title">NLDAS-2 Forcing</span>
-                    </div>
-                    <p class="card-description">
-                        NASA NLDAS-2 atmospheric forcing data at 0.125&deg; hourly resolution. Air temperature, precipitation, humidity, pressure, wind, and radiation over CONUS.
-                    </p>
-                </div>
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon">&#9875;</span>
+                        <span class="card-icon" aria-hidden="true">&#9875;</span>
                         <span class="card-title">NDBC Buoys</span>
                     </div>
                     <p class="card-description">
-                        Real-time surface observations from ~749 NDBC buoys and coastal stations. Wind, pressure, air/water temperature, wave height, wave period, and tide levels.
+                        Real-time surface observations from ~860 NDBC buoys and coastal stations. Wind, pressure, air/water temperature, wave height, wave period, and tide levels.
                     </p>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127759;</span>
+                        <span class="card-icon" aria-hidden="true">&#127759;</span>
                         <span class="card-title">DART Tsunami Buoys</span>
                     </div>
                     <p class="card-description">
-                        Deep-ocean water column height from ~54 DART tsunami detection buoys. Standard 15-minute reporting with 1-minute and 15-second event modes during seismic activity.
+                        Deep-ocean water column height from ~40 DART tsunami detection buoys. Standard 15-minute reporting with 1-minute and 15-second event modes during seismic activity.
                     </p>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#9888;</span>
+                        <span class="card-icon" aria-hidden="true">&#9992;&#65039;</span>
+                        <span class="card-title">METAR &amp; TAF</span>
+                    </div>
+                    <p class="card-description">
+                        Airport weather reports and forecasts. METAR observations of temperature, wind, visibility, pressure, and flight category, and 24-30 hour TAF forecasts.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#9889;</span>
+                        <span class="card-title">GLM Lightning</span>
+                    </div>
+                    <p class="card-description">
+                        Lightning flashes seen by the GOES Geostationary Lightning Mapper over CONUS for the last 24 hours, one point per flash with its time and energy, about a minute behind real time.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#127786;&#65039;</span>
+                        <span class="card-title">Storm Reports</span>
+                    </div>
+                    <p class="card-description">
+                        NOAA Storm Events since 1995: hail size, thunderstorm wind speed, and tornado tracks with their EF rating.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#129406;</span>
+                        <span class="card-title">Trails</span>
+                    </div>
+                    <p class="card-description">
+                        OpenStreetMap trails, tracks, and bridleways across Colorado, with soil saturation for the Front Range foothills.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#127769;</span>
+                        <span class="card-title">Astronomy</span>
+                    </div>
+                    <p class="card-description">
+                        Sunrise, sunset, moonrise, moonset, moon phase, and the sun&rsquo;s position for any place and time, computed on request.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#9888;&#65039;</span>
                         <span class="card-title">NWS Alerts</span>
                     </div>
                     <p class="card-description">
-                        Every watch, warning and advisory the National Weather Service has in force, checked every minute and kept for 7 days. Each comes with its outline, the NWS map colour and a short what/where/when summary.
+                        Every watch, warning and advisory the National Weather Service has in force, checked every minute and kept for 7 days. Each comes with its outline, the NWS map colour and, where NWS labels its text, a short what/where/when summary.
                     </p>
                 </div>
             </div>
@@ -1858,13 +1907,13 @@
         <!-- Coming Soon Section -->
         <section class="section">
             <h2 class="section-title">
-                <span class="icon">&#128640;</span>
+                <span class="icon" aria-hidden="true">&#128640;</span>
                 Coming Soon
             </h2>
             <div class="cards-grid">
                 <div class="card" style="opacity: 0.7;">
                     <div class="card-header">
-                        <span class="card-icon">&#127754;</span>
+                        <span class="card-icon" aria-hidden="true">&#127754;</span>
                         <span class="card-title">NAM Model</span>
                     </div>
                     <p class="card-description">
@@ -1882,7 +1931,7 @@
                 Built with Rust. Data from NOAA/NWS and NASA GES DISC.
             </p>
             <div class="footer-links">
-                <a href="https://github.com" class="footer-link">GitHub</a>
+                <a href="https://github.com/JoegottabeGitenme/JoeGCServices" class="footer-link">GitHub</a>
                 <a href="https://www.ogc.org/standards/wms" class="footer-link">OGC WMS Spec</a>
                 <a href="https://www.ogc.org/standards/wmts" class="footer-link">OGC WMTS Spec</a>
                 <a href="https://ogcapi.ogc.org/edr/" class="footer-link">OGC EDR Spec</a>
