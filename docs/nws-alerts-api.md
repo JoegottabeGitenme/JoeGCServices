@@ -149,7 +149,7 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
  "meta":{"source":"api.weather.gov","last_success_at":"2026-11-01T23:29:41Z","data_age_seconds":24,"stale":false},
  "features":[{"type":"Feature","id":"urn:oid:2.49.0.1.840.0.937dcb...001.1","geometry":null,
   "properties":{"event":"Severe Thunderstorm Warning","severity":"Severe","urgency":"Immediate","certainty":"Observed",
-   "color":"#FFA500","headline":"Severe Thunderstorm Warning issued ... until 5:00 PM MST","area":"Bernalillo; Sandoval",
+   "color":"#FFA500","headline":"Severe Thunderstorm Warning issued November 1 at 4:10PM MST until November 1 at 5:00PM MST by NWS Albuquerque NM","area":"Bernalillo; Sandoval",
    "sender":"NWS Albuquerque NM","sent":"...","effective":"...","onset":"...","ends":"2026-11-02T00:00:00Z","expires":"...",
    "status":"active","cap_status":"Actual","significance":"warning","action":"NEW","vtec_event":"KABQ.SV.W.0428",
    "summary":{"hazard":"60 mph wind gusts.","source":"Radar indicated.","impact":"Expect damage to roofs, siding, and trees."},
@@ -163,6 +163,16 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   it or stops listing it, and is treated as over at `expires` if neither happens first (its
   `status` becomes `ended` then): show `expires` as the latest it can last, not as a forecast end
   of the hazard.
+- `headline` is the text NWS broadcasts for the alert (its `NWSheadline` parameter) when it gives one,
+  otherwise NWS' own headline. Most alerts have the broadcast text, upper case, in local time
+  without a date and up to 200 characters (`FLOOD WARNING REMAINS IN EFFECT UNTIL 730 PM MST
+  MONDAY`); a new short-fused warning has none, so it gets the formal one (the example above:
+  `Severe Thunderstorm Warning issued November 1 at 4:10PM MST until ... by NWS Albuquerque NM`),
+  and the style can change between the messages of one `vtec_event`. `/items/{id}` also returns
+  `formal_headline`, always NWS' own headline (for a Flood Warning: `Flood Warning issued
+  November 1 at 7:26PM MST until November 2 at 7:30PM MST by NWS Pueblo CO`), for a client that
+  wants one style or the issue and end times; the broadcast text is also in
+  `parameters.NWSheadline`.
 - `status`: `active`, `upcoming` (issued, hazard starts later: label it "Starts 6 PM"), `ended`,
   `superseded` (a newer message replaced it; only seen via `/items/{id}` or `include_superseded`).
   As of now, or as of the request's `datetime` instant (see above). This is the lifecycle status;
@@ -176,23 +186,38 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   lines of the NWS text, written `* WHAT...`, `*WHAT...` (no space, as the Colorado avalanche
   advisories do) or, for `HAZARD...`/`SOURCE...`/`IMPACT...`, bare. Alerts whose text has no such
   labels (Alaska coastal-water forecasts, old-style watches) have an empty `summary`; their text is
-  in `sections.narrative` and `description` on `/items/{id}`. `/items/{id}` adds the untrimmed
-  text, `description`, `description_raw`, `instruction_raw`, `sections`, `vtec`, `parameters`, `ugc`,
-  `zones`, `references`, `superseded_by`, `superseded_at`, `ended_at`, `first_seen_at`,
-  `last_seen_at`.
+  in `sections.narrative` and `description` on `/items/{id}`. `/items/{id}` returns the same
+  properties and adds, besides the top-level `meta` every answer has:
+  - the untrimmed text: `description` (wraps collapsed into paragraphs), `description_raw` and
+    `instruction_raw` (as NWS sent them), `sections` (the labelled parts and the `narrative`);
+  - NWS' own fields: `formal_headline`, `message_type` (`Alert`, `Update`, `Cancel`), `category`,
+    `response`, `vtec` (every parsed VTEC code), `parameters`, `ugc`, `zones` (the affected-zone
+    keys), `references` (earlier messages this one replaces), `is_marine`. `parameters` is NWS'
+    `parameters` object without four bulky broadcast-system keys: `BLOCKCHANNEL`, `EAS-ORG`,
+    `CMAMtext` and `CMAMlongtext` (the Wireless Emergency Alert text);
+  - the lifecycle: `superseded_by`, `superseded_at`, `ended_at`, `first_seen_at`, `last_seen_at`,
+    `updated_at` (when the content last changed).
 - An empty `features` array is a valid "no alerts" answer **only when `meta.stale` is false**.
   `stale` is true when the last successful poll is over 5 minutes old (or never happened);
   `meta.last_error` appears when a poll has failed since the last success.
 - Every successful response, the collection document included: `Cache-Control: public, max-age=60`.
   Errors carry no `Cache-Control` and are not cached.
+- **Age of the data.** Responses are cached for up to 60 seconds at the CDN (and by browsers), so
+  `timeStamp` and `meta.data_age_seconds` describe the moment the body was generated, not the moment
+  you read it; `meta.stale` was decided then too. The data's true age is `data_age_seconds` plus the
+  time since `timeStamp` (or the `Age` header), or `now - meta.last_success_at` on your own clock:
+  use that, not the number as sent, before deciding the feed is fresh or that an empty answer means
+  "no alerts". The data also trails NWS by a poll or two (the downloader polls every 60 seconds,
+  plus the time a poll takes), so with the cache an alert NWS has just issued, changed or cancelled
+  can take about two minutes to show up.
 - Alerts that NWS gave only zone codes get their geometry once the zones are fetched
   (`geometry_source: pending` until then; such an alert does not match point queries yet, or only
   where the zones fetched so far cover it).
 - `geometry` (when asked for) is a `MultiPolygon`, or `null` when the alert has none yet. Its
   coordinates are rounded to 5 decimals (about a metre), and it is valid as returned (OGC simple
   features: no hole outside its shell, nested shells or self-intersection), whatever `simplify`
-  did to it or the rounding would have done to a thin zone; it is an even-odd area, so a client may
-  hand it straight to a geometry library. A part smaller than a metre is dropped.
+  did to it or the rounding would have done to a thin zone, so a client may hand it straight to a
+  geometry library. A part smaller than a metre is dropped.
 - `geometry_source`: `polygon` (NWS sent one), `zones` (union of the alert's zones), `pending` (some
   zones not fetched yet), `none` (no usable geometry: the zones have none, or the database rejected
   the polygon and there were no zones to fall back on). A polygon the database rejects never costs
@@ -208,7 +233,11 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   stays in force until its end time.
 - `superseded_at` (on `/items/{id}`) is when a replacement was issued, never later than the poll
   that first showed it; `ended_at` is the poll that stopped listing the alert. Both feed the
-  `datetime` instants above.
+  `datetime` instants above. `ended_at` is **set only when NWS stops listing the alert** (or sends
+  a cancellation): an alert whose end time has passed is `status: ended` from that instant, but its
+  `ended_at` stays `null` until the poll that no longer lists it, usually within a minute or two,
+  and a `superseded` alert that also left the feed never gets one. To say when an alert ended, use
+  `ends` (else `expires`), `superseded_at` or `ended_at`, whichever applies, not `ended_at` alone.
 - The ingester ignores a feed whose own `updated` stamp is older than the one it already applied
   (NWS is behind a CDN and a lagging node can serve a stale copy): the poll counts for
   `meta.last_success_at`, but nothing in it changes an alert, so a stale copy cannot end alerts

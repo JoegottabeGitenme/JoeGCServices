@@ -488,6 +488,12 @@ async fn one_alert_in_full_by_raw_or_encoded_urn() {
         let p = &f["properties"];
         assert!(p["description"].as_str().unwrap().contains("thunderstorm"));
         assert!(p["description_raw"].is_string() && p["instruction_raw"].is_string());
+        // a new warning has no broadcast headline, so NWS' own is both
+        assert!(p["formal_headline"]
+            .as_str()
+            .unwrap()
+            .starts_with("Severe Thunderstorm Warning issued"));
+        assert_eq!(p["formal_headline"], p["headline"]);
         assert_eq!(p["vtec"][0]["action"], "NEW");
         assert_eq!(p["sections"]["hazard"], "60 mph wind gusts.");
         assert!(p["parameters"].is_object());
