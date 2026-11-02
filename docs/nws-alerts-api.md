@@ -67,3 +67,15 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   the alert or the rest of the feed: it is stored without its own polygon and uses its zones. The
   same goes for a zone whose geometry is rejected (it is kept as `invalid_geometry` and retried
   after a day).
+
+## Lifecycle notes
+
+- An alert is in force from issue until its end time (`ends`, else `expires`), unless NWS stops
+  listing it, a newer message replaces it, or it is a cancellation (`messageType: Cancel` or a VTEC
+  `CAN` action). A VTEC `EXP` message ("will expire at ...") is **not** over when it arrives: it
+  stays in force until its end time.
+- The ingester ignores a feed whose own `updated` stamp is older than the one it already applied
+  (NWS is behind a CDN and a lagging node can serve a stale copy): the poll counts for
+  `meta.last_success_at`, but nothing in it changes an alert, so a stale copy cannot end alerts
+  issued since. Equal stamps are applied normally.
+

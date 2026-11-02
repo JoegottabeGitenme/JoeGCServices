@@ -97,6 +97,9 @@ pub struct ApplyResult {
     pub failed: usize,
     /// Alerts whose geometry could not be recomputed from their zones (parked with none).
     pub geometry_failed: usize,
+    /// The feed's `updated` stamp was older than the one already applied (a lagging cache node):
+    /// recorded as a successful poll, but nothing in it was applied.
+    pub stale_ignored: bool,
 }
 
 /// What [`NwsAlertCatalog::upsert_zones`] did.
@@ -306,6 +309,35 @@ impl NwsAlertCatalog {
             received: alerts.len(),
             ..Default::default()
         };
+
+        // NWS answers from a CDN; a lagging node can serve a feed older than the one already
+        // applied. Applying it would resurrect nothing but could end every alert issued since
+        // (they are "no longer listed") and revert updates. The answer is still a valid reply, so
+        // the poll counts as a success (data age keeps moving), but it changes no alert. Equal
+        // stamps are processed normally; a feed without a (parseable) stamp always is.
+        if let Some(incoming) = feed_updated {
+            let held: Option<DateTime<Utc>> =
+                sqlx::query_scalar("SELECT feed_updated_at FROM nws_alerts_status WHERE id = 1")
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db("status read"))?
+                    .flatten();
+            if let Some(held) = held.filter(|h| incoming < *h) {
+                warn!(%incoming, %held, "NWS alerts feed is older than the one already applied; ignoring it");
+                sqlx::query(
+                    "INSERT INTO nws_alerts_status (id, last_attempt_at, last_success_at) VALUES (1, $1, $1) \
+                     ON CONFLICT (id) DO UPDATE SET last_attempt_at = $1, last_success_at = $1",
+                )
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(db("status"))?;
+                tx.commit().await.map_err(db("commit"))?;
+                res.stale_ignored = true;
+                res.missing_zones = self.missing_zones(now).await?;
+                return Ok(res);
+            }
+        }
 
         for a in alerts {
             // Each alert is stored under its own savepoint: one the database rejects (a polygon
