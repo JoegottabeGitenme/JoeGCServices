@@ -192,7 +192,7 @@ pub struct NwsZonesIngestRequest {
 pub struct NwsZoneData {
     /// `forecast/KSZ001`.
     pub zone_key: String,
-    /// `ok` (default) | `not_found` | `no_geometry`.
+    /// `ok` (default) | `not_found` | `no_geometry` | `error` (the fetch failed transiently).
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
@@ -230,6 +230,18 @@ fn valid_zone_key(k: &str) -> bool {
     }
 }
 
+/// The stored status of a posted zone: what the downloader said, else judged by whether it
+/// brought a geometry. Unknown words are treated as absent.
+fn zone_status(status: Option<&str>, has_geometry: bool) -> ZoneStatus {
+    match status {
+        Some("error") => ZoneStatus::Error,
+        Some("not_found") => ZoneStatus::NotFound,
+        Some("no_geometry") => ZoneStatus::NoGeometry,
+        _ if !has_geometry => ZoneStatus::NoGeometry,
+        _ => ZoneStatus::Ok,
+    }
+}
+
 /// POST /ingest/nws-zones
 pub async fn ingest_nws_zones_handler(
     Extension(state): Extension<Arc<ServerState>>,
@@ -260,12 +272,9 @@ pub async fn ingest_nws_zones_handler(
         })
         .map(|z| {
             let geometry_json = z.geometry.filter(|g| g.is_object()).map(|g| g.to_string());
-            let status = match z.status.as_deref() {
-                Some("not_found") => ZoneStatus::NotFound,
-                Some("no_geometry") => ZoneStatus::NoGeometry,
-                _ if geometry_json.is_none() => ZoneStatus::NoGeometry,
-                _ => ZoneStatus::Ok,
-            };
+            let status = zone_status(z.status.as_deref(), geometry_json.is_some());
+            // A failed fetch carries no data; whatever else came with it is not trusted.
+            let geometry_json = geometry_json.filter(|_| status != ZoneStatus::Error);
             ZoneRecord {
                 zone_key: z.zone_key,
                 name: z.name,
@@ -385,6 +394,25 @@ mod tests {
             retention_hours_from_lookup(env(&[(RETENTION_ENV, "abc")])),
             168
         );
+    }
+
+    #[test]
+    fn posted_zone_status_mapping() {
+        assert_eq!(zone_status(Some("error"), false), ZoneStatus::Error);
+        assert_eq!(
+            zone_status(Some("error"), true),
+            ZoneStatus::Error,
+            "a failed fetch is an error whatever else was sent"
+        );
+        assert_eq!(zone_status(Some("not_found"), false), ZoneStatus::NotFound);
+        assert_eq!(
+            zone_status(Some("no_geometry"), false),
+            ZoneStatus::NoGeometry
+        );
+        assert_eq!(zone_status(Some("ok"), true), ZoneStatus::Ok);
+        assert_eq!(zone_status(None, true), ZoneStatus::Ok);
+        assert_eq!(zone_status(Some("ok"), false), ZoneStatus::NoGeometry);
+        assert_eq!(zone_status(Some("weird"), true), ZoneStatus::Ok);
     }
 
     #[test]
@@ -614,6 +642,25 @@ mod tests {
             .unwrap();
         assert!(hit.iter().any(|a| a.event == "Winter Storm Warning"));
 
+        // 2b. A zone whose fetch failed (5xx / timeout) is recorded as an error: stored without
+        // geometry, and not offered again by the next poll (it waits its retry delay).
+        assert!(missing.contains(&"forecast/PZZ455".to_string()));
+        let (st, body) = post(
+            &router,
+            "/ingest/nws-zones",
+            serde_json::json!({"zones": [{"zone_key": "forecast/PZZ455", "status": "error"}]}),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["zones_stored"], 1);
+        let st: String = sqlx::query_scalar(
+            "SELECT fetch_status FROM nws_zones WHERE zone_key = 'forecast/PZZ455'",
+        )
+        .fetch_one(catalog.pool())
+        .await
+        .unwrap();
+        assert_eq!(st, "error");
+
         // 3. 304: success, and the still-missing zones are offered again.
         let (st, body) = post(
             &router,
@@ -624,6 +671,10 @@ mod tests {
         assert_eq!(st, StatusCode::OK);
         let again = body["missing_zones"].as_array().unwrap();
         assert!(!again.is_empty() && !again.iter().any(|v| v == "forecast/COZ068"));
+        assert!(
+            !again.iter().any(|v| v == "forecast/PZZ455"),
+            "a zone that just failed is not asked for again at once"
+        );
 
         // 4. An error report only touches status.
         let (st, _) = post(

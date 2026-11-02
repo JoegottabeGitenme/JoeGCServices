@@ -2917,7 +2917,7 @@ CREATE TABLE IF NOT EXISTS nws_zones (
     state TEXT,
     kind TEXT,                                 -- NWS properties.type: public, coastal, offshore, county, fire ...
     geom GEOMETRY(MultiPolygon, 4326),         -- NULL when the zone has none / 404
-    fetch_status TEXT NOT NULL,                -- 'ok' | 'not_found' | 'no_geometry'
+    fetch_status TEXT NOT NULL,                -- 'ok' | 'not_found' | 'no_geometry' | 'error' (transient, retried in 15 min) | 'invalid_geometry'
     fetched_at TIMESTAMPTZ NOT NULL
 );
 

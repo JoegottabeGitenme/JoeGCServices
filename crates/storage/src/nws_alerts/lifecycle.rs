@@ -26,7 +26,8 @@ pub enum GeometrySource {
     Polygon,
     /// Union of the alert's zone geometries; every zone has been resolved.
     Zones,
-    /// Some zones have not been fetched yet; `geom` holds whatever is known.
+    /// Some zones have not been fetched yet (or their fetch failed and is awaiting a retry);
+    /// `geom` holds whatever is known.
     Pending,
     /// Zones were all resolved but none has geometry (404s, empty zone list).
     None,
