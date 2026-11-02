@@ -27,6 +27,10 @@ use wms_common::{WmsError, WmsResult};
 use super::lifecycle::{self, AlertTimes};
 use super::ParsedAlert;
 
+/// Key of the transaction-scoped advisory lock that serialises feed polls and zone batches (the
+/// two writers of `nws_alerts` geometry). The bytes spell "NWSWRITE".
+pub const NWS_WRITE_LOCK_KEY: i64 = 0x4E57_5357_5249_5445;
+
 /// A fetched zone is re-fetched after this long.
 pub const ZONE_REFRESH_DAYS: i64 = 30;
 /// A zone that 404'd / had no geometry is retried after this long.
@@ -297,6 +301,7 @@ impl NwsAlertCatalog {
         now: DateTime<Utc>,
     ) -> WmsResult<ApplyResult> {
         let mut tx = self.pool.begin().await.map_err(db("begin"))?;
+        lock_writers(&mut tx).await?;
         let mut res = ApplyResult {
             received: alerts.len(),
             ..Default::default()
@@ -378,14 +383,13 @@ impl NwsAlertCatalog {
             .execute(&mut *tx)
             .await
             .map_err(db("polygon fallback"))?;
-            let pending: Vec<String> = sqlx::query_scalar(
-                "SELECT id FROM nws_alerts \
-                 WHERE id = ANY($1) AND geometry_source = 'pending' AND geom IS NULL",
-            )
-            .bind(&ids)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(db("pending alerts"))?;
+            // Every alert still waiting on zones, not just this feed's with no geometry yet: one
+            // left half-resolved (partial geometry) is finished here once its zones all exist.
+            let pending: Vec<String> =
+                sqlx::query_scalar("SELECT id FROM nws_alerts WHERE geometry_source = 'pending'")
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(db("pending alerts"))?;
             res.geometry_failed = recompute_alerts(&mut tx, &pending).await?.1;
 
             sqlx::query(
@@ -473,6 +477,7 @@ impl NwsAlertCatalog {
             return Ok(res);
         }
         let mut tx = self.pool.begin().await.map_err(db("begin"))?;
+        lock_writers(&mut tx).await?;
         for z in zones {
             let stored = match upsert_zone_isolated(
                 &mut tx,
@@ -709,6 +714,20 @@ impl NwsAlertCatalog {
             .await
             .map_err(db("get"))
     }
+}
+
+/// Take the writers' lock for the rest of the transaction. Feed polls and zone batches both
+/// write alert geometry from what the other writes (a poll stores alerts that need zones, a batch
+/// stores zones that alerts need); run side by side, each can miss the other's uncommitted rows
+/// and leave an alert half-resolved, and their row locks can be taken in opposite orders. One at
+/// a time, each sees everything the other committed.
+async fn lock_writers(conn: &mut PgConnection) -> WmsResult<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(NWS_WRITE_LOCK_KEY)
+        .execute(conn)
+        .await
+        .map_err(db("writers lock"))?;
+    Ok(())
 }
 
 /// How one alert of a feed was stored.

@@ -48,6 +48,11 @@ async fn env() -> Env {
         .execute(catalog.pool())
         .await
         .expect("truncate");
+    // (left behind in a shared database by a test that installs it, see install_poison_trigger)
+    sqlx::query("DROP TRIGGER IF EXISTS nws_test_poison ON nws_alerts")
+        .execute(catalog.pool())
+        .await
+        .expect("drop test trigger");
     let nws = NwsAlertCatalog::new(catalog.pool_clone());
     Env {
         catalog,
@@ -1203,4 +1208,113 @@ async fn a_row_the_database_refuses_is_skipped_in_the_feed_and_in_the_zone_recom
         ids(&hit).contains(&winter),
         "the refreshed zone geometry reached the other alerts"
     );
+}
+
+/// The race the advisory lock closes, reproduced by hand: a zone batch committed (and
+/// recomputed only the alerts it could see) while the poll that stores this alert was still
+/// in flight. The alert is left `pending` with a partial geometry even though all its zones
+/// exist; the next poll must finish it, not skip it because its geometry is not NULL.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_pending_alert_with_partial_geometry_is_completed_by_the_next_poll() {
+    let env = env().await;
+    let alerts = fixture_alerts();
+    env.nws.apply_feed(&alerts, Some(t0()), t0()).await.unwrap();
+    let sca = id_of(&alerts, "Small Craft Advisory", |a| a.zone_keys.len() == 2);
+
+    // One of its two zones arrives: partial geometry, pending.
+    env.nws
+        .upsert_zones(
+            &[zone(
+                "forecast/PZZ455",
+                ZoneStatus::Ok,
+                Some(square(PZ_A[0], PZ_A[1], PZ_A[2], PZ_A[3])),
+            )],
+            t0(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(source_of(&env, &sca).await, ("pending".into(), true));
+
+    // The second zone is committed behind the alert's back (no recompute of this alert).
+    sqlx::query(
+        "INSERT INTO nws_zones (zone_key, zone_type, zone_id, geom, fetch_status, fetched_at) \
+         VALUES ('forecast/PZZ475', 'forecast', 'PZZ475', \
+                 ST_Multi(ST_GeomFromText('POLYGON((-125 41, -124 41, -124 42, -125 42, -125 41))', 4326)), 'ok', $1)",
+    )
+    .bind(t0())
+    .execute(env.catalog.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        source_of(&env, &sca).await,
+        ("pending".into(), true),
+        "still stuck"
+    );
+
+    // The next poll (nothing about this alert changed) completes it.
+    let t1 = t0() + Duration::minutes(1);
+    env.nws.apply_feed(&alerts, Some(t1), t1).await.unwrap();
+    assert_eq!(source_of(&env, &sca).await, ("zones".into(), true));
+    for (lon, lat) in [(-124.5, 40.5), (-124.5, 41.5)] {
+        let h = env
+            .nws
+            .active_at_point(lon, lat, t0(), false)
+            .await
+            .unwrap();
+        assert!(
+            ids(&h).contains(&sca),
+            "({lon},{lat}) is inside the union of both zones"
+        );
+    }
+}
+
+/// Feed polls and zone batches take the same transaction-scoped advisory lock first, so
+/// neither can commit while the other is mid-flight (and they cannot deadlock on row locks).
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn feed_polls_and_zone_batches_wait_for_each_other() {
+    let env = env().await;
+    let alerts = fixture_alerts();
+    env.nws.apply_feed(&alerts, Some(t0()), t0()).await.unwrap();
+
+    for writer in ["feed", "zones"] {
+        // Somebody else holds the writers' lock...
+        let mut holder = env.catalog.pool().begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(storage::nws_alerts::NWS_WRITE_LOCK_KEY)
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+
+        let nws = env.nws.clone();
+        let t1 = t0() + Duration::minutes(1);
+        let alerts = alerts.clone();
+        let task = tokio::spawn(async move {
+            match writer {
+                "feed" => nws.apply_feed(&alerts, Some(t1), t1).await.map(|_| ()),
+                _ => nws
+                    .upsert_zones(
+                        &[zone(
+                            "forecast/COZ068",
+                            ZoneStatus::Ok,
+                            Some(square(CO[0], CO[1], CO[2], CO[3])),
+                        )],
+                        t1,
+                    )
+                    .await
+                    .map(|_| ()),
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        assert!(!task.is_finished(), "{writer} must wait for the lock");
+
+        // ...and the writer goes ahead as soon as it is released.
+        holder.commit().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), task)
+            .await
+            .unwrap_or_else(|_| panic!("{writer} never got the lock"))
+            .unwrap()
+            .unwrap();
+    }
 }

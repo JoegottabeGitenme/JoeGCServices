@@ -15,6 +15,7 @@ pub mod lifecycle;
 pub mod sections;
 pub mod vtec;
 
+pub use catalog::NWS_WRITE_LOCK_KEY;
 pub use catalog::{
     AlertRegion, AlertSearch, ApplyResult, FeedStatus, NwsAlertCatalog, StoredAlert, ZoneRecord,
     ZoneStatus, ZonesResult,
