@@ -7,8 +7,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.css" integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.js" integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
+    <!-- MapLibre loads off the critical path: the stylesheet swaps in on load and the script is deferred -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.css" integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous" media="print" onload="this.media='all'" />
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.css" integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous" /></noscript>
+    <script id="maplibre-js" defer src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.js" integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
     <style>
         /* FolkWeather "paper + manilla folder" theme (design project: styles/paper.css). */
         * {
@@ -22,6 +24,8 @@
             --paper-bg: #f3ecd9;
             --paper-card: #fbf6e8;
             --paper-card-edge: #e8dcc0;
+            --paper-band: #eee5cc;
+            --paper-band-edge: #d9ca9f;
             --paper-shadow-soft: 0 1px 0 rgba(61, 53, 40, 0.04), 0 8px 24px -10px rgba(61, 53, 40, 0.18);
             --paper-shadow-flat: 0 1px 2px rgba(61, 53, 40, 0.08);
 
@@ -140,7 +144,7 @@
 
         /* Hero */
         .hero {
-            padding: 4.5rem 1.5rem 3.5rem;
+            padding: 3.25rem 1.5rem 2.75rem;
             text-align: center;
             position: relative;
             overflow: hidden;
@@ -191,56 +195,51 @@
             margin-right: auto;
         }
 
-        /* Construction banner: a quiet ochre note */
-        .construction-banner {
+        .hero-actions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.75rem;
+            margin-bottom: 1.1rem;
+        }
+
+        .hero-btn {
             display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
-            background: var(--window-soft);
-            border: 1px solid var(--ochre);
-            padding: 0.5rem 1.1rem;
-            border-radius: 999px;
-            margin-bottom: 1.75rem;
-            font-size: 0.85rem;
-        }
-
-        .construction-banner .icon {
-            font-size: 1.05rem;
-        }
-
-        .construction-banner .text {
-            color: var(--ochre-ink);
+            justify-content: center;
+            min-height: 46px;
+            padding: 0.6rem 1.5rem;
+            border: 1px solid var(--ink);
+            border-radius: 10px;
+            background: var(--ink);
+            color: var(--paper-card);
             font-weight: 600;
+            text-decoration: none;
+            box-shadow: var(--paper-shadow-flat);
+            transition: background 0.2s, border-color 0.2s;
         }
 
-        /* Status pill (go) */
-        .status-live {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            color: var(--go);
-            background: var(--go-soft);
-            border: 1px solid var(--go);
-            padding: 0.35rem 0.9rem;
-            border-radius: 999px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin-top: 0.5rem;
+        .hero-btn:hover {
+            background: var(--ink-2);
+            border-color: var(--ink-2);
+            color: var(--paper-card);
         }
 
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            background: var(--go);
-            border-radius: 50%;
-            animation: pulse 2.4s infinite;
+        .hero-btn-alt {
+            background: var(--paper-card);
+            color: var(--ink);
+            box-shadow: none;
         }
 
-        @keyframes pulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(107, 138, 61, 0.45); }
-            50% { box-shadow: 0 0 0 7px rgba(107, 138, 61, 0); }
+        .hero-btn-alt:hover {
+            background: var(--paper-card);
+            border-color: var(--ochre-deep);
+            color: var(--ink);
+        }
+
+        .hero-mcp {
+            color: var(--ink-2);
+            font-size: 0.95rem;
         }
 
         /* Main */
@@ -248,6 +247,32 @@
             max-width: 1200px;
             margin: 0 auto;
             padding: 2.5rem 1.5rem 4rem;
+        }
+
+        .main-lead {
+            padding-bottom: 3.5rem;
+        }
+
+        .main-lead .section {
+            margin-bottom: 0;
+        }
+
+        .main-rest {
+            padding-top: 3rem;
+        }
+
+        /* The MCP section is its own full-width band */
+        .band {
+            background: var(--paper-band);
+            border-top: 1px solid var(--paper-band-edge);
+            border-bottom: 1px solid var(--paper-band-edge);
+            scroll-margin-top: 3.5rem;
+        }
+
+        .band-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2.75rem 1.5rem 3rem;
         }
 
         .section {
@@ -905,7 +930,15 @@
             }
 
             .hero {
-                padding: 3rem 1rem 2.5rem;
+                padding: 2.5rem 1rem 2.25rem;
+            }
+
+            .band-inner {
+                padding: 2rem 1rem 2.25rem;
+            }
+
+            .main-lead {
+                padding-bottom: 2.5rem;
             }
 
             .hero-tagline {
@@ -1433,9 +1466,9 @@
                 <span class="logo-text">FolkWeather</span>
             </a>
             <nav class="nav-links">
+                <a href="#showcase" class="nav-link">Showcase</a>
                 <a href="#mcp" class="nav-link">MCP</a>
                 <a href="#services" class="nav-link">Services</a>
-                <a href="#showcase" class="nav-link">Showcase</a>
                 <a href="#api" class="nav-link">API</a>
             </nav>
         </div>
@@ -1443,216 +1476,260 @@
 
     <section class="hero">
         <div class="hero-content">
-            <div class="construction-banner">
-                <span class="icon" aria-hidden="true">&#128679;</span>
-                <span class="text">Under Construction - More features coming soon!</span>
-            </div>
             <h1>Weather for <span>Everyone</span></h1>
             <p class="hero-tagline">
                 Free, open weather data services powered by OGC standards. 
                 Access NOAA and NASA weather data through WMS, WMTS, and EDR APIs.
             </p>
-            <div class="status-live">
-                <span class="status-dot"></span>
-                <span>Services Online</span>
+            <div class="hero-actions">
+                <a href="#showcase" class="hero-btn">Try it live</a>
+                <a href="/edr/api.html" class="hero-btn hero-btn-alt" target="_blank" rel="noopener">API docs</a>
             </div>
+            <p class="hero-mcp">Rather just ask? <a href="#mcp">Give your AI assistant our MCP server <span aria-hidden="true">&rarr;</span></a></p>
         </div>
     </section>
 
-    <main class="main">
-        <!-- MCP Server Section -->
-        <section class="section" id="mcp">
+    <main class="main main-lead">
+        <!-- Showcase: one interactive map for the WMS/WMTS layers and EDR queries -->
+        <section class="section" id="showcase">
             <h2 class="section-title">
-                <span class="icon" aria-hidden="true">&#128172;</span>
-                Weather for your AI assistant
+                <span class="icon" aria-hidden="true">&#128506;&#65039;</span>
+                See it working
             </h2>
-
-            <div class="examples-section">
-                <p class="mcp-lede">
-                    Ask your AI assistant <em>&ldquo;what&rsquo;s it like out there today?&rdquo;</em>
-                    and get a short, grounded read built on NOAA and NASA data &mdash; with an old weather
-                    saying when one genuinely fits, and the science behind why.
-                </p>
-                <p class="mcp-text">
-                    FolkWeather&rsquo;s MCP server lets an assistant like Claude or ChatGPT fetch the real forecast,
-                    observations and alerts for your town, plus any weather saying that fits the day. The assistant
-                    writes the words; the numbers and the sources come from us.
-                </p>
-                <p class="mcp-text">
-                    Built on HRRR, NBM and GFS model data, airport METAR observations, MRMS radar rainfall,
-                    official NWS alerts, and sun and moon tables. If the best model is late, the next one answers
-                    and says so.
-                </p>
-
-                <div class="mcp-endpoint">
-                    <div class="edr-example-title">Server URL</div>
-                    <code class="mcp-url" id="mcp-url">https://folkweather.com/mcp</code>
-                    <button type="button" class="endpoint-btn mcp-copy" data-copy="https://folkweather.com/mcp" aria-live="polite" hidden>Copy</button>
-                    <div class="mcp-endpoint-note">Remote MCP over streamable HTTP &middot; no sign-in &middot; free</div>
+            <div class="sc">
+                <p class="sc-lede">Pick a layer or a query and watch the live services answer. Every request is a plain URL you can copy.</p>
+                <div class="sc-tabs" role="tablist" aria-label="Showcase mode">
+                    <button type="button" role="tab" id="sc-tab-maps" class="sc-tab" aria-selected="true" aria-controls="sc-panel" data-mode="maps">Maps <small>WMS / WMTS</small></button>
+                    <button type="button" role="tab" id="sc-tab-data" class="sc-tab" aria-selected="false" aria-controls="sc-panel" tabindex="-1" data-mode="data">Data <small>EDR</small></button>
                 </div>
-
-                <ul class="mcp-asks" aria-label="Things you might ask">
-                    <li>&ldquo;What&rsquo;s the weather like today in Fort Collins?&rdquo;</li>
-                    <li>&ldquo;Will there be frost tonight?&rdquo;</li>
-                    <li>&ldquo;Where does &lsquo;red sky at night&rsquo; come from?&rdquo;</li>
-                </ul>
+                <div class="sc-chips" id="sc-chips" role="group" aria-label="Layers"></div>
+                <div class="sc-body" id="sc-panel" role="tabpanel" aria-labelledby="sc-tab-maps">
+                    <div class="sc-mapwrap">
+                        <div id="sc-map" class="sc-map"><div class="sc-maploading">Map loading&hellip;</div></div>
+                    </div>
+                    <div class="sc-side">
+                        <div class="sc-readout" id="sc-readout" aria-live="polite"></div>
+                        <p class="sc-hint" id="sc-hint"></p>
+                    </div>
+                </div>
+                <div class="sc-request">
+                    <div class="sc-reqbar">
+                        <span class="sc-reqlabel">Request</span>
+                        <span class="sc-kind" id="sc-kind" role="group" aria-label="Request style" hidden>
+                            <button type="button" class="sc-mini" data-kind="wms" aria-pressed="true">WMS</button>
+                            <button type="button" class="sc-mini" data-kind="wmts" aria-pressed="false">WMTS</button>
+                        </span>
+                        <span class="sc-reqactions">
+                            <button type="button" class="sc-mini" id="sc-copy" hidden>Copy</button>
+                            <a class="sc-mini" id="sc-open" href="/edr" target="_blank" rel="noopener">Open</a>
+                        </span>
+                    </div>
+                    <code class="sc-url" id="sc-url" tabindex="0"></code>
+                    <details class="sc-resp" id="sc-resp" hidden>
+                        <summary>Response</summary>
+                        <pre id="sc-resp-pre"></pre>
+                    </details>
+                </div>
             </div>
+        </section>
+    </main>
 
-            <h3 class="mcp-sub">Connect it</h3>
-            <div class="mcp-connect">
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon" aria-hidden="true">&#128172;</span>
-                        <span class="card-title">Claude</span>
-                    </div>
-                    <a class="mcp-add" href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=FolkWeather&amp;connectorUrl=https%3A%2F%2Ffolkweather.com%2Fmcp" rel="noopener">Add to Claude</a>
-                    <p class="card-description">Opens Claude with FolkWeather filled in; check the details and choose Add. Or by hand:</p>
-                    <ol class="mcp-steps">
-                        <li>Open Settings, then Connectors.</li>
-                        <li>Choose Add custom connector.</li>
-                        <li>Paste <code>https://folkweather.com/mcp</code> and save.</li>
-                    </ol>
-                </div>
+        <!-- MCP Server Section -->
+        <section class="band" id="mcp">
+            <div class="band-inner">
+                <h2 class="section-title">
+                    <span class="icon" aria-hidden="true">&#128172;</span>
+                    Weather for your AI assistant
+                </h2>
 
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon" aria-hidden="true">&#128187;</span>
-                        <span class="card-title">Claude Code</span>
-                    </div>
-                    <p class="card-description">Run this once in your terminal:</p>
-                    <div class="mcp-cmd">
-                        <code id="mcp-cmd">claude mcp add --transport http folkweather https://folkweather.com/mcp</code>
-                        <button type="button" class="endpoint-btn mcp-copy" data-copy="claude mcp add --transport http folkweather https://folkweather.com/mcp" aria-live="polite" hidden>Copy</button>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon" aria-hidden="true">&#129513;</span>
-                        <span class="card-title">ChatGPT</span>
-                    </div>
-                    <p class="card-description" style="margin-bottom: 0;">
-                        Custom connectors need a paid plan and are added in ChatGPT on the web, not the phone
-                        app: turn on developer mode in Settings, then add a connector (some versions call it an
-                        app) with the URL above. No sign-in is needed. Menu names change between releases.
+                <div class="examples-section">
+                    <p class="mcp-lede">
+                        Ask your AI assistant <em>&ldquo;what&rsquo;s it like out there today?&rdquo;</em>
+                        and get a short, grounded read built on NOAA and NASA data &mdash; with an old weather
+                        saying when one genuinely fits, and the science behind why.
                     </p>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon" aria-hidden="true">&#128279;</span>
-                        <span class="card-title">Any MCP client</span>
-                    </div>
-                    <p class="card-description" style="margin-bottom: 0;">
-                        Add <code>https://folkweather.com/mcp</code> as a remote server over
-                        <strong>streamable HTTP</strong>. There is no authentication and no API key.
+                    <p class="mcp-text">
+                        FolkWeather&rsquo;s MCP server lets an assistant like Claude or ChatGPT fetch the real forecast,
+                        observations and alerts for your town, plus any weather saying that fits the day. The assistant
+                        writes the words; the numbers and the sources come from us.
                     </p>
-                </div>
-            </div>
-            <p class="mcp-more">
-                On your phone, or sending it to a friend? <a href="/connect?src=splash">folkweather.com/connect</a>
-                has one-tap setup and steps for each assistant.
-                <a href="/mcp/docs">Documentation</a> &middot; <a href="/mcp/privacy">Privacy</a>
-            </p>
+                    <p class="mcp-text">
+                        Built on HRRR, NBM and GFS model data, airport METAR observations, MRMS radar rainfall,
+                        official NWS alerts, and sun and moon tables. If the best model is late, the next one answers
+                        and says so.
+                    </p>
 
-            <h3 class="mcp-sub">What it can do</h3>
-            <div class="mcp-tools-grid">
-                <div class="mcp-group">
-                    <div class="edr-example-header">
-                        <span class="location-icon" aria-hidden="true">&#127774;</span>
-                        <span class="location-name">Daily read</span>
-                        <span class="location-id">weather + lore</span>
+                    <div class="mcp-endpoint">
+                        <div class="edr-example-title">Server URL</div>
+                        <code class="mcp-url" id="mcp-url">https://folkweather.com/mcp</code>
+                        <button type="button" class="endpoint-btn mcp-copy" data-copy="https://folkweather.com/mcp" aria-live="polite" hidden>Copy</button>
+                        <div class="mcp-endpoint-note">Remote MCP over streamable HTTP &middot; no sign-in &middot; free</div>
                     </div>
-                    <ul class="mcp-tool-list">
-                        <li>
-                            <span class="mcp-tool-name">morning_almanac</span>
-                            <span class="mcp-tool-desc">The day ahead: high and low, sky, rain or snow and when, wind, pressure trend, yesterday&rsquo;s actuals, sun and moon, NWS alerts, and up to three sayings that fit.</span>
-                        </li>
-                        <li>
-                            <span class="mcp-tool-name">evening_outlook</span>
-                            <span class="mcp-tool-desc">Tonight and tomorrow, plus the evening signs: red sky, a ring around the moon, dew and frost.</span>
-                        </li>
-                        <li>
-                            <span class="mcp-tool-name">lore_lookup</span>
-                            <span class="mcp-tool-desc">Where a saying comes from: the mechanism, the printed source, and its provenance.</span>
-                        </li>
+
+                    <ul class="mcp-asks" aria-label="Things you might ask">
+                        <li>&ldquo;What&rsquo;s the weather like today in Fort Collins?&rdquo;</li>
+                        <li>&ldquo;Will there be frost tonight?&rdquo;</li>
+                        <li>&ldquo;Where does &lsquo;red sky at night&rsquo; come from?&rdquo;</li>
                     </ul>
                 </div>
 
-                <div class="mcp-group">
-                    <div class="edr-example-header">
-                        <span class="location-icon" aria-hidden="true">&#128202;</span>
-                        <span class="location-name">Data</span>
-                        <span class="location-id">numbers only</span>
+                <h3 class="mcp-sub">Connect it</h3>
+                <div class="mcp-connect">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-icon" aria-hidden="true">&#128172;</span>
+                            <span class="card-title">Claude</span>
+                        </div>
+                        <a class="mcp-add" href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=FolkWeather&amp;connectorUrl=https%3A%2F%2Ffolkweather.com%2Fmcp" rel="noopener">Add to Claude</a>
+                        <p class="card-description">Opens Claude with FolkWeather filled in; check the details and choose Add. Or by hand:</p>
+                        <ol class="mcp-steps">
+                            <li>Open Settings, then Connectors.</li>
+                            <li>Choose Add custom connector.</li>
+                            <li>Paste <code>https://folkweather.com/mcp</code> and save.</li>
+                        </ol>
                     </div>
-                    <ul class="mcp-tool-list">
-                        <li>
-                            <span class="mcp-tool-name">hourly_forecast</span>
-                            <span class="mcp-tool-desc">Hour-by-hour numbers for up to 48 hours.</span>
-                        </li>
-                        <li>
-                            <span class="mcp-tool-name">current_conditions</span>
-                            <span class="mcp-tool-desc">The nearest airport observation (with the raw METAR), the current model hour, and any alerts.</span>
-                        </li>
-                        <li>
-                            <span class="mcp-tool-name">point_query</span>
-                            <span class="mcp-tool-desc">Advanced: any model collection and parameter at a point.</span>
-                        </li>
-                    </ul>
-                </div>
-            </div>
-            <p class="mcp-also">
-                Also included: reference pages your assistant can read (about, the writing style guide, the lore index,
-                the dataset catalog) and a <code>daily_read</code> prompt that writes the morning brief.
-            </p>
 
-            <div class="mcp-split">
-                <div>
-                    <h3 class="mcp-sub">What a saying looks like</h3>
-                    <article class="mcp-lorecard" aria-label="Example lore entry (illustration)">
-                        <div class="mcp-lorecard-head">
-                            <div class="edr-example-title">Lore entry &middot; evening_outlook</div>
-                            <span class="mcp-stamp">Illustration, not today&rsquo;s weather</span>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-icon" aria-hidden="true">&#128187;</span>
+                            <span class="card-title">Claude Code</span>
                         </div>
-                        <p class="mcp-saying">Clear moon, frost soon.</p>
-                        <div class="mcp-chips">
-                            <span class="mcp-chip">Attested</span>
-                            <span class="mcp-chip">Merit: strong</span>
-                            <span class="mcp-chip go">Holds today: yes</span>
+                        <p class="card-description">Run this once in your terminal:</p>
+                        <div class="mcp-cmd">
+                            <code id="mcp-cmd">claude mcp add --transport http folkweather https://folkweather.com/mcp</code>
+                            <button type="button" class="endpoint-btn mcp-copy" data-copy="claude mcp add --transport http folkweather https://folkweather.com/mcp" aria-live="polite" hidden>Copy</button>
                         </div>
-                        <dl class="mcp-fields">
-                            <dt>Why today</dt>
-                            <dd>Clear skies, 1.2 m/s winds overnight, dewpoint &minus;3&nbsp;&deg;C at dusk (HRRR); moon 78% lit.</dd>
-                            <dt>The physics</dt>
-                            <dd>On a clear, calm night the ground radiates heat straight to space with no cloud to trap it. If the air is dry, the surface cools below the dewpoint and frost forms before dawn.</dd>
-                            <dt>Printed source</dt>
-                            <dd><q>Clear moon, / Frost soon.</q> &mdash; Abercromby &amp; Marriott, 1882, via Dunwoody, <cite>Weather Proverbs</cite> (U.S. Signal Service, 1883).</dd>
-                            <dt>It predicts</dt>
-                            <dd>Frost by dawn: a low at or below 0&nbsp;&deg;C within the next 12 hours.</dd>
-                        </dl>
-                    </article>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-icon" aria-hidden="true">&#129513;</span>
+                            <span class="card-title">ChatGPT</span>
+                        </div>
+                        <p class="card-description" style="margin-bottom: 0;">
+                            Custom connectors need a paid plan and are added in ChatGPT on the web, not the phone
+                            app: turn on developer mode in Settings, then add a connector (some versions call it an
+                            app) with the URL above. No sign-in is needed. Menu names change between releases.
+                        </p>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-icon" aria-hidden="true">&#128279;</span>
+                            <span class="card-title">Any MCP client</span>
+                        </div>
+                        <p class="card-description" style="margin-bottom: 0;">
+                            Add <code>https://folkweather.com/mcp</code> as a remote server over
+                            <strong>streamable HTTP</strong>. There is no authentication and no API key.
+                        </p>
+                    </div>
+                </div>
+                <p class="mcp-more">
+                    On your phone, or sending it to a friend? <a href="/connect?src=splash">folkweather.com/connect</a>
+                    has one-tap setup and steps for each assistant.
+                    <a href="/mcp/docs">Documentation</a> &middot; <a href="/mcp/privacy">Privacy</a>
+                </p>
+
+                <h3 class="mcp-sub">What it can do</h3>
+                <div class="mcp-tools-grid">
+                    <div class="mcp-group">
+                        <div class="edr-example-header">
+                            <span class="location-icon" aria-hidden="true">&#127774;</span>
+                            <span class="location-name">Daily read</span>
+                            <span class="location-id">weather + lore</span>
+                        </div>
+                        <ul class="mcp-tool-list">
+                            <li>
+                                <span class="mcp-tool-name">morning_almanac</span>
+                                <span class="mcp-tool-desc">The day ahead: high and low, sky, rain or snow and when, wind, pressure trend, yesterday&rsquo;s actuals, sun and moon, NWS alerts, and up to three sayings that fit.</span>
+                            </li>
+                            <li>
+                                <span class="mcp-tool-name">evening_outlook</span>
+                                <span class="mcp-tool-desc">Tonight and tomorrow, plus the evening signs: red sky, a ring around the moon, dew and frost.</span>
+                            </li>
+                            <li>
+                                <span class="mcp-tool-name">lore_lookup</span>
+                                <span class="mcp-tool-desc">Where a saying comes from: the mechanism, the printed source, and its provenance.</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="mcp-group">
+                        <div class="edr-example-header">
+                            <span class="location-icon" aria-hidden="true">&#128202;</span>
+                            <span class="location-name">Data</span>
+                            <span class="location-id">numbers only</span>
+                        </div>
+                        <ul class="mcp-tool-list">
+                            <li>
+                                <span class="mcp-tool-name">hourly_forecast</span>
+                                <span class="mcp-tool-desc">Hour-by-hour numbers for up to 48 hours.</span>
+                            </li>
+                            <li>
+                                <span class="mcp-tool-name">current_conditions</span>
+                                <span class="mcp-tool-desc">The nearest airport observation (with the raw METAR), the current model hour, and any alerts.</span>
+                            </li>
+                            <li>
+                                <span class="mcp-tool-name">point_query</span>
+                                <span class="mcp-tool-desc">Advanced: any model collection and parameter at a point.</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <p class="mcp-also">
+                    Also included: reference pages your assistant can read (about, the writing style guide, the lore index,
+                    the dataset catalog) and a <code>daily_read</code> prompt that writes the morning brief.
+                </p>
+
+                <div class="mcp-split">
+                    <div>
+                        <h3 class="mcp-sub">What a saying looks like</h3>
+                        <article class="mcp-lorecard" aria-label="Example lore entry (illustration)">
+                            <div class="mcp-lorecard-head">
+                                <div class="edr-example-title">Lore entry &middot; evening_outlook</div>
+                                <span class="mcp-stamp">Illustration, not today&rsquo;s weather</span>
+                            </div>
+                            <p class="mcp-saying">Clear moon, frost soon.</p>
+                            <div class="mcp-chips">
+                                <span class="mcp-chip">Attested</span>
+                                <span class="mcp-chip">Merit: strong</span>
+                                <span class="mcp-chip go">Holds today: yes</span>
+                            </div>
+                            <dl class="mcp-fields">
+                                <dt>Why today</dt>
+                                <dd>Clear skies, 1.2 m/s winds overnight, dewpoint &minus;3&nbsp;&deg;C at dusk (HRRR); moon 78% lit.</dd>
+                                <dt>The physics</dt>
+                                <dd>On a clear, calm night the ground radiates heat straight to space with no cloud to trap it. If the air is dry, the surface cools below the dewpoint and frost forms before dawn.</dd>
+                                <dt>Printed source</dt>
+                                <dd><q>Clear moon, / Frost soon.</q> &mdash; Abercromby &amp; Marriott, 1882, via Dunwoody, <cite>Weather Proverbs</cite> (U.S. Signal Service, 1883).</dd>
+                                <dt>It predicts</dt>
+                                <dd>Frost by dawn: a low at or below 0&nbsp;&deg;C within the next 12 hours.</dd>
+                            </dl>
+                        </article>
+                    </div>
+
+                    <div>
+                        <h3 class="mcp-sub">How the lore stays honest</h3>
+                        <ul class="mcp-principles">
+                            <li><strong>Tied to measurements.</strong> Every saying has a measurable precondition, checked against today&rsquo;s data before it is offered.</li>
+                            <li><strong>Printed word for word.</strong> 14 of the 15 sayings are attested, with the exact printed wording, from public-domain collections: Dunwoody&rsquo;s <cite>Weather Proverbs</cite> (1883), FitzRoy (1859), Wright (1913), and Abercromby &amp; Marriott (1882).</li>
+                            <li><strong>Ours are labeled ours.</strong> House sayings are marked as FolkWeather&rsquo;s own and never passed off as old wisdom.</li>
+                            <li><strong>Color, never authority.</strong> A saying can&rsquo;t change a number or hide an alert.</li>
+                            <li><strong>Quiet days stay quiet.</strong> If nothing fits, it says nothing rather than inventing a saying.</li>
+                            <li><strong>It tells you when they disagree.</strong> Each saying reports whether it agrees with today&rsquo;s forecast.</li>
+                        </ul>
+                    </div>
                 </div>
 
-                <div>
-                    <h3 class="mcp-sub">How the lore stays honest</h3>
-                    <ul class="mcp-principles">
-                        <li><strong>Tied to measurements.</strong> Every saying has a measurable precondition, checked against today&rsquo;s data before it is offered.</li>
-                        <li><strong>Printed word for word.</strong> 14 of the 15 sayings are attested, with the exact printed wording, from public-domain collections: Dunwoody&rsquo;s <cite>Weather Proverbs</cite> (1883), FitzRoy (1859), Wright (1913), and Abercromby &amp; Marriott (1882).</li>
-                        <li><strong>Ours are labeled ours.</strong> House sayings are marked as FolkWeather&rsquo;s own and never passed off as old wisdom.</li>
-                        <li><strong>Color, never authority.</strong> A saying can&rsquo;t change a number or hide an alert.</li>
-                        <li><strong>Quiet days stay quiet.</strong> If nothing fits, it says nothing rather than inventing a saying.</li>
-                        <li><strong>It tells you when they disagree.</strong> Each saying reports whether it agrees with today&rsquo;s forecast.</li>
-                    </ul>
-                </div>
+                <p class="mcp-beta">Private beta &mdash; sayings are self-reviewed; detailed models cover the continental US.</p>
+                <p class="mcp-fine">
+                    Alaska, Hawaii, Puerto Rico and Guam get a coarser read; anywhere else uses the global model only,
+                    and the answer says so. Name a US city or ZIP code, or give latitude and longitude.
+                </p>
             </div>
-
-            <p class="mcp-beta">Private beta &mdash; sayings are self-reviewed; detailed models cover the continental US.</p>
-            <p class="mcp-fine">
-                Alaska, Hawaii, Puerto Rico and Guam get a coarser read; anywhere else uses the global model only,
-                and the answer says so. Name a US city or ZIP code, or give latitude and longitude.
-            </p>
         </section>
 
+    <main class="main main-rest">
         <!-- Services Section -->
         <section class="section" id="services">
             <h2 class="section-title">
@@ -1700,49 +1777,6 @@
                     <a href="/edr" class="card-link" target="_blank">
                         Explore API <span>&#8594;</span>
                     </a>
-                </div>
-            </div>
-        </section>
-
-        <!-- Showcase: one interactive map for the WMS/WMTS layers and EDR queries -->
-        <section class="section" id="showcase">
-            <h2 class="section-title">
-                <span class="icon" aria-hidden="true">&#128506;&#65039;</span>
-                See it working
-            </h2>
-            <div class="sc">
-                <p class="sc-lede">Pick a layer or a query and watch the live services answer. Every request is a plain URL you can copy.</p>
-                <div class="sc-tabs" role="tablist" aria-label="Showcase mode">
-                    <button type="button" role="tab" id="sc-tab-maps" class="sc-tab" aria-selected="true" aria-controls="sc-panel" data-mode="maps">Maps <small>WMS / WMTS</small></button>
-                    <button type="button" role="tab" id="sc-tab-data" class="sc-tab" aria-selected="false" aria-controls="sc-panel" tabindex="-1" data-mode="data">Data <small>EDR</small></button>
-                </div>
-                <div class="sc-chips" id="sc-chips" role="group" aria-label="Layers"></div>
-                <div class="sc-body" id="sc-panel" role="tabpanel" aria-labelledby="sc-tab-maps">
-                    <div class="sc-mapwrap">
-                        <div id="sc-map" class="sc-map"><div class="sc-maploading">Map loads as you scroll&hellip;</div></div>
-                    </div>
-                    <div class="sc-side">
-                        <div class="sc-readout" id="sc-readout" aria-live="polite"></div>
-                        <p class="sc-hint" id="sc-hint"></p>
-                    </div>
-                </div>
-                <div class="sc-request">
-                    <div class="sc-reqbar">
-                        <span class="sc-reqlabel">Request</span>
-                        <span class="sc-kind" id="sc-kind" role="group" aria-label="Request style" hidden>
-                            <button type="button" class="sc-mini" data-kind="wms" aria-pressed="true">WMS</button>
-                            <button type="button" class="sc-mini" data-kind="wmts" aria-pressed="false">WMTS</button>
-                        </span>
-                        <span class="sc-reqactions">
-                            <button type="button" class="sc-mini" id="sc-copy" hidden>Copy</button>
-                            <a class="sc-mini" id="sc-open" href="/edr" target="_blank" rel="noopener">Open</a>
-                        </span>
-                    </div>
-                    <code class="sc-url" id="sc-url" tabindex="0"></code>
-                    <details class="sc-resp" id="sc-resp" hidden>
-                        <summary>Response</summary>
-                        <pre id="sc-resp-pre"></pre>
-                    </details>
                 </div>
             </div>
         </section>
@@ -2739,7 +2773,13 @@
 
             setMode('maps');
             setRequest(wmtsTemplate(LAYERS[0]).replace('{z}', '3').replace('{x}', '2').replace('{y}', '3'), { kinds: true });
-            const start = () => { initMap(); };
+            // The map is near the top, so it starts as soon as the page has painted and loaded; it never competes with first paint
+            const start = () => {
+                // window load waits for the deferred script, so by then maplibregl exists (or the CDN failed and initMap says so)
+                const go = initMap;
+                const idle = () => (window.requestIdleCallback ? requestIdleCallback(go, { timeout: 2000 }) : setTimeout(go, 300));
+                if (document.readyState === 'complete') idle(); else window.addEventListener('load', idle, { once: true });
+            };
             if ('IntersectionObserver' in window) {
                 const io = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting)) { io.disconnect(); start(); } }, { rootMargin: '300px' });
                 io.observe(el.map);
