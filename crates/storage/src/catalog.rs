@@ -2972,10 +2972,12 @@ pub const NWS_ALERTS_SCHEMA_SQL: &str = r#"
 CREATE EXTENSION IF NOT EXISTS postgis;
 
 -- Polygonal-only, valid, multi: the one shape every geometry column here holds.
+-- (OFFSET 0 keeps the planner from pulling the subquery up, which would write ST_MakeValid out
+-- twice, once for the CASE and once for its value, and run it twice: half the time of every call.)
 CREATE OR REPLACE FUNCTION nws_clean_geom(g geometry) RETURNS geometry
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT CASE WHEN ST_IsEmpty(m) THEN NULL ELSE m END
-    FROM (SELECT ST_Multi(ST_CollectionExtract(ST_MakeValid(g), 3)) AS m) s
+    FROM (SELECT ST_Multi(ST_CollectionExtract(ST_MakeValid(g), 3)) AS m OFFSET 0) s
 $$;
 
 -- Zone geometry cache, filled lazily as alerts reference zones.
