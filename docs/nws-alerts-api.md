@@ -358,13 +358,20 @@ ft. Rain.
     them for the day it issues the forecast, and the alert stays in force after that day is over
     (a Small Craft Advisory sent on Sunday at noon, read on Monday). So `summary.what` is made
     from the time the alert is read: a period that is over (a day runs 6 AM to 6 PM, a night
-    6 PM to 6 AM, in the office's time, which the zone in `formal_headline` gives) is left out when
-    the headline names another that is not, or else the first period that is not over is
-    taken, and a `Tonight` that is still in progress the next day is labelled with the day it meant
-    (`Sun night`). If every period is over, it says the period the headline names, labelled `Sun`
-    or `Sun night`. Read the same day, the labels are NWS' own. An alert whose `formal_headline`
-    names no time zone is not adjusted. The text of a period is the forecast as of `sent`; it
-    does not change after that.
+    6 PM to 6 AM, in the office's time, which the zone in `formal_headline` gives, daylight saving
+    time changes included) is left out when the headline names another that is not, or else the
+    first period that is not over is taken, and a `Tonight` that is still in progress the next
+    day is labelled with the day it meant (`Sun night`). If every period is over, it says the
+    period the headline names, labelled `Sun` or `Sun night`. Read the same day, the labels are
+    NWS' own. An alert whose `formal_headline` names no time zone is not adjusted. The text of a
+    period is the forecast as of `sent`; it does not change after that.
+  - The day is the one `sent` falls on, unless the periods say otherwise. NWS Juneau sends some
+    forecasts just after midnight with `TONIGHT` first, the night that began the evening before,
+    and `WED` after it in one sent on a Wednesday: that `TONIGHT` is Tuesday night, and is called
+    `Tue night`. The periods in front of the first one a weekday names are the half days right
+    before it, and a forecast that starts with a night and has no weekday to count from, sent
+    between midnight and 6 AM, has the night before too. `Rest of tonight`, `This afternoon`,
+    `This evening` and the like are dated and labelled the way `Tonight` and `Today` are.
   - Alerts stored by the first version of the parser, which has the forecast run together in one
     narrative paragraph, give the same `summary.what`: the periods are read out of that paragraph
     until the next poll rewrites them as `sections.periods`.

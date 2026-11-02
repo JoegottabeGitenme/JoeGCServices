@@ -201,9 +201,9 @@ fn links(a: &StoredAlert, base_url: &str) -> Value {
 /// An alert whose text has neither `WHAT...` nor `HAZARD...` gets a `what` all the same when
 /// there is something to say (see [`derived_what`]): the forecast period(s) its headline names for
 /// the Alaska coastal-water alerts, the first sentence or two of a free-text statement. The
-/// forecast's `Today` and `Tonight` are read against the day the alert was sent (`now` is when
-/// it is read), so a forecast read a day late says `Sun night`, and leaves out the periods
-/// that are over.
+/// forecast's `Today` and `Tonight` are read against the day the alert was sent, or the day its
+/// periods put them on (`now` is when it is read), so a forecast read a day late says `Sun night`,
+/// and leaves out the periods that are over.
 fn summary(a: &StoredAlert, now: DateTime<Utc>, cap: Option<usize>) -> Value {
     let clock = a
         .sent
@@ -1830,6 +1830,44 @@ mod tests {
         };
         assert!(what(compact_feature(&a, t0(), "")).ends_with('…'));
         assert!(what(full_feature(&a, t0(), "")).ends_with("Tonight: Wind 29 kt."));
+    }
+
+    #[test]
+    fn an_alaska_forecast_sent_just_after_midnight_dates_its_tonight_to_the_night_before() {
+        // NWS Juneau sent Small Craft Advisories on Wednesday 2026-10-28 at 00:28 AKDT with TONIGHT
+        // first, the night that began on Tuesday evening, and WED after it
+        let mut a = no_labels("4da2086d58a5449608c1.002.1");
+        a.sent = Some(Utc.with_ymd_and_hms(2026, 10, 28, 8, 28, 0).unwrap());
+        a.headline = Some("Small Craft Advisory issued October 28 at 12:28AM AKDT until October 28 at 12:00PM AKDT by NWS Juneau AK".into());
+        a.nws_headline = Some("SMALL CRAFT ADVISORY THROUGH WEDNESDAY MORNING".into());
+        a.sections = json!({"periods": [
+            {"name": "TONIGHT", "text": "N wind 25 kt. Seas 11 ft."},
+            {"name": "WED", "text": "NE wind 20 kt. Seas 8 ft."},
+            {"name": "WED NIGHT", "text": "NE wind 15 kt. Seas 6 ft."},
+            {"name": "THU", "text": "E wind 10 kt. Seas 5 ft."},
+        ]});
+        let what = |now: DateTime<Utc>| {
+            [compact_feature(&a, now, ""), full_feature(&a, now, "")].map(|f| {
+                f["properties"]["summary"]["what"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+        };
+        // Wednesday 00:30 AKDT: Tuesday night is in force, with Wednesday after it
+        let want = "Tue night: N wind 25 kt. Seas 11 ft. Wed: NE wind 20 kt. Seas 8 ft.";
+        assert_eq!(
+            what(Utc.with_ymd_and_hms(2026, 10, 28, 8, 30, 0).unwrap()),
+            [want, want]
+        );
+        // Wednesday 19:00 and Thursday 01:00 AKDT: Wednesday night, never TONIGHT as Wednesday's
+        for now in [(10, 29, 3), (10, 29, 9)] {
+            let now = Utc
+                .with_ymd_and_hms(2026, now.0, now.1, now.2, 0, 0)
+                .unwrap();
+            let want = "Wed night: NE wind 15 kt. Seas 6 ft.";
+            assert_eq!(what(now), [want, want]);
+        }
     }
 
     #[test]
