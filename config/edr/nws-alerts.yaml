@@ -43,6 +43,6 @@ limits:
   max_parameters_per_request: 1
   max_time_steps: 1
   max_vertical_levels: 1
-  max_response_size_mb: 50
+  max_response_size_mb: 50    # the geometry of one list answer; the alerts beyond it are left out (truncated: true)
   max_radius_km: 500
   max_area_sq_degrees: 100000

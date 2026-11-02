@@ -40,6 +40,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
+use futures::TryStreamExt;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::{PgConnection, PgPool};
@@ -394,6 +395,11 @@ pub struct AlertSearch {
     pub simplify: Option<f64>,
     /// Also return CAP `status` Test / Exercise / System / Draft messages (default: only `Actual`).
     pub include_non_actual: bool,
+    /// Stop reading once the geometry text of the rows read adds up to more than this many bytes;
+    /// the row that crosses the line is the last one returned (so is the first, however large).
+    /// The caller drops that row, sees there were more, and has held no more than the budget plus
+    /// one row: the memory bound of a full-resolution answer.
+    pub max_geometry_bytes: Option<usize>,
 }
 
 impl AlertSearch {
@@ -919,7 +925,7 @@ impl NwsAlertCatalog {
             Some((f, t)) => (Some(f), Some(t)),
             None => (None, None),
         };
-        let query = sqlx::query_as(&sql)
+        let query = sqlx::query_as::<_, StoredAlert>(&sql)
             .bind(q.now)
             .bind(from)
             .bind(to)
@@ -938,7 +944,19 @@ impl NwsAlertCatalog {
                 }),
         };
         let mut tx = self.read_tx().await?;
-        let rows = query.fetch_all(&mut *tx).await.map_err(read_db("search"))?;
+        let mut rows: Vec<StoredAlert> = Vec::new();
+        let mut geometry_bytes = 0usize;
+        {
+            let mut stream = query.fetch(&mut *tx);
+            while let Some(row) = stream.try_next().await.map_err(read_db("search"))? {
+                geometry_bytes += row.geometry_geojson.as_ref().map_or(0, String::len);
+                rows.push(row);
+                if q.max_geometry_bytes.is_some_and(|max| geometry_bytes > max) {
+                    // (the rest of the result is read and thrown away by the commit below)
+                    break;
+                }
+            }
+        }
         tx.commit().await?;
         Ok(rows)
     }
@@ -973,7 +991,8 @@ struct ReadTx {
 impl ReadTx {
     async fn commit(mut self) -> WmsResult<()> {
         match self.tx.take() {
-            Some(tx) => tx.commit().await.map_err(db("commit")),
+            // (the read time limit applies to what a commit still has to read, too)
+            Some(tx) => tx.commit().await.map_err(read_db("commit")),
             None => Ok(()),
         }
     }
@@ -1562,6 +1581,7 @@ mod tests {
             with_geometry: false,
             simplify: None,
             include_non_actual: false,
+            max_geometry_bytes: None,
         }
     }
 

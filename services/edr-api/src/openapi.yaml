@@ -238,7 +238,8 @@ paths:
             maximum features returned (trails: clamped to 1-5000, default 1000). Ignored by
             gridded collections. Detect truncation with `numberReturned == limit`.
             `nws-alerts`: default 500, at most 2000 (more is cut to it, `truncated: true` says
-            when the list was cut), 0 or less is a 400.
+            when the list was cut, by this limit or by the 50 MB the geometry of an answer may
+            come to), 0 or less is a 400.
           schema:
             type: integer
             minimum: 1
@@ -348,7 +349,8 @@ paths:
             maximum features returned (trails: clamped to 1-5000, default 1000). Ignored by
             gridded collections. Detect truncation with `numberReturned == limit`.
             `nws-alerts`: default 500, at most 2000 (more is cut to it, `truncated: true` says
-            when the list was cut), 0 or less is a 400.
+            when the list was cut, by this limit or by the 50 MB the geometry of an answer may
+            come to), 0 or less is a 400.
           schema:
             type: integer
             minimum: 1
@@ -636,7 +638,9 @@ paths:
         on `/position`; interval needs `status=all`), `status=active|all` (default active),
         `include_superseded=true` (`status=all` only: also messages a newer one replaced),
         `severity`, `event`, `limit`
-        (default 500, max 2000, 0 or less is a 400; `truncated: true` when cut), `geometry`
+        (default 500, max 2000, 0 or less is a 400; `truncated: true` when cut, also when the
+        geometry of the answer would pass `max_response_size_mb`, 50 MB: the alerts beyond it are
+        left out), `geometry`
         (default true), `simplify` (degrees; default scales with the bbox, `0` disables, negative
         or not finite is a 400) and
         `include_non_actual=true` (also Test/Exercise/System/Draft alerts; default Actual only).

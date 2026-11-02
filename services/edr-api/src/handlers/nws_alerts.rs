@@ -30,7 +30,8 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use edr_protocol::collections::geojson_output_formats;
 use edr_protocol::responses::ExceptionResponse;
 use edr_protocol::{Collection, DataQueries, Extent, Parameter};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
@@ -38,6 +39,7 @@ use storage::nws_alerts::catalog::radius_boxes;
 use storage::{AlertRegion, AlertSearch, FeedStatus, StoredAlert};
 use wms_common::WmsError;
 
+use crate::config::LimitsConfig;
 use crate::content_negotiation::check_accept_header;
 use crate::state::AppState;
 
@@ -274,14 +276,35 @@ fn geometry_value(a: &StoredAlert) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// A feature of a list answer: the compact one used by position / items / area / radius, with the
+/// geometry kept as the database's own GeoJSON text and written through as it is. Parsed into a
+/// `Value` tree that text takes about nine times its size in memory, and a full-resolution answer
+/// is tens of MB of it.
+#[derive(Serialize)]
+struct ListFeature<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    id: &'a str,
+    geometry: Option<&'a RawValue>,
+    properties: Map<String, Value>,
+}
+
+fn list_feature<'a>(a: &'a StoredAlert, now: DateTime<Utc>, base_url: &str) -> ListFeature<'a> {
+    ListFeature {
+        kind: "Feature",
+        id: &a.id,
+        // (text that is not JSON is as good as no geometry)
+        geometry: a
+            .geometry_geojson
+            .as_deref()
+            .and_then(|g| serde_json::from_str(g).ok()),
+        properties: common_properties(a, now, base_url, true),
+    }
+}
+
 /// The compact feature used by position / items / area / radius.
 pub fn compact_feature(a: &StoredAlert, now: DateTime<Utc>, base_url: &str) -> Value {
-    json!({
-        "type": "Feature",
-        "id": a.id,
-        "geometry": geometry_value(a),
-        "properties": common_properties(a, now, base_url, true),
-    })
+    serde_json::to_value(list_feature(a, now, base_url)).unwrap_or(Value::Null)
 }
 
 /// The full feature served by `/items/{id}`: compact fields (untrimmed) plus all
@@ -342,14 +365,47 @@ pub fn feed_meta(status: Option<&FeedStatus>, now: DateTime<Utc>) -> Value {
     m
 }
 
-fn collection(features: Vec<Value>, now: DateTime<Utc>, meta: Value) -> Value {
-    json!({
-        "type": "FeatureCollection",
-        "numberReturned": features.len(),
-        "features": features,
-        "timeStamp": ts(now),
-        "meta": meta,
-    })
+/// The answer to a list query: `extra` carries `limit` and `truncated`.
+#[derive(Serialize)]
+struct ListCollection<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    #[serde(rename = "numberReturned")]
+    number_returned: usize,
+    features: Vec<ListFeature<'a>>,
+    #[serde(rename = "timeStamp")]
+    time_stamp: String,
+    meta: Value,
+    #[serde(flatten)]
+    extra: Map<String, Value>,
+}
+
+fn collection(
+    features: Vec<ListFeature<'_>>,
+    now: DateTime<Utc>,
+    meta: Value,
+) -> ListCollection<'_> {
+    ListCollection {
+        kind: "FeatureCollection",
+        number_returned: features.len(),
+        features,
+        time_stamp: ts(now),
+        meta,
+        extra: Map::new(),
+    }
+}
+
+/// How many of the leading `rows` an answer may carry so that their geometry text stays within
+/// `budget` bytes (the first row always, however large), and whether the budget cut it short.
+fn within_budget(rows: &[StoredAlert], budget: usize) -> (usize, bool) {
+    let mut used = 0usize;
+    for (i, a) in rows.iter().enumerate() {
+        used = used.saturating_add(a.geometry_geojson.as_ref().map_or(0, String::len));
+        if used > budget {
+            return (i.max(1), true);
+        }
+    }
+    (rows.len(), false)
 }
 
 // =============================================================================
@@ -839,12 +895,12 @@ pub fn query_timeout(env_value: Option<&str>) -> std::time::Duration {
     std::time::Duration::from_millis(ms)
 }
 
-fn geojson(value: Value) -> Response {
+fn geojson<T: Serialize>(body: &T) -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/geo+json")
         .header(header::CACHE_CONTROL, CACHE_CONTROL)
-        .body(serde_json::to_string(&value).unwrap_or_default().into())
+        .body(serde_json::to_string(body).unwrap_or_default().into())
         .unwrap()
 }
 
@@ -1002,14 +1058,33 @@ async fn meta(state: &AppState, now: DateTime<Utc>) -> Value {
     feed_meta(status.as_ref(), now)
 }
 
-/// Run a search and build the FeatureCollection response.
+/// How many bytes of geometry one list answer may carry: the collection's
+/// `limits.max_response_size_mb` (`config/edr/nws-alerts.yaml`).
+async fn geometry_budget(state: &AppState) -> usize {
+    let config = state.edr_config.read().await;
+    let mb = config
+        .models
+        .values()
+        .find(|m| m.observation_source.as_deref() == Some(OBSERVATION_SOURCE))
+        .map_or(LimitsConfig::default().max_response_size_mb, |m| {
+            m.limits.max_response_size_mb
+        });
+    mb.saturating_mul(1024 * 1024)
+}
+
+/// Run a search and build the FeatureCollection response. The geometry of the answer is held to
+/// [`geometry_budget`]: the alerts beyond it are left out and `truncated` says so, whatever
+/// `limit` is, so no request (`simplify=0` over a year of history) can make the service build an
+/// answer of any size.
 async fn respond(state: &AppState, search: AlertSearch, extra: Vec<(&str, Value)>) -> Response {
     let wall = Utc::now();
     let limit = search.limit;
+    let budget = geometry_budget(state).await;
     let mut rows = match state
         .nws_alert_catalog
         .search(&AlertSearch {
             limit: limit + 1,
+            max_geometry_bytes: Some(budget),
             ..search.clone()
         })
         .await
@@ -1017,20 +1092,21 @@ async fn respond(state: &AppState, search: AlertSearch, extra: Vec<(&str, Value)
         Ok(r) => r,
         Err(e) => return catalog_failure(e),
     };
-    let truncated = rows.len() as i64 > limit;
-    rows.truncate(limit as usize);
+    let (fit, over_budget) = within_budget(&rows, budget);
+    let truncated = over_budget || rows.len() as i64 > limit;
+    rows.truncate(fit.min(limit as usize));
     let features = rows
         .iter()
-        .map(|a| compact_feature(a, search.now, &state.base_url))
+        .map(|a| list_feature(a, search.now, &state.base_url))
         .collect();
     let mut fc = collection(features, wall, meta(state, wall).await);
     for (k, v) in extra {
-        fc[k] = v;
+        fc.extra.insert(k.to_string(), v);
     }
     if truncated {
-        fc["truncated"] = json!(true);
+        fc.extra.insert("truncated".to_string(), json!(true));
     }
-    geojson(fc)
+    geojson(&fc)
 }
 
 /// `include_non_actual=true|false` (default false).
@@ -1058,6 +1134,7 @@ fn base_search(
         with_geometry: geometry,
         simplify: parse_simplify(q.simplify)?,
         include_non_actual,
+        max_geometry_bytes: None,
     })
 }
 
@@ -1298,7 +1375,7 @@ pub async fn item(state: Arc<AppState>, id: String, q: NwsQuery) -> Response {
             let wall = Utc::now();
             let mut f = full_feature(&a, wall, &state.base_url);
             f["meta"] = meta(&state, wall).await;
-            geojson(f)
+            geojson(&f)
         }
         Ok(None) => error(
             StatusCode::NOT_FOUND,
@@ -1780,10 +1857,86 @@ mod tests {
         );
     }
 
+    /// The geometry of a list answer goes through as the text the database made, not as a parsed
+    /// tree, and the answer is the same JSON as the `Value` one.
+    #[test]
+    fn list_answers_write_the_geometry_text_through() {
+        let g = r#"{"type":"MultiPolygon","coordinates":[[[[-107.5,37],[-106.5,37],[-106.5,38],[-107.5,37]]]]}"#;
+        let mut a = by_event("Flood Watch");
+        a.geometry_geojson = Some(g.to_string());
+        let mut c = collection(
+            vec![list_feature(&a, t0(), "")],
+            t0(),
+            json!({"stale": false}),
+        );
+        c.extra.insert("truncated".into(), json!(true));
+        let text = serde_json::to_string(&c).unwrap();
+        assert!(
+            text.contains(&format!(r#""geometry":{g},"properties":"#)),
+            "{text}"
+        );
+        assert!(text.starts_with(
+            r#"{"type":"FeatureCollection","numberReturned":1,"features":[{"type":"Feature","id":"#
+        ));
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["truncated"], true);
+        assert_eq!(v["timeStamp"], ts(t0()));
+        assert_eq!(v["meta"]["stale"], false);
+        // the same feature as the Value form tests and `full_feature` use
+        assert_eq!(v["features"][0], compact_feature(&a, t0(), ""));
+        assert_eq!(
+            v["features"][0]["geometry"],
+            serde_json::from_str::<Value>(g).unwrap()
+        );
+        for none in [None, Some("not json".to_string()), Some(String::new())] {
+            a.geometry_geojson = none;
+            assert!(compact_feature(&a, t0(), "")["geometry"].is_null());
+            let text = serde_json::to_string(&list_feature(&a, t0(), "")).unwrap();
+            assert!(text.contains(r#""geometry":null"#), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_geometry_budget_cuts_an_answer_after_the_row_that_crosses_it() {
+        let rows: Vec<StoredAlert> = [Some(100), Some(100), None, Some(100), Some(100)]
+            .into_iter()
+            .map(|n: Option<usize>| {
+                let mut a = by_event("Flood Watch");
+                a.geometry_geojson = n.map(|n| "x".repeat(n));
+                a
+            })
+            .collect();
+        // sizes 100, 100, 0, 100, 100: the row that would take the total over the budget is not kept
+        // (budget, rows kept, cut short)
+        for (budget, kept, cut) in [
+            (1_000, 5, false),
+            (400, 5, false),
+            (399, 4, true),
+            (300, 4, true),
+            (299, 3, true),
+            (200, 3, true), // the empty one fits after the second
+            (199, 1, true),
+            (0, 1, true), // never less than the first row
+        ] {
+            assert_eq!(within_budget(&rows, budget), (kept, cut), "budget {budget}");
+        }
+        assert_eq!(within_budget(&[], 10), (0, false));
+        assert_eq!(
+            within_budget(&rows[2..3], 0),
+            (1, false),
+            "no geometry costs nothing"
+        );
+    }
+
     #[test]
     fn collection_counts_features() {
         let a = by_event("Flood Watch");
-        let c = collection(vec![compact_feature(&a, t0(), "")], t0(), json!({}));
+        let c = serde_json::to_value(collection(
+            vec![list_feature(&a, t0(), "")],
+            t0(),
+            json!({}),
+        ))
+        .unwrap();
         assert_eq!(c["type"], "FeatureCollection");
         assert_eq!(c["numberReturned"], 1);
     }
