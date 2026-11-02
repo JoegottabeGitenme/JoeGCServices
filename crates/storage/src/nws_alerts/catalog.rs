@@ -1099,6 +1099,13 @@ async fn touch_alerts(
     }
 }
 
+/// The moment a message takes effect as far as other messages are concerned: when it was issued
+/// (`effective`, else `sent`), never later than this poll (an issue time still ahead is not waited
+/// for). A replaced message is over from then, and so is a cancellation, which is never in force.
+fn issued_by(a: &ParsedAlert, now: DateTime<Utc>) -> DateTime<Utc> {
+    a.effective.or(a.sent).map_or(now, |t| t.min(now))
+}
+
 /// Mark as superseded the older messages that `alerts` (in feed order) replace, in one statement.
 /// A message that several of them reference is replaced by the first, as it would be by one
 /// statement per alert, and one that arrives in the same feed as its replacement is superseded
@@ -1111,9 +1118,8 @@ async fn supersede_replaced(
     let (mut targets, mut by, mut at) = (Vec::new(), Vec::new(), Vec::new());
     for a in alerts {
         // The old message is over from the moment the new one was issued, not from the poll that
-        // first showed it, so no instant in between has both in force. Never later than this
-        // poll: an issue time still ahead is not waited for.
-        let replaced_at = a.effective.or(a.sent).map_or(now, |t| t.min(now));
+        // first showed it, so no instant in between has both in force.
+        let replaced_at = issued_by(a, now);
         for t in lifecycle::supersede_targets(&a.id, &a.references) {
             targets.push(t);
             by.push(a.id.as_str());
@@ -1254,7 +1260,9 @@ async fn upsert_alert(
         .bind(&a.color)
         .bind(&a.references)
         .bind(polygon)
-        .bind(a.ended_on_arrival)
+        // A message that is over on arrival never had a life: it ends the moment it was issued,
+        // not at the poll that first showed it, or it would be "in force" in between.
+        .bind(a.ended_on_arrival.then(|| issued_by(a, now)))
         .bind(now)
         .bind(content_hash)
         .execute(conn)
@@ -1390,7 +1398,7 @@ INSERT INTO nws_alerts (
     $37, $38, $39,
     nws_clean_geom(ST_SetSRID(ST_GeomFromGeoJSON($40::text), 4326)),
     CASE WHEN $40::text IS NULL THEN 'pending' ELSE 'polygon' END,
-    CASE WHEN $41 THEN $42 ELSE NULL END,
+    $41,
     $42, $42, $42, $43
 )
 ON CONFLICT (id) DO UPDATE SET
@@ -1419,8 +1427,9 @@ ON CONFLICT (id) DO UPDATE SET
         ELSE nws_alerts.geometry_source END,
     zone_keys = EXCLUDED.zone_keys,
     content_hash = EXCLUDED.content_hash,
-    -- the feed lists it again: it is live unless the message itself is a cancel/expiry
-    ended_at = CASE WHEN $41 THEN COALESCE(nws_alerts.ended_at, $42) ELSE NULL END,
+    -- the feed lists it again: it is live unless the message itself is a cancel/expiry, which is
+    -- over from its issue time ($41), or from the earlier moment an older write of it recorded
+    ended_at = CASE WHEN $41::timestamptz IS NOT NULL THEN LEAST(nws_alerts.ended_at, $41) ELSE NULL END,
     last_seen_at = $42,
     updated_at = CASE WHEN (nws_alerts.description, nws_alerts.headline, nws_alerts.severity,
                             nws_alerts.expires, nws_alerts.ends, nws_alerts.message_type)

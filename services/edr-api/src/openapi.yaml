@@ -143,9 +143,10 @@ paths:
         **`datetime` on `nws-alerts`** (`/position`, `/area`, `/radius` and `/items` with
         `status=active`): without it, or with `datetime=now`, the alerts in force now. With an instant, the alerts that
         were in force at that moment: issued by then (`effective`, else `sent`), not yet replaced
-        by a newer message (over from the moment the replacement was issued), not yet ended (the
-        poll that stopped listing it) and before their end time (NWS' `ends`, else `expires`;
-        exclusive). An alert issued after the instant is not returned; one since superseded or
+        by a newer message (over from the moment the replacement was issued; of several the first
+        issued), not yet ended (the poll that stopped listing it; a cancellation is over the moment
+        it is issued and is never returned) and before their end time (NWS' `ends`, else
+        `expires`; exclusive). An alert issued after the instant is not returned; one since superseded or
         ended is, if it was in force then. Each feature's `status` is as of the instant:
         `upcoming` while its onset is still ahead, otherwise `active`. History goes back only as
         far as retention keeps ended and replaced alerts (7 days by default); an older instant
