@@ -960,6 +960,14 @@
                 letter-spacing: 0.05em;
             }
 
+            @media (max-width: 360px) {
+                .header { padding-left: 0.6rem; padding-right: 0.6rem; }
+                .logo-icon { display: none; }
+                .logo-text { font-size: 0.95rem; }
+                .nav-links { gap: 0; }
+                .nav-link { padding: 0.55rem 0.2rem; letter-spacing: 0; font-size: 0.7rem; }
+            }
+
             .hero {
                 padding: 2.5rem 1rem 2.25rem;
             }
@@ -1614,7 +1622,8 @@
             .sc-afull,
             .sc-alist button,
             .sc-resp summary,
-            .hero-mcp a {
+            .hero-mcp a,
+            .mcp-more a {
                 display: inline-flex;
                 align-items: center;
                 min-height: 44px;
@@ -2424,8 +2433,23 @@
                 ids.forEach((i) => { if (map.getLayer(i)) map.removeLayer(i); });
                 ids.forEach((i) => { if (map.getSource(i)) map.removeSource(i); });
             }
+            let mapLibFailed = false, mapLibWait = false;
             function initMap() {
                 if (map) return;
+                if (!window.maplibregl && !mapLibFailed && document.readyState !== 'complete') {
+                    // The deferred script has not arrived yet: wait for it rather than report a CDN failure
+                    el.map.innerHTML = '<div class="sc-maploading">Map loading&hellip;</div>';
+                    if (!mapLibWait) {
+                        mapLibWait = true;
+                        const sc = document.getElementById('maplibre-js');
+                        const again = () => { mapLibWait = false; initMap(); activate(); };
+                        if (sc) {
+                            sc.addEventListener('load', again, { once: true });
+                            sc.addEventListener('error', () => { mapLibFailed = true; again(); }, { once: true });
+                        }
+                    }
+                    return;
+                }
                 if (!window.maplibregl) { el.map.innerHTML = '<div class="sc-maploading">The map library could not be loaded.</div>'; setReadout('<p class="sc-err">Map library unavailable (CDN blocked?)</p>'); return; }
                 el.map.innerHTML = '';
                 map = new maplibregl.Map({
@@ -2567,7 +2591,7 @@
                     `<p class="sc-valid" data-valid="${l.id}">${validCache[l.id] ? validHtml(validCache[l.id]) : '<span class="sc-muted">Checking the valid time&hellip;</span>'}</p>` +
                     scaleHtml(l.id) + `<p class="sc-tilenote sc-muted">Latest available data, drawn from WMTS tiles.</p>`);
                 if (!validCache[l.id]) fillValid(l.id);
-                setHint('Drag and zoom: the tiles and the request below follow the view.');
+                setHint((COARSE ? 'Move and zoom with two fingers' : 'Drag and zoom') + ': the tiles and the request below follow the view.');
                 const opts = { duration: animate && !REDUCED ? 1100 : 0, padding: 20 };
                 if (l.bounds) map.fitBounds(l.bounds, opts);
                 else map.easeTo({ center: l.center, zoom: l.zoom - narrow(), duration: opts.duration });
@@ -2641,7 +2665,7 @@
                 if (first && !/\s/.test(p.trim()) && letters.length <= 8) return p;
                 let x = p.toLowerCase();
                 const body = x.trim();
-                if (/^[a-z][a-z\s.,'’-]*$/.test(body) && body.split(/\s+/).length <= 40 && noFunc(body)) {
+                if (/^[a-z][a-z\s.,'’-]*$/.test(body) && !/(\.{3}|:)$/.test(body) && !/\binclude/.test(body) && body.split(/\s+/).length <= 40 && noFunc(body)) {
                     // A bare run of place names or a short heading
                     x = x.replace(body, titleCase(body));
                 } else {
@@ -2649,7 +2673,7 @@
                     if (lead && lead[2].split(/\s+/).length <= 6 && noFunc(lead[2])) x = x.replace(body, cap1(lead[1]) + ' ' + titleCase(lead[2]));
                     // "the cities of A, B, and C" and "locations impacted include... A, B": the list is places
                     x = x.replace(/\b((?:cities|counties|communities|towns|parishes|boroughs|municipalities)\s+(?:of|in)\s+)([^\n]*)/g, (m, a, b) => a + titleCase(b));
-                    x = x.replace(/\b((?:locations impacted include|including|include)(?:\.{3}|:)?\s+)([^\n]*)/g, (m, a, b) => a + titleCase(b));
+                    x = x.replace(/\b((?:locations impacted include|including|includes|include)(?:\.{3}|:)?\s+(?:the following (?:counties|cities|communities|towns|locations)\s*,?\s*)?)([^\n]*)/g, (m, a, b) => (/^the (?:cities|counties|communities|towns|parishes)\b|\b(?:between|from|through|along|near|to)\b/.test(b) ? m : a + titleCase(b)));
                     x = x.replace(STATE_RE, (m) => titleCase(m));
                 }
                 if (event && x.includes(event.toLowerCase())) x = x.split(event.toLowerCase()).join(event);
@@ -2663,8 +2687,8 @@
                     .replace(/\b(us|sr|cr|fm|rm)([- ]?\d+)\b/g, (m, a, b) => a.toUpperCase() + b)
                     .replace(/\bi(-\d+)\b/g, (m, a) => 'I' + a)
                     .replace(/\bu\.s\./g, 'U.S.')
-                    .replace(/(,\s*)([A-Za-z]{2})\b(?=\s*(?:[;)]|$)|(?!\s*\w))/gm, (m, a, c) => (STATE_CODES.has(c.toLowerCase()) ? a + c.toUpperCase() : m))
-                    .replace(/(,\s*)([A-Za-z]{2})\b/g, (m, a, c) => (STATE_CODES.has(c.toLowerCase()) && !CODE_WORDS.has(c.toLowerCase()) ? a + c.toUpperCase() : m));
+                    .replace(/(,\s*)([A-Za-z]{2})\b(?=\s*(?:[,;)]|\.?$))/gm, (m, a, c) => (STATE_CODES.has(c.toLowerCase()) ? a + c.toUpperCase() : m))
+                    .replace(/(,\s*)([A-Za-z]{2})\b(?=\s+(?:and|or)\b)/g, (m, a, c) => (STATE_CODES.has(c.toLowerCase()) && !CODE_WORDS.has(c.toLowerCase()) ? a + c.toUpperCase() : m));
                 // Sentence starts: the paragraph, after . ! ? or an ellipsis, and at a * bullet
                 return x.replace(/(^[\s*•-]*|[.!?]\s+|\.{3}\s*|\n\s*\*\s*)([a-z])/g, (m, a, c) => a + c.toUpperCase());
             }
@@ -2673,7 +2697,7 @@
             const localTime = (iso) => (iso ? esc(new Date(iso).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })) + ' (your time)' : '');
             // Plain words for CAP's severity and urgency: "Extreme · expected later". Certainty only when it says something (Likely is the usual case)
             const URGENCY_WORDS = { Immediate: 'now', Expected: 'expected soon', Future: 'expected later', Past: 'past' };
-            const CERTAINTY_WORDS = { Observed: 'already happening', Possible: 'possible, not likely', Unlikely: 'unlikely' };
+            const CERTAINTY_WORDS = { Observed: 'already happening', Possible: 'possible', Unlikely: 'unlikely' };
             const severityText = (p) => [SEVERITY_RANK[p.severity] ? p.severity : '', URGENCY_WORDS[p.urgency], CERTAINTY_WORDS[p.certainty]].filter(Boolean).join(' \u00b7 ') || 'Unknown';
             // The view as an EDR bbox; west > east when it crosses the antimeridian
             function viewBbox() {
