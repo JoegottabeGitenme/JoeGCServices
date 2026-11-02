@@ -128,6 +128,10 @@ async fn env_with_read_timeout(read_timeout: Option<std::time::Duration>) -> Env
     // The same routes main.rs registers for these paths.
     let app = Router::new()
         .route(
+            "/edr/collections",
+            get(handlers::collections::list_collections_handler),
+        )
+        .route(
             "/edr/collections/:collection_id",
             get(handlers::collections::get_collection_handler),
         )
@@ -618,6 +622,95 @@ async fn area_radius_collection_document_and_freshness() {
     }
     assert!(c["description"].as_str().unwrap().contains("STALE"));
     assert!(c["extent"]["spatial"]["bbox"].is_array());
+}
+
+/// The collection document says only what the endpoints do: GeoJSON, an `items` link that leads to
+/// the alerts, no generic locations, and the same `Cache-Control` as every other response. Its
+/// data age is live; the cached `/collections` list carries none.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn the_collection_document_advertises_what_the_endpoints_return() {
+    let e = env().await;
+    e.load().await;
+    e.nws.record_not_modified(Utc::now()).await.unwrap();
+
+    let (st, h, c, _) = e.get("/edr/collections/nws-alerts").await;
+    assert_eq!(st, 200, "{c}");
+    assert_eq!(h["cache-control"], "public, max-age=60");
+    for q in ["position", "area", "radius"] {
+        let link = &c["data_queries"][q]["link"];
+        assert_eq!(link["type"], "application/geo+json", "{q}");
+        assert_eq!(
+            link["variables"]["output_formats"],
+            json!(["application/geo+json", "GeoJSON"]),
+            "{q}"
+        );
+    }
+    assert_eq!(
+        c["output_formats"],
+        json!(["application/geo+json", "GeoJSON"])
+    );
+    assert!(
+        !c.to_string().contains("cov+json"),
+        "CoverageJSON is not offered: {c}"
+    );
+
+    // rel=items leads to /items; nothing leads to the generic locations or to empty instances
+    let links = c["links"].as_array().unwrap();
+    let items = links.iter().find(|l| l["rel"] == "items").unwrap();
+    assert_eq!(
+        items["href"],
+        "http://localhost:8083/edr/collections/nws-alerts/items"
+    );
+    assert_eq!(items["type"], "application/geo+json");
+    assert!(links
+        .iter()
+        .all(|l| !l["href"].as_str().unwrap().contains("/locations")));
+    assert!(links.iter().all(|l| l["rel"] != "instances"));
+    for rel in ["self", "collection", "root"] {
+        assert!(links.iter().any(|l| l["rel"] == rel), "{rel}");
+    }
+    // and the link works
+    let (st, _, v, _) = e
+        .get(&format!(
+            "{}?datetime={AT}",
+            items["href"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches("http://localhost:8083")
+        ))
+        .await;
+    assert_eq!(st, 200, "{v}");
+    assert_eq!(v["type"], "FeatureCollection");
+
+    // the document's age is live...
+    assert!(
+        c["description"].as_str().unwrap().contains("Data age"),
+        "{}",
+        c["description"]
+    );
+    // ...the cached list has none, whatever state the feed is in
+    for _ in 0..2 {
+        let (st, _, list, _) = e.get("/edr/collections").await;
+        assert_eq!(st, 200);
+        let entry = list["collections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "nws-alerts")
+            .expect("nws-alerts is always listed");
+        let d = entry["description"].as_str().unwrap();
+        assert!(d.contains("/items/{id}"), "{d}");
+        assert!(!d.contains("Data age") && !d.contains("STALE"), "{d}");
+        assert_eq!(entry["data_queries"], c["data_queries"]);
+        assert_eq!(entry["links"], c["links"]);
+        e.nws
+            .record_not_modified(Utc::now() - Duration::minutes(30))
+            .await
+            .unwrap();
+    }
+    let (_, _, c, _) = e.get("/edr/collections/nws-alerts").await;
+    assert!(c["description"].as_str().unwrap().contains("STALE"));
 }
 
 /// Response sizes, and what simplification buys on a big zone union (a 20 000-vertex "county").

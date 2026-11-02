@@ -24,6 +24,7 @@ use axum::{
     response::Response,
 };
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use edr_protocol::collections::geojson_output_formats;
 use edr_protocol::responses::ExceptionResponse;
 use edr_protocol::{Collection, DataQueries, Extent, Parameter};
 use serde::Deserialize;
@@ -41,7 +42,8 @@ pub const OBSERVATION_SOURCE: &str = "nws_alerts";
 /// Data older than this (since the last successful poll) is flagged `stale`.
 pub const STALE_AFTER_SECS: i64 = 300;
 
-const CACHE_CONTROL: &str = "public, max-age=60";
+/// `Cache-Control` of every successful `nws-alerts` response, the collection document included.
+pub const CACHE_CONTROL: &str = "public, max-age=60";
 const DEFAULT_ITEMS_LIMIT: i64 = 500;
 const MAX_ITEMS_LIMIT: i64 = 2000;
 /// Upper bound for position/area/radius answers (a point is never under this many alerts).
@@ -1147,36 +1149,51 @@ pub async fn item_route_handler(
     item(state, feature_id, q).await
 }
 
-/// The `nws-alerts` collection document: position/area/radius links, extent and
-/// a data-age sentence in the description. `items` and `items/{id}` are served
-/// by dedicated routes and described in the description, like the other feature
-/// collections.
+/// The data-age sentence of the collection description, from [`feed_meta`]'s block.
+fn data_age_sentence(m: &Value) -> String {
+    match m["data_age_seconds"].as_i64() {
+        Some(s) if !m["stale"].as_bool().unwrap_or(true) => format!("Data age {s} s."),
+        Some(s) => format!("STALE: last successful poll of api.weather.gov was {s} s ago."),
+        None => "STALE: no successful poll of api.weather.gov yet.".to_string(),
+    }
+}
+
+/// The `nws-alerts` collection document: position/area/radius queries, an `items` link, extent
+/// and, with `live_age`, a data-age sentence in the description. `items` and `items/{id}` are
+/// served by dedicated routes and described in the description, like the other feature
+/// collections. Everything is GeoJSON, and the document says so.
+///
+/// `live_age` is for the document served per request. The `/collections` list is cached, and a
+/// relative age ("Data age 64 s") in a cached body is wrong by the time anyone reads it, in either
+/// direction (it can claim fresh data through an outage), so the list passes `false`: the age lives
+/// in this document and in every response's `meta`.
 pub async fn collection_metadata(
     state: &AppState,
     def_id: &str,
     title: &str,
     description: &str,
+    live_age: bool,
 ) -> Collection {
-    let status = state.nws_alert_catalog.status().await.ok().flatten();
-    let m = feed_meta(status.as_ref(), Utc::now());
-    let age = match m["data_age_seconds"].as_i64() {
-        Some(s) if !m["stale"].as_bool().unwrap_or(true) => format!("Data age {s} s."),
-        Some(s) => format!("STALE: last successful poll of api.weather.gov was {s} s ago."),
-        None => "STALE: no successful poll of api.weather.gov yet.".to_string(),
-    };
-    let description = format!(
+    let mut description = format!(
         "{description} Also /items?bbox=&datetime=&status=active|all and /items/{{id}} \
          (URN, URL-encoded or raw). Filters: severity=, event= (comma lists), geometry=true|false, \
-         include_non_actual=true (also Test/Exercise/System/Draft messages; default Actual only). {age}"
+         include_non_actual=true (also Test/Exercise/System/Draft messages; default Actual only)."
     );
+    if live_age {
+        let status = state.nws_alert_catalog.status().await.ok().flatten();
+        let m = feed_meta(status.as_ref(), Utc::now());
+        description = format!("{description} {}", data_age_sentence(&m));
+    }
     let mut c = Collection::new(def_id)
         .with_title(title)
-        .with_description(&description);
-    c.build_links(&state.base_url);
+        .with_description(&description)
+        .with_output_formats(geojson_output_formats());
+    c.build_items_links(&state.base_url);
     c = c.with_data_queries(
         DataQueries::with_position(&state.base_url, def_id)
             .with_area(&state.base_url, def_id)
-            .with_radius(&state.base_url, def_id),
+            .with_radius(&state.base_url, def_id)
+            .geojson_only(),
     );
     // US-centred but includes the Pacific/Alaska/territory zones NWS covers.
     c = c.with_extent(Extent::with_spatial([-180.0, -15.0, 180.0, 72.0], None));
@@ -1525,6 +1542,27 @@ mod tests {
         failing.last_error_at = Some(now - Duration::seconds(10));
         assert_eq!(feed_meta(Some(&failing), now)["last_error"], "timeout");
         assert!(feed_meta(Some(&st(100)), now).get("last_error").is_none());
+    }
+
+    #[test]
+    fn the_collection_description_says_how_old_the_data_is() {
+        let now = t0();
+        let st = |ago: i64| FeedStatus {
+            last_success_at: Some(now - Duration::seconds(ago)),
+            ..Default::default()
+        };
+        assert_eq!(
+            data_age_sentence(&feed_meta(Some(&st(40)), now)),
+            "Data age 40 s."
+        );
+        assert_eq!(
+            data_age_sentence(&feed_meta(Some(&st(900)), now)),
+            "STALE: last successful poll of api.weather.gov was 900 s ago."
+        );
+        assert_eq!(
+            data_age_sentence(&feed_meta(None, now)),
+            "STALE: no successful poll of api.weather.gov yet."
+        );
     }
 
     #[test]

@@ -11,7 +11,17 @@ it as GeoJSON. Config: `config/edr/nws-alerts.yaml`; code: `services/edr-api/src
 | `GET /edr/collections/nws-alerts/items/{id}` | One alert in full (id is a URN; raw or `%3A`-encoded) |
 | `GET /edr/collections/nws-alerts/area?coords=POLYGON((...))` | Alerts intersecting a polygon |
 | `GET /edr/collections/nws-alerts/radius?coords=POINT(lon lat)&within=50&within-units=km` | Alerts within a distance (max 500 km) |
-| `GET /edr/collections/nws-alerts` | Collection document (data age in the description) |
+| `GET /edr/collections/nws-alerts` | Collection document (live data age in the description) |
+
+**Collection document.** It advertises what the endpoints return and nothing else: every query
+(`position`, `area`, `radius`) and the collection itself list only `application/geo+json` (and the
+`GeoJSON` short form); there is no CoverageJSON. `links` has `self`, `collection`, `root` and
+`items` (`/collections/nws-alerts/items`, the alerts); the generic `/locations` and `/instances`
+links other collections carry are left out because they lead nowhere here. The `description` ends
+with the live data age (`Data age 24 s.`, or `STALE: ...` once the feed is over 5 minutes old),
+computed for each request. The cached `/edr/collections` list carries no age, because a relative age
+in a cached body is wrong by the time it is read: use the collection document or any answer's
+`meta`.
 
 Common parameters: `severity=Severe,Extreme`, `event=Tornado Warning,Flash Flood Warning` (comma
 lists, case-insensitive), `geometry=true|false` (default: false on position/area/radius, true on
@@ -130,7 +140,8 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
 - An empty `features` array is a valid "no alerts" answer **only when `meta.stale` is false**.
   `stale` is true when the last successful poll is over 5 minutes old (or never happened);
   `meta.last_error` appears when a poll has failed since the last success.
-- Every response: `Cache-Control: public, max-age=60`.
+- Every successful response, the collection document included: `Cache-Control: public, max-age=60`.
+  Errors carry no `Cache-Control` and are not cached.
 - Alerts that NWS gave only zone codes get their geometry once the zones are fetched
   (`geometry_source: pending` until then; such an alert does not match point queries yet, or only
   where the zones fetched so far cover it).
