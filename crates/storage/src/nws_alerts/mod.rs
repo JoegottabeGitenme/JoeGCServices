@@ -74,7 +74,8 @@ pub struct ParsedAlert {
     pub references: Vec<String>,
     /// The alert's own polygon, as a GeoJSON geometry string.
     pub geometry_json: Option<String>,
-    /// Already over on arrival (Cancel, or all VTEC actions CAN/EXP).
+    /// Already over on arrival (Cancel, or all VTEC actions CAN). VTEC EXP is not: it
+    /// stays in force until its end time.
     pub ended_on_arrival: bool,
 }
 
@@ -367,14 +368,28 @@ mod tests {
     }
 
     #[test]
-    fn expiring_vtec_arrives_ended() {
+    fn expiring_vtec_is_not_ended_on_arrival() {
         let all = parsed();
         let ff = by_event(&all, "Flash Flood Warning")[0];
         assert_eq!(ff.vtec[0].action, "EXP");
-        assert!(ff.ended_on_arrival);
+        assert!(
+            !ff.ended_on_arrival,
+            "EXP = will expire at the end time; its `ends` decides"
+        );
+        assert_eq!(ff.ends.unwrap().to_rfc3339(), "2026-11-01T23:30:00+00:00");
         assert_eq!(ff.color, "#8B0000");
-        // others are not ended
         assert!(!by_event(&all, "Winter Storm Warning")[0].ended_on_arrival);
+    }
+
+    #[test]
+    fn can_vtec_and_cancel_arrive_ended() {
+        let mut f = features()
+            .into_iter()
+            .find(|f| f["properties"]["event"] == "Flash Flood Warning")
+            .unwrap();
+        f["properties"]["parameters"]["VTEC"] =
+            serde_json::json!(["/O.CAN.KFGZ.FF.W.0209.000000T0000Z-261101T2330Z/"]);
+        assert!(parse_feature(&f).unwrap().ended_on_arrival);
     }
 
     #[test]
