@@ -703,26 +703,35 @@ impl NwsAlertCatalog {
                 if q.include_superseded { "TRUE" } else { "a.superseded_by IS NULL" }
             ),
         };
-        let region = match &q.region {
-            AlertRegion::Point { .. } => {
+        // A polygon is parsed and made valid once, in a CTE the planner may not fold back into
+        // the predicates, not once per candidate row in each of them.
+        let (with, from, region) = match &q.region {
+            AlertRegion::Point { .. } => (
+                "",
+                "nws_alerts a",
                 "a.geom && ST_SetSRID(ST_MakePoint($7, $8), 4326) \
-                 AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($7, $8), 4326))"
-            }
-            AlertRegion::Bbox(_) => {
+                 AND ST_Intersects(a.geom, ST_SetSRID(ST_MakePoint($7, $8), 4326))",
+            ),
+            AlertRegion::Bbox(_) => (
+                "",
+                "nws_alerts a",
                 "a.geom && ST_MakeEnvelope($7, $8, $9, $10, 4326) \
-                 AND ST_Intersects(a.geom, ST_MakeEnvelope($7, $8, $9, $10, 4326))"
-            }
-            AlertRegion::Polygon { .. } => {
-                "a.geom && ST_MakeValid(ST_GeomFromText($7, 4326)) \
-                 AND ST_Intersects(a.geom, ST_MakeValid(ST_GeomFromText($7, 4326)))"
-            }
-            AlertRegion::Radius { .. } => {
+                 AND ST_Intersects(a.geom, ST_MakeEnvelope($7, $8, $9, $10, 4326))",
+            ),
+            AlertRegion::Polygon { .. } => (
+                "WITH q AS MATERIALIZED (SELECT ST_MakeValid(ST_GeomFromText($7, 4326)) AS g) ",
+                "nws_alerts a, q",
+                "a.geom && q.g AND ST_Intersects(a.geom, q.g)",
+            ),
+            AlertRegion::Radius { .. } => (
+                "",
+                "nws_alerts a",
                 "a.geom && ST_Expand(ST_SetSRID(ST_MakePoint($7, $8), 4326), $10) \
-                 AND ST_DWithin(a.geom::geography, ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography, $9)"
-            }
+                 AND ST_DWithin(a.geom::geography, ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography, $9)",
+            ),
         };
         let sql = format!(
-            "SELECT {COLS}, {geom} AS geometry_geojson FROM nws_alerts a \
+            "{with}SELECT {COLS}, {geom} AS geometry_geojson FROM {from} \
              WHERE {time} AND {actual} AND {region} \
                AND (cardinality($4::text[]) = 0 OR lower(a.severity) = ANY($4)) \
                AND (cardinality($5::text[]) = 0 OR lower(a.event) = ANY($5)) \
