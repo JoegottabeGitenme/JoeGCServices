@@ -570,7 +570,7 @@ impl NwsAlertCatalog {
         }
         let keys: Vec<&str> = zones.iter().map(|z| z.zone_key.as_str()).collect();
         let affected: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM nws_alerts WHERE zone_keys && $1 AND geometry_source IN ('pending', 'zones')",
+            "SELECT id FROM nws_alerts WHERE zone_keys && $1 AND geometry_source IN ('pending', 'zones', 'none')",
         )
         .bind(&keys)
         .fetch_all(&mut *tx)
