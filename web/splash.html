@@ -925,8 +925,39 @@
 
         /* Mobile */
         @media (max-width: 640px) {
+            .header {
+                padding: 0.45rem 1rem;
+            }
+
+            .header-content {
+                gap: 0.5rem;
+            }
+
+            .logo {
+                flex: none;
+            }
+
+            .logo-text {
+                font-size: 1.25rem;
+            }
+
+            /* No room for a full link row: it scrolls sideways, with a fade where there is more */
             .nav-links {
+                flex: 0 1 auto;
+                min-width: 0;
+                gap: 0.1rem;
+                overflow-x: auto;
+                scrollbar-width: none;
+            }
+
+            .nav-links::-webkit-scrollbar {
                 display: none;
+            }
+
+            .nav-link {
+                flex: none;
+                padding: 0.55rem 0.55rem;
+                letter-spacing: 0.05em;
             }
 
             .hero {
@@ -1282,7 +1313,8 @@
         .sc-reqbar {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            flex-wrap: wrap;
+            gap: 0.35rem 0.5rem;
             margin-bottom: 0.35rem;
         }
 
@@ -1408,6 +1440,19 @@
             }
         }
 
+        @media (max-width: 400px) {
+            .sc-tab {
+                flex-direction: column;
+                padding: 0.4rem 0.8rem;
+                line-height: 1.25;
+            }
+
+            .sc-tab small {
+                display: block;
+                margin-left: 0;
+            }
+        }
+
         @media (max-width: 640px) {
             .sc {
                 padding: 1rem;
@@ -1423,6 +1468,75 @@
             .sc-chip {
                 flex: none;
                 scroll-snap-align: start;
+            }
+        }
+
+        /* A row that scrolls sideways fades out where there is more to reach (classes set from script) */
+        .fade-r {
+            -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 2rem), transparent);
+            mask-image: linear-gradient(90deg, #000 calc(100% - 2rem), transparent);
+        }
+
+        .fade-l {
+            -webkit-mask-image: linear-gradient(270deg, #000 calc(100% - 2rem), transparent);
+            mask-image: linear-gradient(270deg, #000 calc(100% - 2rem), transparent);
+        }
+
+        .fade-l.fade-r {
+            -webkit-mask-image: linear-gradient(90deg, transparent, #000 2rem, #000 calc(100% - 2rem), transparent);
+            mask-image: linear-gradient(90deg, transparent, #000 2rem, #000 calc(100% - 2rem), transparent);
+        }
+
+        /* Touch: every control is at least 44px tall */
+        @media (pointer: coarse) {
+            .sc-chip,
+            .sc-mini,
+            .endpoint-btn,
+            .sc-tab,
+            .footer-link,
+            .nav-link,
+            .hero-btn,
+            .mcp-add,
+            .card-link,
+            .sc-hint button,
+            .sc-afull,
+            .sc-alist button,
+            .sc-resp summary,
+            .hero-mcp a {
+                display: inline-flex;
+                align-items: center;
+                min-height: 44px;
+            }
+
+            .sc-chip,
+            .sc-mini,
+            .endpoint-btn,
+            .sc-tab,
+            .hero-btn,
+            .mcp-add {
+                justify-content: center;
+            }
+
+            .sc-alist button {
+                display: flex;
+            }
+
+            .sc-resp summary {
+                display: flex;
+            }
+
+            .mcp-cmd .endpoint-btn {
+                padding: 0.4rem 0.9rem;
+                font-size: 0.8rem;
+            }
+
+            .footer-links {
+                gap: 0.25rem 1.25rem;
+            }
+
+            .maplibregl-ctrl-group button {
+                width: 44px;
+                height: 44px;
             }
         }
 
@@ -1465,7 +1579,7 @@
                 <svg class="logo-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.5h10.5a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7.6 9.2 4.65 4.65 0 0 0 7 18.5Z"/></svg>
                 <span class="logo-text">FolkWeather</span>
             </a>
-            <nav class="nav-links">
+            <nav class="nav-links" id="nav-links" aria-label="Sections">
                 <a href="#showcase" class="nav-link">Showcase</a>
                 <a href="#mcp" class="nav-link">MCP</a>
                 <a href="#services" class="nav-link">Services</a>
@@ -2059,6 +2173,21 @@
         });
 
 
+        // Rows that scroll sideways fade where there is more to reach; returns the function that refreshes the fade
+        function bindFade(row) {
+            const upd = () => {
+                const max = row.scrollWidth - row.clientWidth;
+                row.classList.toggle('fade-r', max > 2 && row.scrollLeft < max - 2);
+                row.classList.toggle('fade-l', max > 2 && row.scrollLeft > 2);
+            };
+            row.addEventListener('scroll', upd, { passive: true });
+            window.addEventListener('resize', upd);
+            upd();
+            return upd;
+        }
+        const navRow = document.getElementById('nav-links');
+        if (navRow) bindFade(navRow);
+
         // Showcase: one MapLibre map for WMS/WMTS layers (Maps) and EDR queries (Data)
         (function () {
             const root = document.getElementById('showcase');
@@ -2080,6 +2209,8 @@
             const compass = (deg) => ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'][Math.round(deg / 22.5) % 16];
             const temp = (k) => `${fmt(kToF(k))} &deg;F <span class="sc-muted">(${fmt(kToC(k))} &deg;C)</span>`;
             const dl = (rows) => '<dl class="sc-dl">' + rows.filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('') + '</dl>';
+            const COARSE = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+            const Tap = COARSE ? 'Tap' : 'Click';
             const utc = (iso) => iso ? new Date(iso).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
 
             // ---- Layers for Maps mode (WMTS REST tiles; WMS GetMap shown for the current view) ----
@@ -2174,11 +2305,17 @@
                     container: el.map,
                     style: 'https://tiles.openfreemap.org/styles/positron',
                     center: [-98, 38], zoom: 3, minZoom: 1, maxZoom: 16,
-                    attributionControl: false, dragRotate: false, cooperativeGestures: false
+                    attributionControl: false, dragRotate: false, cooperativeGestures: COARSE
                 });
                 map.touchZoomRotate.disableRotation();
                 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
                 map.addControl(new maplibregl.AttributionControl({ compact: true }));
+                // Starts as the small (i) button; the credit opens on tap
+                const attr = el.map.querySelector('.maplibregl-ctrl-attrib');
+                let attrTouched = false;
+                const fold = () => { if (attr && !attrTouched) { attr.removeAttribute('open'); attr.classList.remove('maplibregl-compact-show'); } };
+                if (attr) attr.querySelector('summary').addEventListener('click', () => { attrTouched = true; });
+                map.on('load', fold); map.once('idle', fold); map.on('resize', fold);
                 map.on('load', () => { mapReady = true; activate(); });
                 map.on('click', (e) => { const p = currentPreset(); if (mode === 'data' && p && p.click) p.click(e); });
                 let t = null;
@@ -2310,7 +2447,7 @@
             const PRESETS = [
                 pointPreset({
                     id: 'point', label: 'Forecast at a point', coll: 'hrrr-height-agl', params: 'TMP,UGRD,VGRD',
-                    hint: 'Click the map (contiguous US) to query a point.',
+                    hint: `${Tap} the map (contiguous US) to query a point.`,
                     view: { center: [-98, 38.5], zoom: 3.6 }, start: [-105, 39.7],
                     render(v, d, lng, lat) {
                         const t = v('TMP'), u = v('UGRD'), w = v('VGRD');
@@ -2326,7 +2463,7 @@
                 }),
                 {
                     id: 'alerts', label: 'Weather alerts', delay: 450, cursor: 'pointer',
-                    hint: 'Every NWS watch, warning and advisory in force, in the NWS map colours. Click anywhere for the alerts at that spot.',
+                    hint: `Every NWS watch, warning and advisory in force, in the NWS map colours. ${Tap} anywhere for the alerts at that spot.`,
                     view: { center: [-98, 38.5], zoom: 3.4 },
                     picked: false, last: null,
                     enter() {
@@ -2361,7 +2498,7 @@
                                 const p = f.properties || {}, c = alertColor(p.color);
                                 return { type: 'Feature', geometry: f.geometry, properties: { aid: f.id, color: c, edge: shade(c), rank: SEVERITY_RANK[p.severity] || 0 } };
                             }) });
-                            this.note(`${fs.length}${d.truncated ? '+' : ''} alert${fs.length === 1 ? '' : 's'} in this view. Click anywhere for the alerts at that spot.`);
+                            this.note(`${fs.length}${d.truncated ? '+' : ''} alert${fs.length === 1 ? '' : 's'} in this view. ${Tap} anywhere for the alerts at that spot.`);
                             // The first answer opens on an example, unless the user has already clicked
                             if (!this.picked) {
                                 const cands = this.start(fs);
@@ -2479,7 +2616,7 @@
                 },
                 pointPreset({
                     id: 'waves', label: 'Waves', coll: 'gfswave-surface-latest', params: 'HTSGW,PERPW,DIRPW',
-                    hint: 'Click open ocean to query the wave model.',
+                    hint: `${Tap} open ocean to query the wave model.`,
                     view: { center: [-135, 30], zoom: 2.6 }, start: [-140, 30],
                     render(v, d, lng, lat) {
                         const h = v('HTSGW'), p = v('PERPW'), dr = v('DIRPW');
@@ -2493,7 +2630,7 @@
                     }
                 }),
                 {
-                    id: 'buoys', label: 'Buoys', hint: 'Click a buoy for its latest observation.', delay: 0,
+                    id: 'buoys', label: 'Buoys', hint: `${Tap} a buoy for its latest observation.`, delay: 0,
                     view: { center: [-125, 36], zoom: 3.4 }, cursor: 'pointer',
                     async enter() {
                         setHint(this.hint);
@@ -2585,7 +2722,7 @@
                             map.getSource('sc-trails').setData(d);
                             const withC = d.features.filter((f) => f.properties.sat != null).length;
                             const capped = d.features.length >= 200;
-                            setReadout(`<h3>${d.features.length}${capped ? '+' : ''} trail segments</h3><p>Click a trail for its name and conditions.</p>` +
+                            setReadout(`<h3>${d.features.length}${capped ? '+' : ''} trail segments</h3><p>${Tap} a trail for its name and conditions.</p>` +
                                 (withC ? '<div class="sc-ramp"><span>dry</span><i style="background:linear-gradient(90deg,#6b8a3d,#c8932e,#a85a2e)"></i><span>wet</span></div>' : '<p class="sc-muted">No soil conditions in this view (outside the Front Range foothills).</p>') +
                                 (capped ? '<p class="sc-muted">Showing the first 200 in view.</p>' : ''));
                         } catch (err) { setError(err); }
@@ -2715,6 +2852,7 @@
                     p.enter();
                 }
             }
+            const fadeChips = bindFade(el.chips);
             function renderChips() {
                 el.chips.setAttribute('aria-label', mode === 'maps' ? 'Layers' : 'Queries');
                 el.chips.innerHTML = '';
@@ -2731,6 +2869,7 @@
                     });
                     el.chips.appendChild(b);
                 });
+                fadeChips();
             }
             function setMode(m, focus) {
                 if (m === mode && el.chips.children.length) return;
