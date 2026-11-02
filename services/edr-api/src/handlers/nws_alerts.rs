@@ -36,6 +36,7 @@ use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
 use storage::nws_alerts::catalog::radius_boxes;
+use storage::nws_alerts::sections::derived_what;
 use storage::{AlertRegion, AlertSearch, FeedStatus, StoredAlert};
 use wms_common::WmsError;
 
@@ -193,20 +194,27 @@ fn links(a: &StoredAlert, base_url: &str) -> Value {
 }
 
 /// What / where / when / impacts ... as plain strings, only the keys present.
+///
+/// An alert whose text has neither `WHAT...` nor `HAZARD...` gets a `what` all the same when
+/// there is something to say (see [`derived_what`]): the forecast period(s) its headline names for
+/// the Alaska coastal-water alerts, the first sentence or two of a free-text statement.
 fn summary(a: &StoredAlert, cap: Option<usize>) -> Value {
+    let derived = derived_what(&a.sections, headline(a));
     let mut m = Map::new();
     for k in SUMMARY_KEYS {
-        if let Some(t) = a.sections.get(k).and_then(|v| v.as_str()) {
-            let t = t.trim();
-            if !t.is_empty() {
-                m.insert(
-                    k.to_string(),
-                    json!(match cap {
-                        Some(n) => trim_text(t, n),
-                        None => t.to_string(),
-                    }),
-                );
-            }
+        let text = match a.sections.get(k).and_then(|v| v.as_str()).map(str::trim) {
+            Some(t) if !t.is_empty() => Some(t),
+            _ if k == "what" => derived.as_deref(),
+            _ => None,
+        };
+        if let Some(t) = text {
+            m.insert(
+                k.to_string(),
+                json!(match cap {
+                    Some(n) => trim_text(t, n),
+                    None => t.to_string(),
+                }),
+            );
         }
     }
     Value::Object(m)
@@ -1496,6 +1504,27 @@ mod tests {
             .collect()
     }
 
+    /// Alerts saved from the live feed whose text has no WHAT or HAZARD: Alaska coastal-water
+    /// forecasts and free-text statements.
+    const NO_LABELS: &str =
+        include_str!("../../../downloader/tests/fixtures/nws_alerts_no_labels.json");
+
+    fn no_labels(id_ends_with: &str) -> StoredAlert {
+        let v: Value = serde_json::from_str(NO_LABELS).unwrap();
+        let f = v["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| {
+                f["properties"]["id"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with(id_ends_with)
+            })
+            .unwrap();
+        stored(&parse_feature(f).unwrap())
+    }
+
     /// Build the row the catalog would return for a parsed alert.
     fn stored(p: &ParsedAlert) -> StoredAlert {
         let now = Utc.with_ymd_and_hms(2026, 11, 1, 23, 30, 0).unwrap();
@@ -1709,6 +1738,81 @@ mod tests {
         assert_eq!(full["headline"], full["formal_headline"]);
         a.headline = None;
         assert!(p(full_feature(&a, t0(), ""))["formal_headline"].is_null());
+    }
+
+    #[test]
+    fn an_alaska_forecast_alert_says_the_period_its_headline_names() {
+        // GALE WARNING TONIGHT AND TUESDAY
+        let a = no_labels("4ed4e123.003.1");
+        assert_eq!(headline(&a), Some("GALE WARNING TONIGHT AND TUESDAY"));
+        let want = "Tonight: SE wind 25 kt becoming E 35 kt after midnight. Seas 9 ft. Rain. Tue: E wind 45 kt. Seas 18 ft. Rain.";
+        let c = compact_feature(&a, t0(), "");
+        assert_eq!(c["properties"]["summary"], json!({ "what": want }));
+        assert!(c["properties"].get("sections").is_none());
+        let f = full_feature(&a, t0(), "");
+        assert_eq!(f["properties"]["summary"], json!({ "what": want }));
+        // the periods are in the full record, one per line in the description
+        let periods = f["properties"]["sections"]["periods"].as_array().unwrap();
+        assert_eq!(periods.len(), 7);
+        assert_eq!(periods[1]["name"], "TONIGHT");
+        assert_eq!(
+            f["properties"]["description"]
+                .as_str()
+                .unwrap()
+                .lines()
+                .filter(|l| l.starts_with('.'))
+                .count(),
+            7
+        );
+
+        // no broadcast text (NWS Juneau): the formal headline names no day, so the first period
+        let a = no_labels("4da2086d58a5449608c1.002.1");
+        assert!(a.nws_headline.is_none());
+        let c = compact_feature(&a, t0(), "");
+        assert_eq!(
+            c["properties"]["summary"],
+            json!({ "what": "Rest of today: SW wind 25 kt. Seas 16 ft." })
+        );
+
+        // a long run of periods is trimmed like any other summary text in the list, not in full
+        let mut a = no_labels("4ed4e123.003.1");
+        a.nws_headline = Some("GALE WARNING TODAY AND TONIGHT AND TUESDAY AND WEDNESDAY".into());
+        a.sections["periods"] = json!((0..30)
+            .map(|i| json!({"name": if i % 2 == 0 { "TODAY" } else { "TONIGHT" }, "text": format!("Wind {i} kt.")}))
+            .collect::<Vec<_>>());
+        let what = |f: Value| {
+            f["properties"]["summary"]["what"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert!(what(compact_feature(&a, t0(), "")).ends_with('…'));
+        assert!(what(full_feature(&a, t0(), "")).ends_with("Tonight: Wind 29 kt."));
+    }
+
+    #[test]
+    fn a_free_text_statement_says_its_first_sentences_and_labels_win() {
+        let a = no_labels("6e4557.001.1"); // NWS Pendleton, Special Weather Statement
+        let c = compact_feature(&a, t0(), "");
+        let what = c["properties"]["summary"]["what"].as_str().unwrap();
+        assert!(what.starts_with("Patchy dense fog has been observed around the Tri Cities"));
+        assert!(what.ends_with("persist through mid morning."));
+        assert!(what.chars().count() <= 200, "{what}");
+        assert_eq!(c["properties"]["summary"].as_object().unwrap().len(), 1);
+
+        // NWS' own WHAT or HAZARD is never replaced, and an alert with other labels gets nothing
+        let mut a = by_event("Winter Storm Warning");
+        let own = a.sections["what"].clone();
+        a.sections["periods"] = json!([{"name": "TODAY", "text": "Rain."}]);
+        let c = compact_feature(&a, t0(), "");
+        assert_eq!(c["properties"]["summary"]["what"], own);
+        let mut a = by_event("Winter Storm Warning");
+        a.sections = json!({"where": "Here.", "narrative": ["A sentence."]});
+        let c = compact_feature(&a, t0(), "");
+        assert_eq!(c["properties"]["summary"], json!({ "where": "Here." }));
+        let a = by_event("Severe Thunderstorm Warning");
+        let c = compact_feature(&a, t0(), "");
+        assert!(c["properties"]["summary"].get("what").is_none());
     }
 
     #[test]
@@ -2509,6 +2613,41 @@ mod tests {
             ..Default::default()
         };
         assert!(active_time(&q).is_err());
+    }
+
+    /// Not run by default: what a saved copy of the live feed (`curl -A "<agent>"
+    /// https://api.weather.gov/alerts/active > feed.json`) makes of every alert, to compare two
+    /// builds of the parsers. Writes `[{id, event, headline, summary, description, sections}]`
+    /// (the compact `summary` and `headline` as a list answer carries them, the rest from the
+    /// full record) to `NWS_SUMMARY_OUT`:
+    /// `NWS_FEED_JSON=feed.json NWS_SUMMARY_OUT=out.json cargo test -p edr-api --lib
+    /// live_feed_summaries -- --ignored`
+    #[test]
+    #[ignore = "reads NWS_FEED_JSON, a saved copy of the live feed"]
+    fn live_feed_summaries() {
+        let feed = std::env::var("NWS_FEED_JSON").expect("NWS_FEED_JSON: path of the saved feed");
+        let out = std::env::var("NWS_SUMMARY_OUT").expect("NWS_SUMMARY_OUT: where to write");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(feed).unwrap()).unwrap();
+        let rows: Vec<Value> = v["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                let a = stored(&parse_feature(f).unwrap());
+                let list = compact_feature(&a, t0(), "https://x.test/edr");
+                let full = full_feature(&a, t0(), "https://x.test/edr");
+                json!({
+                    "id": a.id,
+                    "event": a.event,
+                    "headline": list["properties"]["headline"],
+                    "summary": list["properties"]["summary"],
+                    "description": full["properties"]["description"],
+                    "sections": full["properties"]["sections"],
+                })
+            })
+            .collect();
+        eprintln!("{} alerts", rows.len());
+        std::fs::write(out, serde_json::to_string_pretty(&rows).unwrap()).unwrap();
     }
 
     #[test]

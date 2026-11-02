@@ -215,12 +215,14 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
 - `summary` has only the keys present (`what`, `where`, `when`, `impacts`, `hazard`, `source`,
   `impact`), trimmed to 500 characters; `instruction` to 600 (`…`). They are read from the labelled
   lines of the NWS text, written `* WHAT...`, `*WHAT...` (no space, as the Colorado avalanche
-  advisories do) or, for `HAZARD...`/`SOURCE...`/`IMPACT...`, bare. Alerts whose text has no such
-  labels (Alaska coastal-water forecasts, old-style watches) have an empty `summary`; their text is
-  in `sections.narrative` and `description` on `/items/{id}`. `/items/{id}` returns the same
-  properties and adds, besides the top-level `meta` every answer has:
-  - the untrimmed text: `description` (wraps collapsed into paragraphs), `description_raw` and
-    `instruction_raw` (as NWS sent them), `sections` (the labelled parts and the `narrative`);
+  advisories do) or, for `HAZARD...`/`SOURCE...`/`IMPACT...`, bare. When NWS wrote neither `WHAT`
+  nor `HAZARD`, `summary.what` is made from the rest of the text, so that such an alert has
+  something to show beyond its headline (see [Alerts with no WHAT](#alerts-with-no-what)); an
+  alert with no text, or one that has other labels but no `WHAT` or `HAZARD`, has no `what`.
+  `/items/{id}` returns the same properties and adds, besides the top-level `meta` every answer has:
+  - the untrimmed text: `description` (wraps collapsed into paragraphs, a `- ` item or a forecast
+    period on a line of its own), `description_raw` and `instruction_raw` (as NWS sent them),
+    `sections` (the labelled parts, the forecast `periods` and the `narrative`);
   - NWS' own fields: `formal_headline`, `message_type` (`Alert`, `Update`, `Cancel`), `category`,
     `response`, `vtec` (every parsed VTEC code), `parameters`, `ugc`, `zones` (the affected-zone
     keys), `references` (earlier messages this one replaces), `is_marine`. `parameters` is NWS'
@@ -261,6 +263,72 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   the alert or the rest of the feed: it is stored without its own polygon and uses its zones. The
   same goes for a zone whose geometry is rejected (it is kept as `invalid_geometry` and retried
   after a day).
+
+## Alerts with no WHAT
+
+Most alerts write their text as `* WHAT...`, `* WHERE...`, `* WHEN...` sections, or as `HAZARD...`,
+`SOURCE...` and `IMPACT...` (see `summary` above). Two kinds do not, and are over half of the
+feed on a day with Alaska gales out (239 of 468 alerts on 2026-11-02 had no `WHAT` or `HAZARD`):
+
+**Zone forecasts with periods (Alaska coastal and offshore waters: Gale Warning, Storm Warning,
+Small Craft Advisory).** NWS puts the zone's forecast in the alert, one line per period, each
+starting with a dot and the period in capitals:
+
+```text
+Coastal Waters Forecast for the Northern Gulf of Alaska Coast
+up to 100 nm out including Kodiak Island and Cook Inlet.
+
+Wind forecasts reflect the predominant speed and direction
+expected. Sea forecasts represent an average of the highest
+one-third of the combined wind wave and swell height.
+
+.TODAY...E wind 25 kt. Seas 7 ft. Isolated thunderstorms.
+.TONIGHT...SE wind 25 kt becoming E 35 kt after midnight. Seas 9
+ft. Rain.
+.TUE...E wind 45 kt. Seas 18 ft. Rain.
+.TUE NIGHT...SE wind 50 kt. Seas 20 ft.
+```
+
+- A period header is a dot, 2 to 30 capital letters and spaces, and three dots: `.TODAY...`,
+  `.TONIGHT...`, `.REST OF TODAY...`, `.TUE...`, `.TUE NIGHT...`, `.TUE AND TUE NIGHT...`,
+  `.WED THROUGH THU...`. The period runs to the next header or the next blank line, with its wraps
+  joined.
+- `/items/{id}` returns them as `sections.periods`, in order:
+  `[{"name": "TODAY", "text": "E wind 25 kt. Seas 7 ft. Isolated thunderstorms."}, {"name": "TUE NIGHT", "text": "SE wind 50 kt. Seas 20 ft."}, ...]`
+  (`name` as NWS wrote it). The paragraphs around them, the zone's name and the boilerplate about
+  how wind and seas are forecast, stay in `sections.narrative`. `description` has one period per
+  line (`.TODAY...E wind 25 kt. ...\n.TONIGHT...SE wind ...`), where earlier versions ran them
+  together into one paragraph.
+- **`summary.what`** is the period or periods that the headline's day words name, each with its
+  name in front, joined by a space: `GALE WARNING TONIGHT AND TUESDAY` gives `Tonight: SE wind 25
+  kt becoming E 35 kt after midnight. Seas 9 ft. Rain. Tue: E wind 45 kt. Seas 18 ft. Rain.`
+  - `TODAY`, `THIS MORNING` and `THIS AFTERNOON` name the `TODAY` and `REST OF TODAY` periods;
+    `TONIGHT`, `LATE TONIGHT` and `THIS EVENING` name `TONIGHT`.
+  - `MONDAY`, `MONDAY MORNING` and `MONDAY AFTERNOON` name `MON`; `MONDAY NIGHT` and `MONDAY
+    EVENING` name `MON NIGHT` (and likewise for the other days). `GALE WARNING TUESDAY` names
+    `TUE` and not `TUE NIGHT`.
+  - A period that spans days is named by any of them: `TUE AND TUE NIGHT` by `TUESDAY` or `TUESDAY
+    NIGHT`, `WED THROUGH THU` by `WEDNESDAY`, `THURSDAY` or `THURSDAY NIGHT`.
+  - `THROUGH`, `AND` and the rest only join the day words: `SMALL CRAFT ADVISORY THROUGH MONDAY`
+    names `MON`, the day the advisory ends, not the periods before it.
+  - With no day word, or none that a period carries (the formal headline of an alert NWS gave no
+    broadcast text, or `MONDAY` where the forecast has no `MON`), `what` is the first period,
+    `Today: ...` or `Rest of today: ...`.
+  - The labels are short: `Tue night`, `Wed through Thu`.
+
+**Free text (Special Weather Statements, Hydrologic Outlooks, Marine Weather Statements, test
+messages).** With no labels and no periods at all, `summary.what` is the first sentence of the
+text, and the second too when both fit in 200 characters; a first sentence over 200 characters is cut
+at a word (`…`). A paragraph that is not a sentence (it does not end in `.`, `!` or `?`, such as
+the river's name that starts a Hydrologic Outlook, or a table) is passed over. The product id line
+(`ESFEAX`) is dropped, as everywhere. An alert whose text has other labels but no `WHAT` or `HAZARD`
+gets no `what`.
+
+An alert with `WHAT` or `HAZARD` never has its `summary` changed by any of this: `what` is
+filled only when NWS wrote neither. `summary.what` here is derived when the answer is made, from
+`sections`, so a change to these rules needs no rewrite of the stored alerts. (The periods
+themselves are parsed when an alert is stored; alerts stored before they were read get them from
+the rewrite that a new parser version makes at the next poll, see the lifecycle notes.)
 
 ## Lifecycle notes
 

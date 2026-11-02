@@ -154,7 +154,10 @@ pub fn is_marine_ugc(code: &str) -> bool {
 /// 1 is the first hashed version. Rows stored before `content_hash` existed have no hash and are
 /// rewritten on the first poll after it is deployed, which brings them up to date with the parsers
 /// as deployed (the `*WHAT...` section fix among them).
-pub const DERIVATION_VERSION: u32 = 1;
+///
+/// 2 reads the periods of the Alaska coastal-water forecasts (`.TUE NIGHT...`) into
+/// `sections.periods`, and puts each on its own line of the normalised description.
+pub const DERIVATION_VERSION: u32 = 2;
 
 /// Hash of a feature as NWS sent it, plus the derivation `version`: 32 hex characters. It covers
 /// the inputs of [`parse_feature`] (`id`, `geometry`, `properties`), with object keys sorted, so
@@ -344,6 +347,21 @@ mod tests {
             .collect()
     }
 
+    /// Eight alerts saved from the live feed on 2026-11-02 whose text has no WHAT or HAZARD:
+    /// Alaska coastal- and offshore-water forecasts, and free-text statements.
+    const NO_LABELS: &str =
+        include_str!("../../../../services/downloader/tests/fixtures/nws_alerts_no_labels.json");
+
+    fn parsed_no_labels() -> Vec<ParsedAlert> {
+        let v: Value = serde_json::from_str(NO_LABELS).unwrap();
+        v["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| parse_feature(f).unwrap())
+            .collect()
+    }
+
     #[test]
     fn every_fixture_feature_parses() {
         let all = parsed();
@@ -417,6 +435,50 @@ mod tests {
         assert_eq!(a.color, "#CD853F");
         assert!(a.ends.is_none(), "NWS gave no `ends` for it");
         assert!(a.expires.is_some());
+    }
+
+    #[test]
+    fn alaska_forecast_alerts_carry_their_periods() {
+        let all = parsed_no_labels();
+        assert_eq!(all.len(), 8);
+        let gale = all
+            .iter()
+            .find(|a| a.id.ends_with("4ed4e123.003.1"))
+            .unwrap();
+        assert_eq!(gale.event, "Gale Warning");
+        assert_eq!(
+            gale.nws_headline.as_deref(),
+            Some("GALE WARNING TONIGHT AND TUESDAY")
+        );
+        let periods = gale.sections["periods"].as_array().unwrap();
+        let names: Vec<&str> = periods
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            ["TODAY", "TONIGHT", "TUE", "TUE NIGHT", "WED", "THU", "FRI"]
+        );
+        assert_eq!(
+            periods[2]["text"], "E wind 45 kt. Seas 18 ft. Rain.",
+            "{}",
+            gale.sections
+        );
+        assert!(gale.sections.get("what").is_none() && gale.sections.get("hazard").is_none());
+        assert_eq!(gale.sections["narrative"].as_array().unwrap().len(), 2);
+        // each period is a line of the description, and the wraps inside one are joined
+        let d = gale.description_text.as_deref().unwrap();
+        assert!(
+            d.contains("\n.TONIGHT...SE wind 25 kt becoming E 35 kt after midnight. Seas 9 ft. Rain.\n.TUE...E wind 45 kt."),
+            "{d}"
+        );
+        assert!(d.ends_with("\n.FRI...E wind 30 kt. Seas 15 ft."));
+
+        // the free-text statements have no periods, and keep their text as narrative
+        for a in all.iter().filter(|a| a.event.ends_with("Statement")) {
+            assert!(a.sections.get("periods").is_none(), "{}", a.sections);
+            assert!(a.sections["narrative"].is_array());
+        }
     }
 
     #[test]
@@ -569,7 +631,7 @@ mod tests {
         );
     }
 
-    /// Everything [`parse_feature`] makes of the fixture, hashed. It changes when the parsers do
+    /// Everything [`parse_feature`] makes of the fixtures (the main one and the unlabelled alerts), hashed. It changes when the parsers do
     /// (or a field is added to [`ParsedAlert`], or the fixture changes), and then the alerts
     /// already stored are derived the old way: bump [`DERIVATION_VERSION`] so that the next poll
     /// rewrites them, and set the new digest here. Hashed with sorted keys, like [`feature_hash`],
@@ -578,8 +640,10 @@ mod tests {
     /// turns on in workspace builds but not in `-p storage` ones.
     #[test]
     fn parser_output_is_pinned_to_the_derivation_version() {
-        const PINNED: &str = "d241b97ed52314e60cdbc0257c86aa3fcc76f92c0b6896539e845f5eed35e730";
-        let mut out = serde_json::to_value(parsed()).unwrap();
+        const PINNED: &str = "26ed21c9183dc017e46de67a998076be980cbded988673e1f54fa68908bcdd3c";
+        let mut all = parsed();
+        all.extend(parsed_no_labels());
+        let mut out = serde_json::to_value(all).unwrap();
         for a in out.as_array_mut().unwrap() {
             if let Some(g) = a["geometry_json"].as_str() {
                 a["geometry_json"] = serde_json::from_str(g).unwrap();
