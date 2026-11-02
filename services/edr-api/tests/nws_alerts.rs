@@ -862,3 +862,259 @@ async fn a_read_that_hits_the_time_limit_is_a_503_and_the_service_recovers() {
         assert_eq!(t, "0");
     }
 }
+
+// --- an explicit `datetime`: what was in force then, labelled as of then ----------------------
+
+/// 2026-11-01 `h:m`Z.
+fn at(h: u32, m: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 11, 1, h, m, 0).unwrap()
+}
+
+fn iso(t: DateTime<Utc>) -> String {
+    t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+// Both lie in lon -107.5..-106.5; the small one covers only the eastern half.
+const BIG: [f64; 4] = [-107.5, 37.0, -106.5, 38.0];
+const SMALL: [f64; 4] = [-107.0, 37.0, -106.5, 38.0];
+/// In `BIG` only.
+const P: (f64, f64) = (-107.25, 37.5);
+/// In both.
+const Q: (f64, f64) = (-106.75, 37.5);
+/// Far from both squares: where the long-lived alert Z is.
+const R: (f64, f64) = (-100.0, 40.0);
+
+impl Env {
+    /// The fixture's Severe Thunderstorm Warning under `id`, with its own polygon and times.
+    fn timed(
+        &self,
+        id: &str,
+        bbox: [f64; 4],
+        sent: DateTime<Utc>,
+        onset: DateTime<Utc>,
+        ends: DateTime<Utc>,
+        replaces: &[&str],
+    ) -> ParsedAlert {
+        let mut a = self
+            .alerts
+            .iter()
+            .find(|a| a.event == "Severe Thunderstorm Warning")
+            .unwrap()
+            .clone();
+        a.id = id.into();
+        a.geometry_json = Some(square(bbox[0], bbox[1], bbox[2], bbox[3]));
+        a.sent = Some(sent);
+        a.effective = Some(sent);
+        a.onset = Some(onset);
+        a.ends = Some(ends);
+        a.expires = Some(ends);
+        a.message_type = if replaces.is_empty() {
+            "Alert"
+        } else {
+            "Update"
+        }
+        .into();
+        a.references = replaces.iter().map(|r| r.to_string()).collect();
+        a
+    }
+
+    /// A (sent 10:00, hazard from 10:30, until 18:00) is replaced at 11:00 by A2 (smaller
+    /// polygon); B (sent 10:00, until 18:00) is dropped from the feed at 12:00; Z (sent 10:00,
+    /// until 2099) is somewhere else and never changes. Polls at 10:01, 11:01 and 12:00.
+    async fn load_timeline(&self) {
+        let far = Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap();
+        let a = self.timed("urn:test:a", BIG, at(10, 0), at(10, 30), at(18, 0), &[]);
+        let b = self.timed("urn:test:b", BIG, at(10, 0), at(10, 0), at(18, 0), &[]);
+        let z = self.timed(
+            "urn:test:z",
+            [R.0 - 0.5, R.1 - 0.5, R.0 + 0.5, R.1 + 0.5],
+            at(10, 0),
+            at(10, 0),
+            far,
+            &[],
+        );
+        let a2 = self.timed(
+            "urn:test:a2",
+            SMALL,
+            at(11, 0),
+            at(11, 0),
+            at(18, 0),
+            &["urn:test:a"],
+        );
+        for (now, feed) in [
+            (at(10, 1), vec![a, b.clone(), z.clone()]),
+            (at(11, 1), vec![a2.clone(), b, z.clone()]),
+            (at(12, 0), vec![a2, z]),
+        ] {
+            self.nws.apply_feed(&feed, Some(now), now).await.unwrap();
+        }
+    }
+
+    /// `"id status"` of each alert a route returns for `datetime=t`, sorted.
+    async fn then(&self, route: &str, t: &str) -> Vec<String> {
+        let sep = if route.contains('?') { '&' } else { '?' };
+        let uri = format!("/edr/collections/nws-alerts/{route}{sep}datetime={t}");
+        let (st, _, v, _) = self.get(&uri).await;
+        assert_eq!(st, 200, "{uri}: {v}");
+        let mut out: Vec<String> = v["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                format!(
+                    "{} {}",
+                    f["id"].as_str().unwrap().trim_start_matches("urn:test:"),
+                    f["properties"]["status"].as_str().unwrap()
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    }
+}
+
+fn pos(xy: (f64, f64)) -> String {
+    format!("position?coords=POINT({}%20{})", xy.0, xy.1)
+}
+
+fn items_around(xy: (f64, f64)) -> String {
+    let d = 0.01;
+    format!(
+        "items?geometry=false&bbox={},{},{},{}",
+        xy.0 - d,
+        xy.1 - d,
+        xy.0 + d,
+        xy.1 + d
+    )
+}
+
+fn area_around(xy: (f64, f64)) -> String {
+    let d = 0.01;
+    format!(
+        "area?coords=POLYGON(({} {},{} {},{} {},{} {},{} {}))",
+        xy.0 - d,
+        xy.1 - d,
+        xy.0 + d,
+        xy.1 - d,
+        xy.0 + d,
+        xy.1 + d,
+        xy.0 - d,
+        xy.1 + d,
+        xy.0 - d,
+        xy.1 - d
+    )
+    .replace(' ', "%20")
+}
+
+fn radius_around(xy: (f64, f64)) -> String {
+    format!(
+        "radius?coords=POINT({}%20{})&within=500&within-units=m",
+        xy.0, xy.1
+    )
+}
+
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn an_explicit_datetime_returns_what_was_in_force_then_with_the_status_it_had() {
+    let e = env().await;
+    e.load_timeline().await;
+
+    // (instant, at P: BIG only, at Q: BIG and SMALL). Same on every route that takes a point,
+    // a box, a polygon or a radius. A is "upcoming" until its hazard starts at 10:30; once it
+    // is replaced (11:00) it is gone, and a point only the old, larger polygon covered with it.
+    let cases: [(DateTime<Utc>, Vec<&str>, Vec<&str>); 11] = [
+        (at(9, 30), vec![], vec![]), // nothing issued yet, though the live flags say otherwise
+        (
+            at(10, 0),
+            vec!["a upcoming", "b active"],
+            vec!["a upcoming", "b active"],
+        ),
+        (
+            at(10, 15),
+            vec!["a upcoming", "b active"],
+            vec!["a upcoming", "b active"],
+        ),
+        (
+            at(10, 30),
+            vec!["a active", "b active"],
+            vec!["a active", "b active"],
+        ),
+        // before the update: A was in force, though it has been replaced since (and the poll
+        // that noticed ran only at 11:01)
+        (
+            at(10, 59),
+            vec!["a active", "b active"],
+            vec!["a active", "b active"],
+        ),
+        (at(11, 0), vec!["b active"], vec!["a2 active", "b active"]),
+        (at(11, 30), vec!["b active"], vec!["a2 active", "b active"]),
+        // B was dropped from the feed at 12:00
+        (at(12, 0), vec![], vec!["a2 active"]),
+        (at(17, 59), vec![], vec!["a2 active"]),
+        (at(18, 0), vec![], vec![]), // the end time is exclusive
+        (at(23, 0), vec![], vec![]),
+    ];
+    for (t, at_p, at_q) in cases {
+        let t = iso(t);
+        for route in [pos, items_around, area_around, radius_around] {
+            assert_eq!(e.then(&route(P), &t).await, at_p, "{} at P, {t}", route(P));
+            assert_eq!(e.then(&route(Q), &t).await, at_q, "{} at Q, {t}", route(Q));
+        }
+    }
+
+    // include_superseded has no say on status=active: a replaced message in force then is
+    // returned either way
+    assert_eq!(
+        e.then(
+            &format!("{}&include_superseded=false", items_around(P)),
+            &iso(at(10, 45))
+        )
+        .await,
+        vec!["a active", "b active"]
+    );
+    // status=all on an instant is the same window and the same labels; the replaced message
+    // stays hidden unless asked for (as on any history window), and is "active" as of then
+    let all = format!("{}&status=all", items_around(P));
+    assert_eq!(e.then(&all, &iso(at(10, 45))).await, vec!["b active"]);
+    assert_eq!(
+        e.then(&format!("{all}&include_superseded=true"), &iso(at(10, 45)))
+            .await,
+        vec!["a active", "b active"]
+    );
+
+    // /items/{id} is not an instant query: A as it is now, with when it was replaced
+    let (st, _, a, _) = e.get("/edr/collections/nws-alerts/items/urn:test:a").await;
+    assert_eq!(st, 200, "{a}");
+    assert_eq!(a["properties"]["status"], "superseded");
+    assert_eq!(a["properties"]["superseded_by"], "urn:test:a2");
+    assert_eq!(a["properties"]["superseded_at"], "2026-11-01T11:00:00Z");
+
+    // The long-lived Z: no datetime and `datetime=now` are the live set at the wall clock and
+    // agree; an instant in 2098 is still in force, one after 2099 is not
+    let live = e.then(&pos(R), "now").await;
+    assert_eq!(live, vec!["z active"]);
+    let (st, _, none, _) = e
+        .get(&format!("/edr/collections/nws-alerts/{}", pos(R)))
+        .await;
+    assert_eq!(st, 200, "{none}");
+    assert_eq!(none["features"][0]["id"], "urn:test:z");
+    assert_eq!(none["features"][0]["properties"]["status"], "active");
+    assert_eq!(none["numberReturned"], 1);
+    assert_eq!(
+        e.then(&pos(R), "2098-06-01T00:00:00Z").await,
+        vec!["z active"]
+    );
+    assert!(e.then(&pos(R), "2100-01-01T00:00:00Z").await.is_empty());
+    // ...and it was not there before it was issued
+    assert!(e.then(&pos(R), &iso(at(9, 59))).await.is_empty());
+    assert_eq!(e.then(&pos(R), &iso(at(10, 0))).await, vec!["z active"]);
+
+    // an interval is still not an instant
+    let (st, _, v, _) = e
+        .get(&format!(
+            "/edr/collections/nws-alerts/{}&datetime=2026-11-01T10:00:00Z/2026-11-01T11:00:00Z",
+            pos(P)
+        ))
+        .await;
+    assert_eq!(st, 400, "{v}");
+}
