@@ -5412,6 +5412,7 @@ dependencies = [
  "redis",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "test-utils",
  "thiserror 1.0.69",

@@ -16,6 +16,16 @@
 //! alerts' geometry. Until then `geometry_source = 'pending'` (and `geom` holds
 //! the union of whatever zones are known, possibly NULL).
 //!
+//! ## Quiet polls
+//!
+//! NWS' feed carries a new `updated` stamp every minute while nearly every alert in it is the
+//! message it was the minute before. Every alert stores a hash of the feature it was derived from
+//! (`content_hash`, see `feature_hash` and `DERIVATION_VERSION` in `mod.rs`), and
+//! [`NwsAlertCatalog::apply_feed`] rewrites an alert only when it is new, its hash differs (NWS
+//! changed it, or the parsers did), or its ended state must change (it came back after a poll
+//! missed it). The rest get a fresh `last_seen_at` in one statement; nothing is parsed or sent
+//! again for them.
+//!
 //! ## Concurrency and bad rows
 //!
 //! Two writers touch alert geometry: feed polls ([`NwsAlertCatalog::apply_feed`]) and zone
@@ -25,6 +35,8 @@
 //! savepoint: a row the database rejects (a polygon PostGIS cannot parse, a union GEOS cannot
 //! compute) is stored without the offending geometry or skipped and counted, never allowed to
 //! abort the poll or the batch (see `ApplyResult` / `ZonesResult`).
+
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
@@ -113,8 +125,11 @@ pub struct ZoneRecord {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ApplyResult {
     pub received: usize,
-    /// Rows inserted or refreshed.
+    /// Rows inserted or rewritten: alerts that are new, changed, came back after being marked
+    /// ended, or whose stored hash is unknown or from another derivation version.
     pub upserted: usize,
+    /// Alerts NWS has not changed since they were stored: only `last_seen_at` moved.
+    pub unchanged: usize,
     /// Older messages marked superseded by this feed's Updates/Cancels.
     pub superseded: u64,
     /// Rows no longer in the feed, now marked ended.
@@ -442,11 +457,13 @@ impl NwsAlertCatalog {
 
     /// Apply one successful poll of the active feed (every alert NWS lists now).
     ///
-    /// In one transaction: upsert each alert; mark the older messages each Update
-    /// or Cancel references as superseded; mark every stored, still-live alert
-    /// that this feed no longer lists as ended; fill in geometry from the zones
-    /// already known; record poll success. An **empty** feed ends nothing (NWS
-    /// always has alerts; an empty answer is a fault, not "all clear").
+    /// In one transaction: upsert each alert that is new or changed (an alert whose stored
+    /// `content_hash` equals the feed's, and whose ended state already matches, is only given a
+    /// fresh `last_seen_at`, in one statement for all of them); mark the older messages each
+    /// Update or Cancel references as superseded; mark every stored, still-live alert that this
+    /// feed no longer lists as ended; fill in geometry from the zones already known; record poll
+    /// success. An **empty** feed ends nothing (NWS always has alerts; an empty answer is a
+    /// fault, not "all clear").
     pub async fn apply_feed(
         &self,
         alerts: &[ParsedAlert],
@@ -489,7 +506,47 @@ impl NwsAlertCatalog {
             }
         }
 
-        for a in alerts {
+        // What the database holds for the feed's alerts, in one read. NWS' `updated` stamp moves
+        // every minute while nearly every alert in the feed is the message it was the minute
+        // before, and rewriting all of them (their text, their polygons parsed again, every index
+        // entry) is the cost an unchanged feed must not have.
+        let ids: Vec<&str> = alerts.iter().map(|a| a.id.as_str()).collect();
+        let held: HashMap<String, HeldAlert> = sqlx::query_as::<_, HeldAlert>(
+            "SELECT id, content_hash, ended_at IS NOT NULL AS ended FROM nws_alerts WHERE id = ANY($1)",
+        )
+        .bind(&ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db("stored alerts"))?
+        .into_iter()
+        .map(|h| (h.id.clone(), h))
+        .collect();
+
+        // The unchanged ones only need their `last_seen_at` moved, all in one statement. (An id
+        // listed twice is written both times, the last copy winning.)
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut unchanged: Vec<bool> = alerts
+            .iter()
+            .map(|a| seen.insert(a.id.as_str()) && held.get(&a.id).is_some_and(|h| h.is_current(a)))
+            .collect();
+        let touch: Vec<&str> = alerts
+            .iter()
+            .zip(&unchanged)
+            .filter_map(|(a, same)| same.then_some(a.id.as_str()))
+            .collect();
+        if !touch.is_empty() && !touch_alerts(&mut tx, &touch, now).await? {
+            // The database refused one of them: store them one at a time, where it is skipped alone.
+            unchanged.fill(false);
+        }
+        res.unchanged = unchanged.iter().filter(|same| **same).count();
+
+        // The alerts of the feed that are in the table as they should be, in feed order.
+        let mut stored_alerts: Vec<&ParsedAlert> = Vec::with_capacity(alerts.len());
+        for (a, same) in alerts.iter().zip(&unchanged) {
+            if *same {
+                stored_alerts.push(a);
+                continue;
+            }
             // Each alert is stored under its own savepoint: one the database rejects (a polygon
             // PostGIS cannot parse, text it cannot hold) must not abort the rest of the feed.
             let stored = match upsert_alert_isolated(&mut tx, a, a.geometry_json.as_deref(), now)
@@ -527,28 +584,12 @@ impl NwsAlertCatalog {
                 }
             }
 
-            let targets = lifecycle::supersede_targets(&a.id, &a.references);
-            if !targets.is_empty() {
-                // The old message is over from the moment the new one was issued, not from the
-                // poll that first showed it, so no instant in between has both in force. Never
-                // later than this poll: an issue time still ahead is not waited for.
-                let replaced_at = a.effective.or(a.sent).map_or(now, |t| t.min(now));
-                let r = sqlx::query(
-                    "UPDATE nws_alerts SET superseded_by = $1, superseded_at = $3 \
-                     WHERE id = ANY($2) AND superseded_by IS NULL",
-                )
-                .bind(&a.id)
-                .bind(&targets)
-                .bind(replaced_at)
-                .execute(&mut *tx)
-                .await
-                .map_err(db("supersede"))?;
-                res.superseded += r.rows_affected();
-            }
+            stored_alerts.push(a);
         }
 
+        res.superseded = supersede_replaced(&mut tx, &stored_alerts, now).await?;
+
         if !alerts.is_empty() {
-            let ids: Vec<&str> = alerts.iter().map(|a| a.id.as_str()).collect();
             let r = sqlx::query(
                 "UPDATE nws_alerts SET ended_at = $2 \
                  WHERE ended_at IS NULL AND superseded_by IS NULL AND id <> ALL($1)",
@@ -1011,6 +1052,94 @@ async fn lock_writers(conn: &mut PgConnection) -> WmsResult<()> {
     Ok(())
 }
 
+/// What a poll needs of a stored alert to tell whether upserting the feed's copy would change it.
+#[derive(sqlx::FromRow)]
+struct HeldAlert {
+    id: String,
+    content_hash: Option<String>,
+    /// `ended_at` is set.
+    ended: bool,
+}
+
+impl HeldAlert {
+    /// Upserting `a` over this row would change nothing but `last_seen_at`: the row was derived
+    /// from the very feature `a` was (same hash, which includes the derivation version), and it
+    /// is ended exactly when the upsert would leave it ended: a message that is not over on
+    /// arrival and was marked ended because a poll missed it is revived by the upsert. Geometry
+    /// is not compared: it is a function of the feature and the zones, and the zone writers
+    /// (`upsert_zones`, the pending recompute) keep it current for alerts nobody rewrites.
+    fn is_current(&self, a: &ParsedAlert) -> bool {
+        a.content_hash.is_some()
+            && self.content_hash == a.content_hash
+            && self.ended == a.ended_on_arrival
+    }
+}
+
+/// Give the alerts `ids` a fresh `last_seen_at`, all in one statement under a savepoint. `false`
+/// when the database refused one of them (a row error): nothing was changed, and the caller
+/// stores them one at a time instead.
+async fn touch_alerts(
+    conn: &mut PgConnection,
+    ids: &[&str],
+    now: DateTime<Utc>,
+) -> WmsResult<bool> {
+    savepoint(conn).await.map_err(db("last seen"))?;
+    let r = sqlx::query("UPDATE nws_alerts SET last_seen_at = $2 WHERE id = ANY($1)")
+        .bind(ids)
+        .bind(now)
+        .execute(&mut *conn)
+        .await;
+    match finish_savepoint(conn, r).await {
+        Ok(_) => Ok(true),
+        Err(e) if is_row_error(&e) => {
+            warn!(alerts = ids.len(), error = %e, "NWS alerts: the database refused to update the last-seen time of one; storing them one at a time");
+            Ok(false)
+        }
+        Err(e) => Err(db("last seen")(e)),
+    }
+}
+
+/// Mark as superseded the older messages that `alerts` (in feed order) replace, in one statement.
+/// A message that several of them reference is replaced by the first, as it would be by one
+/// statement per alert, and one that arrives in the same feed as its replacement is superseded
+/// by it in this very poll whichever comes first. Returns how many messages were superseded.
+async fn supersede_replaced(
+    conn: &mut PgConnection,
+    alerts: &[&ParsedAlert],
+    now: DateTime<Utc>,
+) -> WmsResult<u64> {
+    let (mut targets, mut by, mut at) = (Vec::new(), Vec::new(), Vec::new());
+    for a in alerts {
+        // The old message is over from the moment the new one was issued, not from the poll that
+        // first showed it, so no instant in between has both in force. Never later than this
+        // poll: an issue time still ahead is not waited for.
+        let replaced_at = a.effective.or(a.sent).map_or(now, |t| t.min(now));
+        for t in lifecycle::supersede_targets(&a.id, &a.references) {
+            targets.push(t);
+            by.push(a.id.as_str());
+            at.push(replaced_at);
+        }
+    }
+    if targets.is_empty() {
+        return Ok(0);
+    }
+    let r = sqlx::query(
+        "UPDATE nws_alerts o SET superseded_by = s.by_id, superseded_at = s.replaced_at \
+         FROM (SELECT DISTINCT ON (target) target, by_id, replaced_at \
+               FROM unnest($1::text[], $2::text[], $3::timestamptz[]) \
+                    WITH ORDINALITY AS u(target, by_id, replaced_at, n) \
+               ORDER BY target, n) s \
+         WHERE o.id = s.target AND o.superseded_by IS NULL",
+    )
+    .bind(&targets)
+    .bind(&by)
+    .bind(&at)
+    .execute(conn)
+    .await
+    .map_err(db("supersede"))?;
+    Ok(r.rows_affected())
+}
+
 /// How one alert of a feed was stored.
 enum Stored {
     Full,
@@ -1078,6 +1207,12 @@ async fn upsert_alert(
     polygon: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
+    // Stored without the polygon NWS sent, the row is not what the feature says, so it gets no
+    // hash: the next poll tries the polygon again, as it did before alerts were hashed.
+    let content_hash = a
+        .content_hash
+        .as_deref()
+        .filter(|_| polygon.is_some() == a.geometry_json.is_some());
     sqlx::query(UPSERT_ALERT_SQL)
         .bind(&a.id)
         .bind(&a.event)
@@ -1121,6 +1256,7 @@ async fn upsert_alert(
         .bind(polygon)
         .bind(a.ended_on_arrival)
         .bind(now)
+        .bind(content_hash)
         .execute(conn)
         .await?;
     Ok(())
@@ -1247,7 +1383,7 @@ INSERT INTO nws_alerts (
     area_desc, sender, sender_name, web, sent, effective, onset, expires, ends,
     ugc, same, zone_keys, is_marine, vtec, vtec_event_key, vtec_office, vtec_phenomenon,
     vtec_significance, vtec_action, vtec_etn, sections, parameters, color, references_ids,
-    geom, geometry_source, ended_at, first_seen_at, last_seen_at, updated_at
+    geom, geometry_source, ended_at, first_seen_at, last_seen_at, updated_at, content_hash
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
     $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36,
@@ -1255,7 +1391,7 @@ INSERT INTO nws_alerts (
     nws_clean_geom(ST_SetSRID(ST_GeomFromGeoJSON($40::text), 4326)),
     CASE WHEN $40::text IS NULL THEN 'pending' ELSE 'polygon' END,
     CASE WHEN $41 THEN $42 ELSE NULL END,
-    $42, $42, $42
+    $42, $42, $42, $43
 )
 ON CONFLICT (id) DO UPDATE SET
     event = EXCLUDED.event, severity = EXCLUDED.severity, urgency = EXCLUDED.urgency,
@@ -1282,6 +1418,7 @@ ON CONFLICT (id) DO UPDATE SET
         WHEN nws_alerts.geometry_source = 'polygon' OR nws_alerts.zone_keys IS DISTINCT FROM EXCLUDED.zone_keys THEN 'pending'
         ELSE nws_alerts.geometry_source END,
     zone_keys = EXCLUDED.zone_keys,
+    content_hash = EXCLUDED.content_hash,
     -- the feed lists it again: it is live unless the message itself is a cancel/expiry
     ended_at = CASE WHEN $41 THEN COALESCE(nws_alerts.ended_at, $42) ELSE NULL END,
     last_seen_at = $42,

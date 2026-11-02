@@ -195,8 +195,8 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
     keys), `references` (earlier messages this one replaces), `is_marine`. `parameters` is NWS'
     `parameters` object without four bulky broadcast-system keys: `BLOCKCHANNEL`, `EAS-ORG`,
     `CMAMtext` and `CMAMlongtext` (the Wireless Emergency Alert text);
-  - the lifecycle: `superseded_by`, `superseded_at`, `ended_at`, `first_seen_at`, `last_seen_at`,
-    `updated_at` (when the content last changed).
+  - the lifecycle: `superseded_by`, `superseded_at`, `ended_at`, `first_seen_at`, `last_seen_at`
+    (the last poll that listed the alert), `updated_at` (when the content last changed).
 - An empty `features` array is a valid "no alerts" answer **only when `meta.stale` is false**.
   `stale` is true when the last successful poll is over 5 minutes old (or never happened);
   `meta.last_error` appears when a poll has failed since the last success.
@@ -242,6 +242,13 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   (NWS is behind a CDN and a lagging node can serve a stale copy): the poll counts for
   `meta.last_success_at`, but nothing in it changes an alert, so a stale copy cannot end alerts
   issued since. Equal stamps are applied normally.
+- `last_seen_at` moves with every poll, `updated_at` only when the message changes. The ingester
+  does not rewrite an alert NWS has not changed (it recognises it by a hash of the NWS feature and
+  of the version of its own parsing): a poll of a feed whose alerts are the same ones as the
+  minute before only sets `last_seen_at`, and a change to how alerts are parsed is applied to the
+  stored ones by one rewrite at the next poll, which leaves `updated_at` alone unless the message
+  itself differs. An alert that left the feed and comes back is live again (`ended_at` cleared)
+  with its `first_seen_at` and `updated_at` as they were.
 - Zone boundaries are fetched lazily (about 800 on a cold start) and cached: 30 days when fetched,
   24 hours before retrying a 404 or an empty/invalid zone, 15 minutes before retrying a fetch that
   failed (timeout, 5xx, rate limit). A failed refresh never discards a boundary already held. An

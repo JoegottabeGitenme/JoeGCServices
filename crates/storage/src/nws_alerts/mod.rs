@@ -24,7 +24,9 @@ pub use lifecycle::GeometrySource;
 pub use vtec::{parse_vtec, Vtec};
 
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 /// Marine UGC prefixes (first two letters of a `XXZnnn` code).
 const MARINE_PREFIXES: &[&str] = &[
@@ -35,7 +37,7 @@ const MARINE_PREFIXES: &[&str] = &[
 const DROPPED_PARAMETERS: &[&str] = &["BLOCKCHANNEL", "EAS-ORG", "CMAMtext", "CMAMlongtext"];
 
 /// One alert, parsed and pre-digested, ready to store.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ParsedAlert {
     /// NWS id (URN), e.g. `urn:oid:2.49.0.1.840.0.<hash>.001.1`.
     pub id: String,
@@ -78,6 +80,12 @@ pub struct ParsedAlert {
     /// Already over on arrival (Cancel, or all VTEC actions CAN). VTEC EXP is not: it
     /// stays in force until its end time.
     pub ended_on_arrival: bool,
+    /// Hash of the NWS feature this was parsed from ([`feature_hash`]): what lets a poll leave
+    /// an alert NWS has not changed alone. `None` is "unknown", and the alert is always written.
+    /// It describes the feature, not these fields, so code that edits a parsed alert before
+    /// storing it must clear it.
+    #[serde(skip)]
+    pub content_hash: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -132,6 +140,63 @@ pub fn zone_key(zone_type: &str, zone_id: &str) -> String {
 
 pub fn is_marine_ugc(code: &str) -> bool {
     code.len() == 6 && code.as_bytes()[2] == b'Z' && MARINE_PREFIXES.contains(&&code[..2])
+}
+
+/// The version of everything that turns a NWS feature into a stored row: [`parse_feature`] and the
+/// parsers under it ([`sections`], [`vtec`], [`colors`], [`lifecycle`]), and the SQL that derives
+/// columns on the way in (`nws_clean_geom`, the upsert). It goes into every alert's
+/// [`ParsedAlert::content_hash`], and a poll rewrites an alert whose stored hash differs, so
+/// **bump it whenever a change to any of these alters what is stored for a feature NWS has
+/// already sent**: a new section rule, another colour, a changed summary or headline rule, a
+/// column derived from the feature. Forgetting leaves stored alerts derived the old way until they
+/// leave the feed; `parser_output_is_pinned_to_the_derivation_version` fails to remind you.
+///
+/// 1 is the first hashed version. Rows stored before `content_hash` existed have no hash and are
+/// rewritten on the first poll after it is deployed, which brings them up to date with the parsers
+/// as deployed (the `*WHAT...` section fix among them).
+pub const DERIVATION_VERSION: u32 = 1;
+
+/// Hash of a feature as NWS sent it, plus the derivation `version`: 32 hex characters. It covers
+/// the inputs of [`parse_feature`] (`id`, `geometry`, `properties`), with object keys sorted, so
+/// the order or spacing NWS happens to use does not matter and only a change of content does.
+pub fn feature_hash(feature: &Value, version: u32) -> String {
+    let mut h = Sha256::new();
+    h.update(version.to_be_bytes());
+    for key in ["id", "geometry", "properties"] {
+        h.update(key.as_bytes());
+        hash_canonical(feature.get(key).unwrap_or(&Value::Null), &mut h);
+    }
+    h.finalize()[..16]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// `v` as compact JSON with the keys of every object in sorted order.
+fn hash_canonical(v: &Value, h: &mut Sha256) {
+    match v {
+        Value::Object(m) => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            h.update(b"{");
+            for k in keys {
+                h.update(Value::from(k.as_str()).to_string().as_bytes());
+                h.update(b":");
+                hash_canonical(&m[k], h);
+                h.update(b",");
+            }
+            h.update(b"}");
+        }
+        Value::Array(a) => {
+            h.update(b"[");
+            for x in a {
+                hash_canonical(x, h);
+                h.update(b",");
+            }
+            h.update(b"]");
+        }
+        scalar => h.update(scalar.to_string().as_bytes()),
+    }
 }
 
 /// Parse one GeoJSON feature from `/alerts/active`.
@@ -252,6 +317,7 @@ pub fn parse_feature(feature: &Value) -> Result<ParsedAlert, ParseError> {
         references,
         geometry_json,
         ended_on_arrival,
+        content_hash: Some(feature_hash(feature, DERIVATION_VERSION)),
     })
 }
 
@@ -431,6 +497,93 @@ mod tests {
         let a = parse_feature(&serde_json::json!({"properties": {"id": "x", "event": "Odd Warning", "messageType": "Cancel"}})).unwrap();
         assert!(
             a.ended_on_arrival && a.zone_keys.is_empty() && a.color == colors::FALLBACK_WARNING
+        );
+    }
+
+    #[test]
+    fn parse_feature_hashes_the_feature_it_was_given() {
+        let f = features().remove(0);
+        let a = parse_feature(&f).unwrap();
+        assert_eq!(
+            a.content_hash.as_deref(),
+            Some(feature_hash(&f, DERIVATION_VERSION).as_str())
+        );
+        assert_eq!(a.content_hash.as_ref().map(String::len), Some(32));
+        // the same feature parses to the same hash, every other one to another
+        let all = parsed();
+        assert_eq!(parse_feature(&f).unwrap().content_hash, all[0].content_hash);
+        let mut hashes: Vec<_> = all.iter().map(|a| a.content_hash.clone()).collect();
+        hashes.sort();
+        hashes.dedup();
+        assert_eq!(hashes.len(), all.len());
+    }
+
+    #[test]
+    fn the_hash_follows_content_and_version_not_key_order() {
+        let a: Value = serde_json::from_str(
+            r#"{"id": "x", "type": "Feature", "geometry": {"type": "Point", "coordinates": [1.5, 2]},
+                "properties": {"event": "E", "geocode": {"UGC": ["A"], "SAME": ["1"]}, "n": 1.0}}"#,
+        )
+        .unwrap();
+        let b: Value = serde_json::from_str(
+            r#"{"properties": {"n": 1.0, "geocode": {"SAME": ["1"], "UGC": ["A"]}, "event": "E"},
+                "geometry": {"coordinates": [1.5, 2], "type": "Point"}, "type": "Feature", "id": "x"}"#,
+        )
+        .unwrap();
+        let h = feature_hash(&a, DERIVATION_VERSION);
+        assert_eq!(h, feature_hash(&b, DERIVATION_VERSION));
+        assert_ne!(
+            h,
+            feature_hash(&a, DERIVATION_VERSION + 1),
+            "the version is part of it"
+        );
+
+        let mut c = a.clone();
+        c["properties"]["geocode"]["UGC"] = serde_json::json!(["B"]);
+        assert_ne!(
+            h,
+            feature_hash(&c, DERIVATION_VERSION),
+            "a property changed"
+        );
+        let mut c = a.clone();
+        c["geometry"]["coordinates"] = serde_json::json!([1.5, 3]);
+        assert_ne!(
+            h,
+            feature_hash(&c, DERIVATION_VERSION),
+            "the geometry changed"
+        );
+        let mut c = a.clone();
+        c["properties"]["geocode"]["UGC"] = serde_json::json!([]);
+        c["properties"]["geocode"]["SAME"] = serde_json::json!(["A", "1"]);
+        assert_ne!(
+            h,
+            feature_hash(&c, DERIVATION_VERSION),
+            "values do not run together"
+        );
+        let mut c = a.clone();
+        c["type"] = serde_json::json!("Other");
+        assert_eq!(
+            h,
+            feature_hash(&c, DERIVATION_VERSION),
+            "only what the parser reads counts"
+        );
+    }
+
+    /// Everything [`parse_feature`] makes of the fixture, hashed. It changes when the parsers do
+    /// (or a field is added to [`ParsedAlert`], or the fixture changes), and then the alerts
+    /// already stored are derived the old way: bump [`DERIVATION_VERSION`] so that the next poll
+    /// rewrites them, and set the new digest here.
+    #[test]
+    fn parser_output_is_pinned_to_the_derivation_version() {
+        const PINNED: &str = "ab928b486060233f2094c1fd26c60fc62bec1fb3f3c8ebd5d18a3ffb603d45fd";
+        let digest: String = Sha256::digest(serde_json::to_string(&parsed()).unwrap())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            digest, PINNED,
+            "what parse_feature makes of the fixture changed: bump DERIVATION_VERSION (now {DERIVATION_VERSION}) \
+             in nws_alerts/mod.rs and pin {digest} here"
         );
     }
 

@@ -3028,6 +3028,9 @@ CREATE TABLE IF NOT EXISTS nws_alerts (
     updated_at TIMESTAMPTZ NOT NULL            -- last time its content changed (ETag seed)
 );
 
+-- What the row was derived from: NWS feature and derivation version, hashed. NULL = unknown, so the next poll rewrites the row.
+ALTER TABLE nws_alerts ADD COLUMN IF NOT EXISTS content_hash TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_geom ON nws_alerts USING GIST(geom);
 CREATE INDEX IF NOT EXISTS idx_nws_alerts_geom_live ON nws_alerts USING GIST(geom)
     WHERE superseded_by IS NULL AND ended_at IS NULL;

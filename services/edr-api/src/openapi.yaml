@@ -600,7 +600,8 @@ paths:
         `references`, `formal_headline` (NWS' own headline; `headline` is its broadcast text when
         it has one), `message_type`, `category`, `response`, `is_marine` and lifecycle
         (`superseded_by`, `superseded_at`, `ended_at` (set when NWS stops listing the alert),
-        `first_seen_at`, `last_seen_at`, `updated_at`). `featureId` is the NWS URN (`urn:oid:2.49.0.1.840.0....`), URL-encoded
+        `first_seen_at`, `last_seen_at` (the last poll that listed the alert), `updated_at`
+        (when the message last changed)). `featureId` is the NWS URN (`urn:oid:2.49.0.1.840.0....`), URL-encoded
         or raw. `geometry=false` omits the geometry.
 
         `/items` for `nws-alerts` takes `bbox` (`west,south,east,north`; west greater than east is
