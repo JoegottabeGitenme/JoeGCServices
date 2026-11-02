@@ -350,7 +350,7 @@ pub async fn run_retention(catalog: NwsAlertCatalog, retention_hours: u64) {
         tick.tick().await;
         let cutoff = Utc::now() - chrono::Duration::hours(retention_hours as i64);
         match catalog.delete_retired_before(cutoff).await {
-            Ok(0) => {}
+            // logged even when nothing was deleted, like the other sweeps: how an operator sees it run
             Ok(n) => info!(deleted = n, %cutoff, "NWS alerts retention sweep"),
             Err(e) => warn!(error = %e, "NWS alerts retention sweep failed; will retry"),
         }
