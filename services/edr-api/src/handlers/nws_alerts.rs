@@ -168,8 +168,11 @@ pub fn significance(a: &StoredAlert) -> &'static str {
 
 /// The card headline: NWS' broadcast text (`NWSheadline`, e.g. "FLOOD WARNING IN EFFECT UNTIL 730 PM
 /// MST MONDAY") when it gave one, else its formal headline ("Flood Warning issued November 1 at
-/// 7:26PM MST until November 2 at 7:30PM MST by NWS Pueblo CO"). New short-fused warnings have no
-/// broadcast text, so the style can change between the messages of one event.
+/// 7:26PM MST until November 2 at 7:30PM MST by NWS Pueblo CO"). NWS leaves the broadcast text out
+/// of some messages (new short-fused warnings, but also some Small Craft Advisories, Avalanche
+/// Advisories and Special Weather Statements), so the style can change between the messages of one
+/// event. The broadcast text says "TODAY" / "TONIGHT" for the local day it was sent, and the
+/// formal headline is dated: both go out as `headline` and `formal_headline`.
 fn headline(a: &StoredAlert) -> Option<&str> {
     a.nws_headline
         .as_deref()
@@ -242,6 +245,10 @@ fn common_properties(
     p.insert("certainty".into(), json!(a.certainty));
     p.insert("color".into(), json!(a.color));
     p.insert("headline".into(), json!(headline(a)));
+    // NWS' own `headline` property, which `headline` above replaces with the broadcast text: dated
+    // ("... issued November 1 at 3:09AM AKST until ..."), where the broadcast text says "TONIGHT"
+    // for the day it was sent
+    p.insert("formal_headline".into(), json!(a.headline));
     p.insert("area".into(), json!(a.area_desc));
     p.insert("sender".into(), json!(a.sender_name));
     p.insert("sent".into(), opt_ts(a.sent));
@@ -319,8 +326,6 @@ pub fn compact_feature(a: &StoredAlert, now: DateTime<Utc>, base_url: &str) -> V
 /// text, sections, VTEC, parameters, zones and lifecycle.
 pub fn full_feature(a: &StoredAlert, now: DateTime<Utc>, base_url: &str) -> Value {
     let mut p = common_properties(a, now, base_url, false);
-    // NWS' own `headline` property, which `headline` above replaces with the broadcast text
-    p.insert("formal_headline".into(), json!(a.headline));
     p.insert("message_type".into(), json!(a.message_type));
     p.insert("category".into(), json!(a.category));
     p.insert("response".into(), json!(a.response));
@@ -1618,6 +1623,10 @@ mod tests {
         assert_eq!(p["vtec_event"], "KABQ.SV.W.0428");
         assert_eq!(p["status"], "active");
         assert_eq!(p["summary"]["hazard"], "60 mph wind gusts.");
+        assert_eq!(
+            p["formal_headline"], p["headline"],
+            "this one has no broadcast text: both are NWS' own"
+        );
         assert_eq!(p["ends"], "2026-11-02T00:00:00Z");
         assert_eq!(p["expires"], "2026-11-02T00:00:00Z");
         assert!(p["instruction"].as_str().unwrap().len() <= INSTRUCTION_MAX + 3);
@@ -1713,7 +1722,7 @@ mod tests {
     }
 
     #[test]
-    fn the_full_record_keeps_the_formal_headline_the_card_headline_replaces() {
+    fn the_formal_headline_comes_with_the_card_headline_in_every_answer() {
         let mut a = by_event("Flash Flood Warning");
         a.headline = Some("Flood Warning issued November 1 at 7:26PM MST by NWS Pueblo CO".into());
         a.nws_headline = Some("FLOOD WARNING IN EFFECT UNTIL 730 PM MST MONDAY".into());
@@ -1727,11 +1736,13 @@ mod tests {
             "FLOOD WARNING IN EFFECT UNTIL 730 PM MST MONDAY"
         );
         assert_eq!(full["headline"], compact["headline"]);
-        assert_eq!(
-            full["formal_headline"],
-            "Flood Warning issued November 1 at 7:26PM MST by NWS Pueblo CO"
-        );
-        assert!(compact.get("formal_headline").is_none(), "not in the card");
+        for card in [&compact, &full] {
+            assert_eq!(
+                card["formal_headline"],
+                "Flood Warning issued November 1 at 7:26PM MST by NWS Pueblo CO",
+                "in the list as well as the full record"
+            );
+        }
         // without broadcast text the two are the same
         a.nws_headline = None;
         let full = p(full_feature(&a, t0(), ""));

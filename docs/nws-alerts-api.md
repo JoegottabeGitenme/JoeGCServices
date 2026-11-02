@@ -197,7 +197,8 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
  "meta":{"source":"api.weather.gov","last_success_at":"2026-11-01T23:29:41Z","data_age_seconds":24,"stale":false},
  "features":[{"type":"Feature","id":"urn:oid:2.49.0.1.840.0.937dcb...001.1","geometry":null,
   "properties":{"event":"Severe Thunderstorm Warning","severity":"Severe","urgency":"Immediate","certainty":"Observed",
-   "color":"#FFA500","headline":"Severe Thunderstorm Warning issued November 1 at 4:10PM MST until November 1 at 5:00PM MST by NWS Albuquerque NM","area":"Bernalillo; Sandoval",
+   "color":"#FFA500","headline":"Severe Thunderstorm Warning issued November 1 at 4:10PM MST until November 1 at 5:00PM MST by NWS Albuquerque NM",
+   "formal_headline":"Severe Thunderstorm Warning issued November 1 at 4:10PM MST until November 1 at 5:00PM MST by NWS Albuquerque NM","area":"Bernalillo; Sandoval",
    "sender":"NWS Albuquerque NM","sent":"...","effective":"...","onset":"...","ends":"2026-11-02T00:00:00Z","expires":"...",
    "status":"active","cap_status":"Actual","significance":"warning","action":"NEW","vtec_event":"KABQ.SV.W.0428",
    "summary":{"hazard":"60 mph wind gusts.","source":"Radar indicated.","impact":"Expect damage to roofs, siding, and trees."},
@@ -214,13 +215,20 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
 - `headline` is the text NWS broadcasts for the alert (its `NWSheadline` parameter) when it gives one,
   otherwise NWS' own headline. Most alerts have the broadcast text, upper case, in local time
   without a date and up to 200 characters (`FLOOD WARNING REMAINS IN EFFECT UNTIL 730 PM MST
-  MONDAY`); a new short-fused warning has none, so it gets the formal one (the example above:
-  `Severe Thunderstorm Warning issued November 1 at 4:10PM MST until ... by NWS Albuquerque NM`),
-  and the style can change between the messages of one `vtec_event`. `/items/{id}` also returns
-  `formal_headline`, always NWS' own headline (for a Flood Warning: `Flood Warning issued
-  November 1 at 7:26PM MST until November 2 at 7:30PM MST by NWS Pueblo CO`), for a client that
-  wants one style or the issue and end times; the broadcast text is also in
-  `parameters.NWSheadline`.
+  MONDAY`). NWS leaves it out of some messages (new short-fused warnings, but also some Small Craft
+  Advisories, Avalanche Advisories and Special Weather Statements), and then `headline` is the
+  formal one (the example above: `Severe Thunderstorm Warning issued November 1 at 4:10PM MST until
+  ... by NWS Albuquerque NM`), so the style can change between the messages of one `vtec_event`.
+  **Day words in the broadcast text (`TODAY`, `TONIGHT`, `THIS EVENING`, `MONDAY`) are relative to
+  the local day the message was `sent`**, and an alert that stays in force for a day or two keeps
+  them: `GALE WARNING TONIGHT AND MONDAY` sent on Sunday at 3 AM still says "tonight" on Monday
+  morning, and means Sunday night. For text that has dates, use `formal_headline`, or `onset` and
+  `ends`.
+- `formal_headline` is always NWS' own headline, dated, on every feature of every list and
+  `/items/{id}` (for a Flood Warning: `Flood Warning issued November 1 at 7:26PM MST until November
+  2 at 7:30PM MST by NWS Pueblo CO`; it is `null` when NWS sent none). It is the headline to show
+  where a card has no room for the dates of `sent`, `onset` and `ends`, or where one style is
+  wanted for every alert. The broadcast text is also in `parameters.NWSheadline` on `/items/{id}`.
 - `status`: `active`, `upcoming` (issued, hazard starts later: label it "Starts 6 PM"), `ended`,
   `superseded` (a newer message replaced it; only seen via `/items/{id}` or `include_superseded`).
   As of now, or as of the request's `datetime` instant (see above). This is the lifecycle status;
@@ -240,7 +248,7 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   - the untrimmed text: `description` (wraps collapsed into paragraphs, a `- ` item or a forecast
     period on a line of its own), `description_raw` and `instruction_raw` (as NWS sent them),
     `sections` (the labelled parts, the forecast `periods` and the `narrative`);
-  - NWS' own fields: `formal_headline`, `message_type` (`Alert`, `Update`, `Cancel`), `category`,
+  - NWS' own fields: `message_type` (`Alert`, `Update`, `Cancel`), `category`,
     `response`, `vtec` (every parsed VTEC code), `parameters`, `ugc`, `zones` (the affected-zone
     keys), `references` (earlier messages this one replaces), `is_marine`. `parameters` is NWS'
     `parameters` object without four bulky broadcast-system keys: `BLOCKCHANNEL`, `EAS-ORG`,

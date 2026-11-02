@@ -294,6 +294,11 @@ async fn position_finds_polygon_and_zone_alerts_worst_first() {
     assert_eq!(f["properties"]["significance"], "warning");
     assert_eq!(f["properties"]["color"], "#FFA500");
     assert_eq!(f["properties"]["summary"]["hazard"], "60 mph wind gusts.");
+    // NWS' own dated headline is on the card as well as the broadcast text in `headline`
+    assert_eq!(
+        f["properties"]["formal_headline"],
+        "Severe Thunderstorm Warning issued November 1 at 4:10PM MST until November 1 at 5:00PM MST by NWS Albuquerque NM"
+    );
     assert_eq!(v["numberReturned"], v["features"].as_array().unwrap().len());
 
     // &geometry=true adds it
