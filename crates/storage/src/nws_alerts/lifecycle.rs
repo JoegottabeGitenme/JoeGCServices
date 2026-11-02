@@ -3,7 +3,9 @@
 //! An alert row is **active** at time `t` when all of:
 //! 1. it has not been superseded by a later message (`superseded_by IS NULL`);
 //! 2. it has not ended (`ended_at IS NULL`) -- set when a poll no longer lists
-//!    it, when it arrives as a `Cancel`, or when its VTEC says CAN/EXP;
+//!    it, or when it arrives as a `Cancel` or with VTEC action CAN. (VTEC EXP is
+//!    *not* an ending: it means "will expire at the stated end time", so the
+//!    alert stays in force until its end time, rule 3.)
 //! 3. its end time has not passed: `end_time = COALESCE(ends, expires)`.
 //!    NWS `ends` is when the *hazard* ends; `expires` is when the *message*
 //!    expires (often earlier, e.g. the next scheduled update), so `ends` wins
@@ -53,10 +55,11 @@ pub fn zone_geometry_source(unresolved_zones: usize, zones_with_geometry: usize)
 }
 
 /// Whether a message is already over when we first see it: a `Cancel`, or one
-/// whose every VTEC action is CAN/EXP.
+/// whose every VTEC action is CAN. EXP does not count: NWS sends it a few
+/// minutes before the end time ("will expire at"), so the end time decides.
 pub fn arrives_ended(message_type: &str, vtec: &[Vtec]) -> bool {
     message_type.eq_ignore_ascii_case("cancel")
-        || (!vtec.is_empty() && vtec.iter().all(Vtec::is_terminal))
+        || (!vtec.is_empty() && vtec.iter().all(Vtec::is_cancel))
 }
 
 /// Ids an incoming message supersedes: its `references`, minus itself, deduplicated.
@@ -144,17 +147,39 @@ mod tests {
     }
 
     #[test]
-    fn cancel_and_terminal_vtec_arrive_ended() {
+    fn cancel_and_can_vtec_arrive_ended_but_exp_does_not() {
         let can = parse_vtec("/O.CAN.KABQ.SV.W.0428.000000T0000Z-261102T0000Z/").unwrap();
         let exp = parse_vtec("/O.EXP.KABQ.SV.W.0428.000000T0000Z-261102T0000Z/").unwrap();
         let con = parse_vtec("/O.CON.KABQ.SV.W.0428.000000T0000Z-261102T0000Z/").unwrap();
         assert!(arrives_ended("Cancel", &[]));
-        assert!(arrives_ended("Update", std::slice::from_ref(&exp)));
-        assert!(arrives_ended("Update", &[can.clone(), exp.clone()]));
+        assert!(arrives_ended("Update", std::slice::from_ref(&can)));
+        assert!(arrives_ended("Update", &[can.clone(), can.clone()]));
+        // EXP: in force until its end time, which `is_active` checks
+        assert!(!arrives_ended("Update", std::slice::from_ref(&exp)));
+        assert!(!arrives_ended("Update", &[can.clone(), exp]));
         assert!(!arrives_ended("Update", std::slice::from_ref(&con)));
         // one live event in a multi-VTEC message keeps the message alive
         assert!(!arrives_ended("Update", &[can, con]));
         assert!(!arrives_ended("Alert", &[]));
+    }
+
+    #[test]
+    fn an_expiring_message_is_active_until_its_end_time() {
+        // /O.EXP.KFGZ.FF.W.0209...-261101T2330Z/ sent 23:26Z, ends 23:30Z (the fixture's flash flood warning)
+        let exp = parse_vtec("/O.EXP.KFGZ.FF.W.0209.000000T0000Z-261101T2330Z/").unwrap();
+        assert!(!arrives_ended("Update", &[exp]));
+        let ends = Utc.with_ymd_and_hms(2026, 11, 1, 23, 30, 0).unwrap();
+        let live = AlertTimes {
+            superseded: false,
+            ended: false,
+            ends: Some(ends),
+            expires: Some(ends + Duration::minutes(6)),
+        };
+        let at =
+            |m: i64| Utc.with_ymd_and_hms(2026, 11, 1, 23, 28, 0).unwrap() + Duration::minutes(m);
+        assert!(is_active(&live, at(0)), "23:28Z: still in force");
+        assert!(!is_active(&live, at(2)), "23:30Z: ended (end is exclusive)");
+        assert!(!is_active(&live, at(5)));
     }
 
     #[test]

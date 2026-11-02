@@ -2968,7 +2968,7 @@ CREATE TABLE IF NOT EXISTS nws_alerts (
     references_ids TEXT[] NOT NULL DEFAULT '{}',  -- earlier messages this one replaces
     superseded_by TEXT,                        -- id of the message that replaced this one
     superseded_at TIMESTAMPTZ,
-    ended_at TIMESTAMPTZ,                      -- dropped from the feed / Cancel / VTEC CAN|EXP
+    ended_at TIMESTAMPTZ,                      -- dropped from the feed / Cancel / VTEC CAN (EXP waits for end_time)
     geom GEOMETRY(MultiPolygon, 4326),         -- effective geometry (own polygon, else union of zones)
     geometry_source TEXT NOT NULL DEFAULT 'pending',  -- polygon | zones | pending | none
     first_seen_at TIMESTAMPTZ NOT NULL,

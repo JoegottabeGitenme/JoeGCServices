@@ -40,9 +40,13 @@ impl Vtec {
         )
     }
 
-    /// True for actions that mean the hazard is over (cancelled or expired).
-    pub fn is_terminal(&self) -> bool {
-        matches!(self.action.as_str(), "CAN" | "EXP")
+    /// True for CAN: the event was cancelled, so it is over now.
+    ///
+    /// EXP is deliberately not included: it says the event "will expire at the
+    /// stated end time" and is in force until then (NWS sends it a few minutes
+    /// before the end). Whether it is still live is decided by its end time.
+    pub fn is_cancel(&self) -> bool {
+        self.action == "CAN"
     }
 }
 
@@ -112,7 +116,7 @@ mod tests {
             Some(Utc.with_ymd_and_hms(2026, 11, 3, 0, 0, 0).unwrap())
         );
         assert_eq!(v.event_key(), "KTOP.WS.W.0012");
-        assert!(!v.is_terminal());
+        assert!(!v.is_cancel());
     }
 
     #[test]
@@ -130,13 +134,22 @@ mod tests {
     fn zero_end_means_until_further_notice() {
         let v = parse_vtec("/O.EXP.KFGZ.FF.W.0209.000000T0000Z-000000T0000Z/").unwrap();
         assert_eq!((v.begin, v.end), (None, None));
-        assert!(v.is_terminal());
     }
 
     #[test]
-    fn cancel_is_terminal() {
-        let v = parse_vtec("/O.CAN.KABQ.SV.W.0428.000000T0000Z-261102T0000Z/").unwrap();
-        assert!(v.is_terminal());
+    fn only_can_is_a_cancel() {
+        let can = parse_vtec("/O.CAN.KABQ.SV.W.0428.000000T0000Z-261102T0000Z/").unwrap();
+        assert!(can.is_cancel());
+        // EXP means "expires at the stated end", not "over now"
+        let exp = parse_vtec("/O.EXP.KFGZ.FF.W.0209.000000T0000Z-261101T2330Z/").unwrap();
+        assert!(!exp.is_cancel());
+        for action in ["NEW", "CON", "EXT", "EXA", "EXB", "UPG", "COR", "ROU"] {
+            let v = parse_vtec(&format!(
+                "/O.{action}.KABQ.SV.W.0428.000000T0000Z-261102T0000Z/"
+            ))
+            .unwrap();
+            assert!(!v.is_cancel(), "{action}");
+        }
     }
 
     #[test]

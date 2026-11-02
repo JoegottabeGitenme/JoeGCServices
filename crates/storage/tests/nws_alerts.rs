@@ -357,9 +357,32 @@ async fn lifecycle_supersede_disappear_cancel_and_failure() {
     let svr = id_of(&alerts, "Severe Thunderstorm Warning", |_| true);
     let ffw = id_of(&alerts, "Flash Flood Warning", |_| true);
 
-    // A VTEC EXP message is stored but already over.
+    // A VTEC EXP message ("will expire at 23:30Z", sent 23:26Z) is in force until its end time:
+    // not ended on arrival, active at 23:28Z, over at 23:30Z.
     let ffw_row = env.nws.get(&ffw, false).await.unwrap().unwrap();
-    assert!(ffw_row.ended_at.is_some() && !ffw_row.is_active(t0()));
+    assert!(ffw_row.ended_at.is_none());
+    let before_end = t0() - Duration::minutes(2);
+    assert!(ffw_row.is_active(before_end) && !ffw_row.is_active(t0()));
+    let (fx, fy): (f64, f64) = sqlx::query_as(
+        "SELECT ST_X(ST_PointOnSurface(geom)), ST_Y(ST_PointOnSurface(geom)) FROM nws_alerts WHERE id = $1",
+    )
+    .bind(&ffw)
+    .fetch_one(env.catalog.pool())
+    .await
+    .unwrap();
+    assert!(
+        ids(&env
+            .nws
+            .active_at_point(fx, fy, before_end, false)
+            .await
+            .unwrap())
+        .contains(&ffw),
+        "the SQL predicate agrees: in force at 23:28Z"
+    );
+    assert!(
+        !ids(&env.nws.active_at_point(fx, fy, t0(), false).await.unwrap()).contains(&ffw),
+        "...and over at its end time"
+    );
 
     // 1. Update: references the winter warning -> it is superseded, the update is live.
     let mut upd = features()
@@ -462,7 +485,7 @@ async fn lifecycle_supersede_disappear_cancel_and_failure() {
         env.nws.get(&svr, false).await.unwrap().unwrap().ended_at,
         None
     );
-    // ...but the EXP message stays over while NWS keeps listing it.
+    // ...and the EXP message was never ended: NWS keeps listing it, its end time decides.
     assert!(env
         .nws
         .get(&ffw, false)
@@ -470,7 +493,7 @@ async fn lifecycle_supersede_disappear_cancel_and_failure() {
         .unwrap()
         .unwrap()
         .ended_at
-        .is_some());
+        .is_none());
 
     // 4. A failed poll changes nothing but the status row.
     let before = env.nws.status().await.unwrap().unwrap();
@@ -612,8 +635,8 @@ async fn retention_deletes_week_old_ended_alerts_and_keeps_zones() {
     let r = env.nws.apply_feed(&only_svr, None, later).await.unwrap();
     assert_eq!(
         r.ended as usize,
-        alerts.len() - 1 - 1,
-        "all but the SVR and the already-ended EXP message"
+        alerts.len() - 1,
+        "everything but the SVR (the EXP message is no longer ended on arrival)"
     );
 
     let deleted = env
