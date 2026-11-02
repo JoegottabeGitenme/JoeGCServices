@@ -348,6 +348,11 @@ async fn position_filters_and_validation() {
         "/edr/collections/nws-alerts/position".to_string(),
         "/edr/collections/nws-alerts/position?coords=POINT(500%2037)".to_string(),
         format!("{base}&geometry=maybe"),
+        // multi-byte text in coords: a 400, never a panic (a euro sign is %E2%82%AC)
+        "/edr/collections/nws-alerts/position?coords=1234%E2%82%AC".to_string(),
+        "/edr/collections/nws-alerts/radius?coords=%E2%82%AC%E2%82%AC&within=5".to_string(),
+        "/edr/collections/nws-alerts/area?coords=POLYG%E2%82%AC((1%201,2%201,2%202,1%201))".to_string(),
+        "/edr/collections/nws-alerts/area?coords=POLYG%C3%96N((1%201,2%201,2%202,1%201))".to_string(),
         "/edr/collections/nws-alerts/position?coords=POINT(-107%2037.5)&datetime=2026-11-01T00:00:00Z/2026-11-02T00:00:00Z".to_string(),
         "/edr/collections/nws-alerts/position?coords=POINT(-107%2037.5)&datetime=tomorrow".to_string(),
     ] {

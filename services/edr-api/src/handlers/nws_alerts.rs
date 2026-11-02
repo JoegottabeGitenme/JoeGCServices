@@ -376,7 +376,8 @@ fn check_lonlat(lon: f64, lat: f64) -> Result<(), String> {
 /// `POINT(lon lat)` or `lon,lat`.
 pub fn parse_point(coords: &str) -> Result<(f64, f64), String> {
     let c = coords.trim();
-    let inner = if c.len() >= 5 && c[..5].eq_ignore_ascii_case("POINT") {
+    // `get` (not `c[..5]`): the user's text may have a multi-byte character across the cut.
+    let inner = if c.get(..5).is_some_and(|p| p.eq_ignore_ascii_case("POINT")) {
         c[5..].trim().trim_start_matches('(').trim_end_matches(')')
     } else {
         c
@@ -392,7 +393,10 @@ pub fn parse_point(coords: &str) -> Result<(f64, f64), String> {
 /// `POLYGON((lon lat, ...))` (outer ring only), returned as validated WKT.
 pub fn parse_polygon(coords: &str) -> Result<String, String> {
     let c = coords.trim();
-    if c.len() < 7 || !c[..7].eq_ignore_ascii_case("POLYGON") {
+    if !c
+        .get(..7)
+        .is_some_and(|p| p.eq_ignore_ascii_case("POLYGON"))
+    {
         return Err("Invalid coords. Use POLYGON((lon lat, lon lat, ...))".into());
     }
     let ring = c[7..]
@@ -1232,6 +1236,40 @@ mod tests {
         );
         assert!(parse_bbox("-105,39,-106,40").is_err());
         assert!(parse_bbox("1,2,3").is_err());
+    }
+
+    #[test]
+    fn non_ascii_coords_are_a_400_not_a_panic() {
+        // The prefix checks used to slice bytes (`c[..5]`, `c[..7]`), which panics when
+        // a multi-byte character straddles the cut.
+        for c in [
+            "1234€",       // byte 5 is inside the euro sign
+            "€€€€€€€",     // every cut is inside a character
+            "POIN€(1 2)",  // 'POIN' + a 3-byte char
+            "POINT€(1 2)", // prefix is fine, the rest is not a number
+            "ÄÄÄ,ÖÖÖ",     // "lon,lat" made of non-ASCII
+            "   é   ",
+        ] {
+            assert!(parse_point(c).is_err(), "{c:?} must be rejected, not panic");
+        }
+        for c in [
+            "POLYGÖN((1 1,2 1,2 2,1 1))",
+            "POLYG€((1 1,2 1,2 2,1 1))", // byte 7 is inside the euro sign
+            "PÖLYGON((1 1,2 1,2 2,1 1))",
+            "€€€€€€€€",
+            "POLYGON€((1 1,2 1,2 2,1 1))",
+        ] {
+            assert!(
+                parse_polygon(c).is_err(),
+                "{c:?} must be rejected, not panic"
+            );
+        }
+        // plain ASCII still works, in any case
+        assert_eq!(parse_point("Point(1 2)").unwrap(), (1.0, 2.0));
+        assert!(parse_polygon("polygon((0 0,1 0,1 1,0 0))").is_ok());
+        // `within` units are sliced at an ASCII letter, so non-ASCII text is just an error
+        assert!(parse_within(Some("5€km"), None).is_err());
+        assert!(parse_within(Some("5ñ"), None).is_err());
     }
 
     #[test]
