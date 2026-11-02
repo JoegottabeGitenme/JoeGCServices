@@ -121,6 +121,8 @@ paths:
         GeoJSON FeatureCollection (`geometry` null unless `geometry=true`). Extra parameters:
         `severity=Severe,Extreme` and `event=Tornado Warning,...` (comma lists, case-insensitive),
         `geometry=true|false`; `datetime` must be a single instant (alerts active at that time).
+        Only CAP `status: Actual` alerts are returned; `include_non_actual=true` adds the Test,
+        Exercise, System and Draft ones (every feature carries `cap_status`).
         Alerts whose onset is still ahead are included with `status: upcoming`. The body has a
         top-level `meta` (`source`, `last_success_at`, `data_age_seconds`, `stale`).
         `/area` and `/radius` answer the same way for a polygon / `within` distance. See
@@ -524,8 +526,9 @@ paths:
 
         `/items` for `nws-alerts` takes `bbox`, `datetime` (instant: active then; interval needs
         `status=all`), `status=active|all` (default active), `severity`, `event`, `limit`
-        (default 500, max 2000; `truncated: true` when cut), `geometry` (default true) and
-        `simplify` (degrees; default scales with the bbox, `0` disables).
+        (default 500, max 2000; `truncated: true` when cut), `geometry` (default true),
+        `simplify` (degrees; default scales with the bbox, `0` disables) and
+        `include_non_actual=true` (also Test/Exercise/System/Draft alerts; default Actual only).
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - name: featureId

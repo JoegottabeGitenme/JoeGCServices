@@ -222,6 +222,8 @@ fn common_properties(
     p.insert("ends".into(), opt_ts(a.end_time));
     p.insert("expires".into(), opt_ts(a.expires));
     p.insert("status".into(), json!(alert_status(a, now)));
+    // The CAP status: Actual, or Test / Exercise / System / Draft (only returned on request).
+    p.insert("cap_status".into(), json!(a.status));
     p.insert("significance".into(), json!(significance(a)));
     p.insert(
         "action".into(),
@@ -352,6 +354,8 @@ pub struct NwsQuery {
     #[serde(rename = "within-units")]
     pub within_units: Option<String>,
     pub include_superseded: Option<String>,
+    /// `true` also returns CAP status Test / Exercise / System / Draft alerts (default: Actual only).
+    pub include_non_actual: Option<String>,
 }
 
 fn nums(s: &str) -> Result<Vec<f64>, String> {
@@ -699,12 +703,19 @@ async fn respond(state: &AppState, search: AlertSearch, extra: Vec<(&str, Value)
     geojson(fc)
 }
 
+/// `include_non_actual=true|false` (default false).
+pub fn parse_include_non_actual(q: &NwsQuery) -> Result<bool, String> {
+    parse_bool(q.include_non_actual.as_deref(), false)
+        .map_err(|e| format!("include_non_actual: {e}"))
+}
+
 fn base_search(
     region: AlertRegion,
     q: &NwsQuery,
     now: DateTime<Utc>,
     limit: i64,
     geometry: bool,
+    include_non_actual: bool,
 ) -> AlertSearch {
     AlertSearch {
         region,
@@ -716,6 +727,7 @@ fn base_search(
         limit,
         with_geometry: geometry,
         simplify: q.simplify,
+        include_non_actual,
     }
 }
 
@@ -750,12 +762,17 @@ pub async fn position(state: Arc<AppState>, q: NwsQuery) -> Response {
         Ok(g) => g,
         Err(e) => return bad_request(e),
     };
+    let include_non_actual = match parse_include_non_actual(&q) {
+        Ok(g) => g,
+        Err(e) => return bad_request(e),
+    };
     let search = base_search(
         AlertRegion::Point { lon, lat },
         &q,
         now,
         NEARBY_LIMIT,
         geometry,
+        include_non_actual,
     );
     respond(&state, search, vec![]).await
 }
@@ -791,13 +808,17 @@ async fn nearby(state: Arc<AppState>, q: NwsQuery, region: AlertRegion) -> Respo
         Ok(g) => g,
         Err(e) => return bad_request(e),
     };
+    let include_non_actual = match parse_include_non_actual(&q) {
+        Ok(g) => g,
+        Err(e) => return bad_request(e),
+    };
     let limit = q
         .limit
         .unwrap_or(DEFAULT_ITEMS_LIMIT)
         .clamp(1, MAX_ITEMS_LIMIT);
     respond(
         &state,
-        base_search(region, &q, now, limit, geometry),
+        base_search(region, &q, now, limit, geometry, include_non_actual),
         vec![("limit", json!(limit))],
     )
     .await
@@ -817,6 +838,10 @@ pub async fn items(state: Arc<AppState>, q: NwsQuery) -> Response {
         Err(e) => return bad_request(e),
     };
     let include_superseded = match parse_bool(q.include_superseded.as_deref(), false) {
+        Ok(g) => g,
+        Err(e) => return bad_request(e),
+    };
+    let include_non_actual = match parse_include_non_actual(&q) {
         Ok(g) => g,
         Err(e) => return bad_request(e),
     };
@@ -858,7 +883,14 @@ pub async fn items(state: Arc<AppState>, q: NwsQuery) -> Response {
             )),
         ),
     };
-    let mut search = base_search(AlertRegion::Bbox(bbox), &q, now, limit, geometry);
+    let mut search = base_search(
+        AlertRegion::Bbox(bbox),
+        &q,
+        now,
+        limit,
+        geometry,
+        include_non_actual,
+    );
     search.window = window;
     search.include_superseded = include_superseded;
     search.simplify = Some(q.simplify.unwrap_or_else(|| default_simplify(&bbox)));
@@ -922,7 +954,8 @@ pub async fn collection_metadata(
     };
     let description = format!(
         "{description} Also /items?bbox=&datetime=&status=active|all and /items/{{id}} \
-         (URN, URL-encoded or raw). Filters: severity=, event= (comma lists), geometry=true|false. {age}"
+         (URN, URL-encoded or raw). Filters: severity=, event= (comma lists), geometry=true|false, \
+         include_non_actual=true (also Test/Exercise/System/Draft messages; default Actual only). {age}"
     );
     let mut c = Collection::new(def_id)
         .with_title(title)
@@ -1083,6 +1116,41 @@ mod tests {
         ] {
             assert!(p.get(k).is_none(), "{k} must not be in the compact shape");
         }
+    }
+
+    #[test]
+    fn cap_status_is_exposed_next_to_the_lifecycle_status() {
+        let a = by_event("Severe Thunderstorm Warning");
+        let f = compact_feature(&a, t0(), "");
+        assert_eq!(f["properties"]["cap_status"], "Actual");
+        assert_eq!(
+            f["properties"]["status"], "active",
+            "lifecycle status is unchanged"
+        );
+        let t = by_event("Test Message");
+        assert_eq!(t.status.as_deref(), Some("Test"));
+        for f in [compact_feature(&t, t0(), ""), full_feature(&t, t0(), "")] {
+            assert_eq!(f["properties"]["cap_status"], "Test");
+        }
+        let mut none = by_event("Flood Watch");
+        none.status = None;
+        assert!(compact_feature(&none, t0(), "")["properties"]["cap_status"].is_null());
+    }
+
+    #[test]
+    fn include_non_actual_parses_as_a_boolean_defaulting_to_off() {
+        let q = |v: Option<&str>| NwsQuery {
+            include_non_actual: v.map(String::from),
+            ..Default::default()
+        };
+        assert!(!parse_include_non_actual(&q(None)).unwrap());
+        assert!(!parse_include_non_actual(&q(Some("false"))).unwrap());
+        assert!(parse_include_non_actual(&q(Some("true"))).unwrap());
+        assert!(parse_include_non_actual(&q(Some("TRUE"))).unwrap());
+        assert!(parse_include_non_actual(&q(Some("maybe"))).is_err());
+        // and it comes through the raw query string the position/area/radius routes parse
+        let parsed = query_from_raw(Some("coords=1,2&include_non_actual=true")).unwrap();
+        assert!(parse_include_non_actual(&parsed).unwrap());
     }
 
     #[test]

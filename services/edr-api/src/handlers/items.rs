@@ -62,6 +62,7 @@ pub struct ItemsQueryParams {
     pub geometry: Option<String>,
     pub simplify: Option<f64>,
     pub include_superseded: Option<String>,
+    pub include_non_actual: Option<String>,
 }
 
 fn nws_items_params(p: &ItemsQueryParams) -> nws_alerts::NwsQuery {
@@ -75,6 +76,7 @@ fn nws_items_params(p: &ItemsQueryParams) -> nws_alerts::NwsQuery {
         geometry: p.geometry.clone(),
         simplify: p.simplify,
         include_superseded: p.include_superseded.clone(),
+        include_non_actual: p.include_non_actual.clone(),
         ..Default::default()
     }
 }
@@ -201,6 +203,15 @@ mod tests {
             ),
             (Some(50), Some("PT5M"), Some(42), Some("both"))
         );
+    }
+
+    #[test]
+    fn nws_include_non_actual_survives_the_items_translation() {
+        let q = nws_items_params(&parse("bbox=-106,39,-105,40&include_non_actual=true"));
+        assert_eq!(q.include_non_actual.as_deref(), Some("true"));
+        assert!(nws_items_params(&parse("bbox=-106,39,-105,40"))
+            .include_non_actual
+            .is_none());
     }
 
     #[test]

@@ -624,3 +624,65 @@ async fn response_sizes_and_simplification() {
         .await;
     assert!(close > 0);
 }
+
+/// The feed's "Test Message" (CAP status Test) is stored, but not served unless asked for.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn test_alerts_are_hidden_by_default_and_cap_status_is_exposed() {
+    let e = env().await;
+    e.load().await;
+    let test_id = e.id("Test Message");
+    let q = "datetime=2026-11-01T23:30:00Z";
+    let md = "POINT(-77.05%2039.2)";
+    let routes = [
+        format!("/edr/collections/nws-alerts/position?coords={md}&{q}"),
+        format!("/edr/collections/nws-alerts/items?bbox=-78,38.5,-76,40&{q}"),
+        format!("/edr/collections/nws-alerts/area?coords=POLYGON((-78%2038.5,-76%2038.5,-76%2040,-78%2040,-78%2038.5))&{q}"),
+        format!("/edr/collections/nws-alerts/radius?coords={md}&within=50&{q}"),
+        // history of the same box
+        "/edr/collections/nws-alerts/items?bbox=-78,38.5,-76,40&status=all&datetime=2026-11-01T22:00:00Z/2026-11-01T23:30:00Z".to_string(),
+    ];
+    for uri in &routes {
+        let (st, _, v, _) = e.get(uri).await;
+        assert_eq!(st, 200, "{uri}: {v}");
+        assert!(
+            !events(&v).contains(&"Test Message".to_string()),
+            "{uri} must not serve a Test alert by default"
+        );
+        let (st, _, v, _) = e.get(&format!("{uri}&include_non_actual=true")).await;
+        assert_eq!(st, 200, "{uri}: {v}");
+        let t = feature(&v, "Test Message");
+        assert_eq!(t["id"], test_id.as_str(), "{uri}");
+        assert_eq!(t["properties"]["cap_status"], "Test", "{uri}");
+        if !uri.contains("status=all") {
+            // (a history window is judged against the wall clock, which is long past 23:34Z)
+            assert_eq!(
+                t["properties"]["status"], "active",
+                "the lifecycle status is untouched ({uri})"
+            );
+        }
+        let (st, _, v, _) = e.get(&format!("{uri}&include_non_actual=maybe")).await;
+        assert_eq!(st, 400, "{uri}: {v}");
+    }
+
+    // Actual alerts say so
+    let svr = e.id("Severe Thunderstorm Warning");
+    let (lon, lat) = e.inside(&svr).await;
+    let (_, _, v, _) = e
+        .get(&format!(
+            "/edr/collections/nws-alerts/position?coords={lon},{lat}&{q}"
+        ))
+        .await;
+    assert_eq!(
+        feature(&v, "Severe Thunderstorm Warning")["properties"]["cap_status"],
+        "Actual"
+    );
+
+    // /items/{id} returns it regardless
+    let encoded = handlers::nws_alerts::encode_id(&test_id);
+    let (st, _, f, _) = e
+        .get(&format!("/edr/collections/nws-alerts/items/{encoded}"))
+        .await;
+    assert_eq!(st, 200, "{f}");
+    assert_eq!(f["properties"]["cap_status"], "Test");
+}

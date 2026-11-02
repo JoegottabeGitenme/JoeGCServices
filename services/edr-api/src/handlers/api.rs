@@ -169,6 +169,7 @@ mod tests {
             "urn:oid:2.49.0.1.840.0",
             "severity=Severe,Extreme",
             "status=active|all",
+            "include_non_actual=true",
         ] {
             assert!(
                 OPENAPI_SPEC.contains(needle),
