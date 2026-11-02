@@ -161,7 +161,8 @@ paths:
         **Errors on `nws-alerts`** are 4xx with the JSON exception body (`status`, `detail`),
         never plain text or a 5xx: a query string that does not parse (`limit=abc`, a repeated
         parameter), `limit` below 1, `simplify` negative or not finite, a control character in
-        `severity` or `event`, and a `datetime` interval that ends before it starts are all 400.
+        `severity` or `event`, and a `datetime` interval that ends before it starts are all 400
+        (as is an alert id that is not UTF-8 once unescaped, on `/items/{featureId}`).
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -184,11 +185,17 @@ paths:
           description: Invalid request parameters
         '404':
           description: Collection not found
+        '406':
+          description: |
+            `nws-alerts`: no `f` was given and the `Accept` header excludes both
+            `application/geo+json` and `application/json`. JSON exception body.
         '503':
           description: |
-            `nws-alerts` only: the query took longer than the server's time limit
-            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s) and was cancelled. JSON exception body
-            (`status: 503`); ask for a smaller or simpler area.
+            `nws-alerts` only: the query did not finish within the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s, time spent waiting for a lock included)
+            and was cancelled. JSON exception body (`status: 503`) and `Retry-After: 5`. The
+            database may only have been busy: try again shortly; a large area that keeps failing
+            needs to be smaller or simpler.
 
   /collections/{collectionId}/area:
     get:
@@ -284,11 +291,17 @@ paths:
           description: Invalid request parameters
         '404':
           description: Collection not found, or (instance path) a run or time the instance does not hold
+        '406':
+          description: |
+            `nws-alerts`: no `f` was given and the `Accept` header excludes both
+            `application/geo+json` and `application/json`. JSON exception body.
         '503':
           description: |
-            `nws-alerts` only: the query took longer than the server's time limit
-            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s) and was cancelled. JSON exception body
-            (`status: 503`); ask for a smaller or simpler area.
+            `nws-alerts` only: the query did not finish within the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s, time spent waiting for a lock included)
+            and was cancelled. JSON exception body (`status: 503`) and `Retry-After: 5`. The
+            database may only have been busy: try again shortly; a large area that keeps failing
+            needs to be smaller or simpler.
 
   /collections/{collectionId}/radius:
     get:
@@ -365,11 +378,17 @@ paths:
           description: Invalid request parameters
         '404':
           description: Collection not found
+        '406':
+          description: |
+            `nws-alerts`: no `f` was given and the `Accept` header excludes both
+            `application/geo+json` and `application/json`. JSON exception body.
         '503':
           description: |
-            `nws-alerts` only: the query took longer than the server's time limit
-            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s) and was cancelled. JSON exception body
-            (`status: 503`); ask for a smaller or simpler area.
+            `nws-alerts` only: the query did not finish within the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s, time spent waiting for a lock included)
+            and was cancelled. JSON exception body (`status: 503`) and `Retry-After: 5`. The
+            database may only have been busy: try again shortly; a large area that keeps failing
+            needs to be smaller or simpler.
 
   /collections/{collectionId}/trajectory:
     get:
@@ -584,11 +603,17 @@ paths:
           description: Invalid request parameters, or the collection does not support /items
         '404':
           description: Collection not found
+        '406':
+          description: |
+            `nws-alerts`: no `f` was given and the `Accept` header excludes both
+            `application/geo+json` and `application/json`. JSON exception body.
         '503':
           description: |
-            `nws-alerts` only: the query took longer than the server's time limit
-            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s) and was cancelled. JSON exception body
-            (`status: 503`); ask for a smaller or simpler area.
+            `nws-alerts` only: the query did not finish within the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s, time spent waiting for a lock included)
+            and was cancelled. JSON exception body (`status: 503`) and `Retry-After: 5`. The
+            database may only have been busy: try again shortly; a large area that keeps failing
+            needs to be smaller or simpler.
 
   /collections/{collectionId}/items/{featureId}:
     get:
@@ -630,13 +655,24 @@ paths:
             application/geo+json:
               schema:
                 $ref: '#/components/schemas/GeoJSON'
+        '400':
+          description: |
+            `nws-alerts`: a `featureId` with a control character or that is not UTF-8 once
+            unescaped, a query string that does not parse, `geometry` that is not a boolean, or
+            an `f` other than GeoJSON. JSON exception body.
         '404':
           description: Collection or alert not found
+        '406':
+          description: |
+            `nws-alerts`: no `f` was given and the `Accept` header excludes both
+            `application/geo+json` and `application/json`. JSON exception body.
         '503':
           description: |
-            `nws-alerts` only: the query took longer than the server's time limit
-            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s) and was cancelled. JSON exception body
-            (`status: 503`); ask for a smaller or simpler area.
+            `nws-alerts` only: the query did not finish within the server's time limit
+            (`NWS_ALERTS_QUERY_TIMEOUT_MS`, default 10 s, time spent waiting for a lock included)
+            and was cancelled. JSON exception body (`status: 503`) and `Retry-After: 5`. The
+            database may only have been busy: try again shortly; a large area that keeps failing
+            needs to be smaller or simpler.
 
   /collections/{collectionId}/items/{featureId}/conditions:
     get:

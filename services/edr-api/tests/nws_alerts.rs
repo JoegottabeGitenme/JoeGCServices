@@ -910,10 +910,14 @@ async fn client_mistakes_are_json_4xx_on_every_route() {
         .await;
     assert_eq!(st, 200);
 
-    // a NUL in the alert id
-    let (st, h, v, _) = e.get(&format!("{c}/items/urn%3Aoid%3A%00x")).await;
-    assert_eq!(st, 400, "{v}");
-    assert_eq!(h["content-type"], "application/json");
+    // a NUL in the alert id, and an id that is not UTF-8 once unescaped (axum refuses that one
+    // before the handler runs, as plain text, unless the handler takes the path as a Result)
+    for id in ["urn%3Aoid%3A%00x", "%FF", "urn%3A%C3%28"] {
+        let (st, h, v, _) = e.get(&format!("{c}/items/{id}")).await;
+        assert_eq!(st, 400, "{id}: {v}");
+        assert_eq!(h["content-type"], "application/json", "{id}");
+        assert_eq!(v["status"], 400, "{id}: {v}");
+    }
 
     // other collections keep their own parameter handling
     let (st, _, _, _) = e.get("/edr/collections/tornado/items?limit=abc").await;
@@ -1417,9 +1421,10 @@ async fn a_read_that_hits_the_time_limit_is_a_503_and_the_service_recovers() {
         assert_eq!(h["content-type"], "application/json", "{r}");
         assert_eq!(v["status"], 503, "{r}: {v}");
         assert!(
-            v["detail"].as_str().unwrap().contains("too expensive"),
+            v["detail"].as_str().unwrap().contains("did not finish"),
             "{r}: {v}"
         );
+        assert_eq!(h["retry-after"], "5", "{r}");
         let took = started.elapsed();
         assert!(
             took >= std::time::Duration::from_millis(250)
