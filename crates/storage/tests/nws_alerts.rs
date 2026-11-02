@@ -2068,3 +2068,318 @@ async fn plan_of(env: &Env, q: &AlertSearch) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+/// A copy of [`timed_alert`] (in force 10:00-18:00) with its own GeoJSON geometry.
+fn alert_with_geometry(id: &str, geometry: Value) -> ParsedAlert {
+    let mut a = timed_alert(id, BIG, at(10, 0), at(10, 0), at(18, 0), &[]);
+    a.geometry_json = Some(geometry.to_string());
+    a
+}
+
+/// NWS splits zones that touch the antimeridian at +-180: the Bering Sea offshore zones are one
+/// polygon on the 171E-180 side (PKZ411) and another on the -180 to 171W side (PKZ412), and an
+/// alert for both is a MultiPolygon with a part on each side.
+async fn dateline_alerts(env: &Env) -> Vec<String> {
+    let polygons: [(&str, [f64; 4]); 9] = [
+        ("pkz411", [171.5, 56.0, 180.0, 59.0]),
+        ("pkz412", [-180.0, 56.0, -171.0, 59.0]),
+        ("adak-w", [172.0, 51.0, 180.0, 54.0]),
+        ("fiji-e", [176.0, -20.0, 180.0, -15.0]),
+        ("fiji-w", [-180.0, -20.0, -175.0, -15.0]),
+        ("florida", [-82.0, 25.0, -80.0, 27.0]),
+        ("pole-0", [0.0, 86.0, 10.0, 89.0]),
+        ("pole-180", [170.0, 86.0, 175.0, 89.0]),
+        ("pole-w", [-100.0, 86.0, -90.0, 89.0]),
+    ];
+    let mut feed: Vec<ParsedAlert> = polygons
+        .iter()
+        .map(|(name, b)| {
+            alert_with_geometry(
+                &format!("urn:test:{name}"),
+                serde_json::from_str(&square(b[0], b[1], b[2], b[3])).unwrap(),
+            )
+        })
+        .collect();
+    // one alert for the union of two zones, split at the line
+    let part = |b: [f64; 4]| {
+        let g: Value = serde_json::from_str(&square(b[0], b[1], b[2], b[3])).unwrap();
+        g["coordinates"].clone()
+    };
+    feed.push(alert_with_geometry(
+        "urn:test:saint-matthew",
+        json!({"type": "MultiPolygon", "coordinates": [
+            part([176.0, 60.0, 180.0, 62.0]), part([-180.0, 60.0, -172.0, 62.0])
+        ]}),
+    ));
+    env.nws
+        .apply_feed(&feed, Some(at(10, 1)), at(10, 1))
+        .await
+        .unwrap();
+    feed.into_iter().map(|a| a.id).collect()
+}
+
+/// Ids the way the database itself answers a distance question, with no index prefilter.
+async fn within_oracle(env: &Env, lon: f64, lat: f64, meters: f64) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM nws_alerts WHERE ST_DWithin(geom::geography, \
+         ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $3) ORDER BY id",
+    )
+    .bind(lon)
+    .bind(lat)
+    .bind(meters)
+    .fetch_all(env.catalog.pool())
+    .await
+    .unwrap()
+}
+
+/// A radius search at the antimeridian misses nothing: alerts on the far side of +-180 used to be
+/// dropped by the planar prefilter before the geodetic distance was ever asked.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_radius_search_finds_alerts_on_both_sides_of_the_antimeridian() {
+    let env = env().await;
+    dateline_alerts(&env).await;
+    let now = at(12, 0);
+    let radius = |lon: f64, lat: f64, km: f64| {
+        search(
+            AlertRegion::Radius {
+                lon,
+                lat,
+                meters: km * 1000.0,
+            },
+            now,
+        )
+    };
+
+    // 3 km from the line, 50 km: PKZ411 holds the centre and PKZ412 starts at -180
+    for (lon, expect) in [
+        (179.95, true),
+        (-179.95, true),
+        (180.0, true),
+        (-180.0, true),
+    ] {
+        let got = ids(&env.nws.search(&radius(lon, 57.5, 50.0)).await.unwrap());
+        assert_eq!(
+            got,
+            vec!["urn:test:pkz411", "urn:test:pkz412"],
+            "centre {lon}: both zones, whichever side the centre is on ({expect})"
+        );
+    }
+    // Adak (-176.64, 51.88) is on the east side; adak-w ends at the line, 231 km west of it
+    let got = ids(&env
+        .nws
+        .search(&radius(-176.64, 51.88, 300.0))
+        .await
+        .unwrap());
+    assert_eq!(got, vec!["urn:test:adak-w"]);
+    // 100 km is not far enough for it
+    let got = ids(&env
+        .nws
+        .search(&radius(-176.64, 51.88, 100.0))
+        .await
+        .unwrap());
+    assert!(got.is_empty(), "{got:?}");
+    // the union alert with a part on each side is found from either
+    for lon in [179.0, -179.0] {
+        let got = ids(&env.nws.search(&radius(lon, 61.0, 20.0)).await.unwrap());
+        assert_eq!(got, vec!["urn:test:saint-matthew"], "{lon}");
+    }
+    // the southern hemisphere too
+    let got = ids(&env.nws.search(&radius(-179.9, -17.0, 30.0)).await.unwrap());
+    assert_eq!(got, vec!["urn:test:fiji-e", "urn:test:fiji-w"]);
+    // and nothing that is not within the radius is added
+    assert!(env
+        .nws
+        .search(&radius(179.95, 40.0, 50.0))
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Against the database's own distance, for centres and radii all around the line, in the
+    // far south, and at the poles.
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let mut next = |lo: f64, hi: f64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        lo + (state >> 11) as f64 / (1u64 << 53) as f64 * (hi - lo)
+    };
+    let (mut both_sides, mut found) = (0, 0);
+    for i in 0..400 {
+        let lon = if i % 2 == 0 {
+            next(165.0, 180.0)
+        } else {
+            next(-180.0, -160.0)
+        };
+        let lat = match i % 4 {
+            0 => next(-25.0, -10.0),
+            1 => next(48.0, 64.0),
+            2 => next(80.0, 90.0),
+            _ => next(-60.0, 70.0),
+        };
+        let km = [1.0, 10.0, 50.0, 100.0, 300.0, 500.0][i % 6];
+        let want = within_oracle(&env, lon, lat, km * 1000.0).await;
+        let got = ids(&env.nws.search(&radius(lon, lat, km)).await.unwrap());
+        assert_eq!(got, want, "({lon}, {lat}) within {km} km");
+        found += !want.is_empty() as usize;
+        both_sides += (want
+            .iter()
+            .any(|i| i.contains("pkz411") || i.contains("adak-w"))
+            && want.iter().any(|i| i.contains("pkz412"))) as usize;
+    }
+    assert!(
+        found > 100 && both_sides > 5,
+        "{found} {both_sides}: the sweep should hit things"
+    );
+
+    // and the pole: a circle around it reaches every longitude
+    let want = within_oracle(&env, 0.0, 89.9, 500_000.0).await;
+    assert!(
+        want.contains(&"urn:test:pole-180".to_string())
+            && want.contains(&"urn:test:pole-w".to_string())
+    );
+    let got = ids(&env.nws.search(&radius(0.0, 89.9, 500.0)).await.unwrap());
+    assert_eq!(got, want);
+}
+
+/// A bbox with west > east is the two boxes either side of +-180.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_bbox_with_west_above_east_covers_both_sides_of_the_antimeridian() {
+    let env = env().await;
+    dateline_alerts(&env).await;
+    let now = at(12, 0);
+    let bbox = |w, s, e, n| search(AlertRegion::Bbox([w, s, e, n]), now);
+
+    let got = ids(&env
+        .nws
+        .search(&bbox(170.0, 50.0, -170.0, 59.5))
+        .await
+        .unwrap());
+    assert_eq!(
+        got,
+        vec!["urn:test:adak-w", "urn:test:pkz411", "urn:test:pkz412"],
+        "both sides, not Florida, not the far-south zones, not the 60-62N union"
+    );
+    // each half alone sees only its side; the ordinary boxes are unchanged
+    assert_eq!(
+        ids(&env
+            .nws
+            .search(&bbox(170.0, 50.0, 180.0, 59.5))
+            .await
+            .unwrap()),
+        vec!["urn:test:adak-w", "urn:test:pkz411"]
+    );
+    assert_eq!(
+        ids(&env
+            .nws
+            .search(&bbox(-180.0, 50.0, -170.0, 59.5))
+            .await
+            .unwrap()),
+        vec!["urn:test:pkz412"]
+    );
+    // the union alert is returned once, whichever parts the box meets
+    assert_eq!(
+        ids(&env
+            .nws
+            .search(&bbox(178.0, 59.5, -178.0, 63.0))
+            .await
+            .unwrap()),
+        vec!["urn:test:saint-matthew"]
+    );
+    assert_eq!(
+        env.nws
+            .search(&bbox(170.0, 55.0, -170.0, 62.0))
+            .await
+            .unwrap()
+            .iter()
+            .filter(|a| a.id == "urn:test:saint-matthew")
+            .count(),
+        1
+    );
+    // a box that crosses the line in the other hemisphere
+    assert_eq!(
+        ids(&env
+            .nws
+            .search(&bbox(170.0, -30.0, -170.0, -10.0))
+            .await
+            .unwrap()),
+        vec!["urn:test:fiji-e", "urn:test:fiji-w"]
+    );
+
+    // the database's own answer for random boxes
+    let mut state = 0xD1B5_4A32_D192_ED03u64;
+    let mut next = |lo: f64, hi: f64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        lo + (state >> 11) as f64 / (1u64 << 53) as f64 * (hi - lo)
+    };
+    for _ in 0..100 {
+        let (w, e) = (next(150.0, 180.0), next(-180.0, -150.0));
+        let (s, n) = {
+            let a = next(-30.0, 80.0);
+            (a, a + next(1.0, 30.0))
+        };
+        let want: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM nws_alerts WHERE ST_Intersects(geom, ST_MakeEnvelope($1, $2, 180, $4, 4326)) \
+             OR ST_Intersects(geom, ST_MakeEnvelope(-180, $2, $3, $4, 4326)) ORDER BY id",
+        )
+        .bind(w)
+        .bind(s)
+        .bind(e)
+        .bind(n)
+        .fetch_all(env.catalog.pool())
+        .await
+        .unwrap();
+        let got = ids(&env.nws.search(&bbox(w, s, e, n)).await.unwrap());
+        assert_eq!(got, want, "bbox {w},{s},{e},{n}");
+    }
+
+    // both still use the GiST index (one bitmap-OR over its two arms), as the planner sees them on
+    // a table of some size rather than the dozen rows above
+    let mut state = 0x1234_5678_9ABC_DEF1u64;
+    let mut next = |lo: f64, hi: f64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        lo + (state >> 11) as f64 / (1u64 << 53) as f64 * (hi - lo)
+    };
+    let filler: Vec<ParsedAlert> = (0..1500)
+        .map(|i| {
+            let (x, y) = (next(-170.0, 170.0), next(-60.0, 70.0));
+            timed_alert(
+                &format!("urn:test:filler-{i}"),
+                [x, y, x + 0.5, y + 0.5],
+                at(10, 0),
+                at(10, 0),
+                at(18, 0),
+                &[],
+            )
+        })
+        .collect();
+    env.nws
+        .apply_feed(&filler, Some(at(10, 2)), at(10, 2))
+        .await
+        .unwrap();
+    sqlx::query("ANALYZE nws_alerts")
+        .execute(env.catalog.pool())
+        .await
+        .unwrap();
+    for region in [
+        AlertRegion::Bbox([170.0, 50.0, -170.0, 60.0]),
+        AlertRegion::Radius {
+            lon: 179.95,
+            lat: 57.5,
+            meters: 50_000.0,
+        },
+    ] {
+        let plan = plan_of(&env, &search(region.clone(), now)).await;
+        assert!(
+            plan.contains("idx_nws_alerts_geom_live"),
+            "{region:?}\n{plan}"
+        );
+        assert!(plan.contains("BitmapOr"), "{region:?}\n{plan}");
+        assert!(!plan.contains("Seq Scan"), "{region:?}\n{plan}");
+    }
+}

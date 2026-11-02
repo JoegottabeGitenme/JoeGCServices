@@ -7,7 +7,7 @@ it as GeoJSON. Config: `config/edr/nws-alerts.yaml`; code: `services/edr-api/src
 | Request | Use |
 |---|---|
 | `GET /edr/collections/nws-alerts/position?coords=POINT(lon lat)` | **Alerts in force at my location**, worst first |
-| `GET /edr/collections/nws-alerts/items?bbox=w,s,e,n` | Alerts in the map view (geometry on by default) |
+| `GET /edr/collections/nws-alerts/items?bbox=w,s,e,n` | Alerts in the map view (geometry on by default); `bbox=170,50,-170,60` (west > east) crosses the antimeridian |
 | `GET /edr/collections/nws-alerts/items/{id}` | One alert in full (id is a URN; raw or `%3A`-encoded) |
 | `GET /edr/collections/nws-alerts/area?coords=POLYGON((...))` | Alerts intersecting a polygon |
 | `GET /edr/collections/nws-alerts/radius?coords=POINT(lon lat)&within=50&within-units=km` | Alerts within a distance (max 500 km) |
@@ -53,6 +53,23 @@ default window the last 24 h; superseded messages hidden unless `include_superse
 
 A `+` in a UTC offset has to be sent as `%2B` (`datetime=2026-11-01T18:00:00%2B00:00`); a bare `+`
 reaches the server as a space, and the datetime is refused.
+
+### The antimeridian
+
+NWS draws a zone that touches 180 as two polygons, one on each side (the Bering Sea offshore zones
+are 171E to 180 and 180 to 171W), and an alert for both is a MultiPolygon with a part each side.
+So queries that span the line find alerts on both sides:
+
+- `/items?bbox=w,s,e,n` with **west greater than east** is a box across the antimeridian, as in
+  OGC API Features: `bbox=170,50,-170,60` is the 20 degree wide band from 170E over the line to
+  170W (not a 340 degree one). It is the two boxes `170..180` and `-180..-170`; an alert with a part
+  in each is returned once. A box with no width (`west == east`) or no height is a `400`.
+- `/radius` measures geodetic distance, so `coords=POINT(179.95 57.5)&within=50` returns the alerts
+  3 km away on the far side of the line as well as the ones at the centre, from either side
+  (`180` and `-180` are the same place), and a circle that reaches a pole sees every longitude.
+- `/area` still reads its polygon as planar lon/lat and refuses one that crosses the line (see
+  below): use `bbox` or `/radius` for a dateline area, or two `/area` requests, one each side, and
+  join the answers by `id`.
 
 ### `datetime` instants
 

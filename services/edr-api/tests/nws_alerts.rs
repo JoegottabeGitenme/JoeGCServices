@@ -592,6 +592,99 @@ async fn only_geojson_is_offered_and_asking_for_anything_else_is_refused() {
     assert_eq!(st, 406);
 }
 
+/// NWS splits the zones it draws over the antimeridian: one polygon east of 171E up to 180, one from
+/// -180 to 171W. A bbox written west > east (170,50,-170,60) and a radius that reaches over the
+/// line find both; they used to be a 400 and a miss.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn bbox_and_radius_queries_cross_the_antimeridian() {
+    let e = env().await;
+    // two copies of the fixture's Severe Thunderstorm Warning, one polygon each side of the line
+    let template = e
+        .alerts
+        .iter()
+        .find(|a| a.event == "Severe Thunderstorm Warning")
+        .unwrap();
+    let on_side = |id: &str, w: f64, e: f64| {
+        let mut a = template.clone();
+        a.id = format!("urn:test:{id}");
+        a.geometry_json = Some(square(w, 56.0, e, 59.0));
+        a
+    };
+    let feed = vec![
+        on_side("pkz411", 171.5, 180.0),
+        on_side("pkz412", -180.0, -171.0),
+    ];
+    e.nws.apply_feed(&feed, Some(t0()), t0()).await.unwrap();
+    let c = "/edr/collections/nws-alerts";
+    let ids_of = |v: &Value| -> Vec<String> {
+        let mut x: Vec<String> = v["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["id"].as_str().unwrap().to_string())
+            .collect();
+        x.sort();
+        x
+    };
+    let both = vec!["urn:test:pkz411", "urn:test:pkz412"];
+
+    for qs in ["bbox=170,50,-170,60", "bbox=171,56,-171,59&geometry=false"] {
+        let (st, _, v, _) = e.get(&format!("{c}/items?{qs}&datetime={AT}")).await;
+        assert_eq!(st, 200, "{qs}: {v}");
+        assert_eq!(ids_of(&v), both, "{qs}");
+        assert_eq!(v["numberReturned"], 2);
+    }
+    // geometry comes back for both
+    let (_, _, v, _) = e
+        .get(&format!("{c}/items?bbox=170,50,-170,60&datetime={AT}"))
+        .await;
+    for f in v["features"].as_array().unwrap() {
+        assert!(f["geometry"]["coordinates"].is_array(), "{f}");
+    }
+    // each half alone, and a box the ordinary way round that misses both
+    let (_, _, v, _) = e
+        .get(&format!("{c}/items?bbox=170,50,180,60&datetime={AT}"))
+        .await;
+    assert_eq!(ids_of(&v), vec!["urn:test:pkz411"]);
+    let (_, _, v, _) = e
+        .get(&format!("{c}/items?bbox=-180,50,-170,60&datetime={AT}"))
+        .await;
+    assert_eq!(ids_of(&v), vec!["urn:test:pkz412"]);
+    let (_, _, v, _) = e
+        .get(&format!("{c}/items?bbox=-170,50,170,60&datetime={AT}"))
+        .await;
+    assert!(ids_of(&v).is_empty(), "{v}");
+    // no width or no height is still a 400, with the antimeridian convention in the reason
+    for bad in ["170,50,170,60", "170,60,-170,50", "170,50,-170,50"] {
+        let (st, h, v, _) = e.get(&format!("{c}/items?bbox={bad}")).await;
+        assert_eq!(st, 400, "{bad}: {v}");
+        assert_eq!(h["content-type"], "application/json");
+        assert!(
+            v["detail"].as_str().unwrap().contains("antimeridian"),
+            "{v}"
+        );
+    }
+
+    // 3 km from the line, 50 km: from either side both zones, with the distance geodetic
+    for lon in ["179.95", "-179.95", "180", "-180"] {
+        let (st, _, v, _) = e
+            .get(&format!(
+                "{c}/radius?coords=POINT({lon}%2057.5)&within=50&within-units=km&datetime={AT}"
+            ))
+            .await;
+        assert_eq!(st, 200, "{lon}: {v}");
+        assert_eq!(ids_of(&v), both, "centre {lon}");
+    }
+    // 300 km from Adak's longitude, far to the south: neither (the zones start at 56N)
+    let (_, _, v, _) = e
+        .get(&format!(
+            "{c}/radius?coords=POINT(-176.64%2051.88)&within=300&datetime={AT}"
+        ))
+        .await;
+    assert!(ids_of(&v).is_empty(), "{v}");
+}
+
 /// Client mistakes are 4xx with the JSON exception body on every alert route: never a 500 (a NUL
 /// in a filter cannot even be sent to Postgres), never axum's plain-text rejection.
 #[tokio::test]
