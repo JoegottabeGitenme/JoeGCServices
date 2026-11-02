@@ -120,13 +120,24 @@ paths:
         **`nws-alerts`**: the NWS alerts in force at the point, most severe first, as a compact
         GeoJSON FeatureCollection (`geometry` null unless `geometry=true`). Extra parameters:
         `severity=Severe,Extreme` and `event=Tornado Warning,...` (comma lists, case-insensitive),
-        `geometry=true|false`; `datetime` must be a single instant (alerts active at that time).
-        Only CAP `status: Actual` alerts are returned; `include_non_actual=true` adds the Test,
+        `geometry=true|false`; `datetime` must be a single instant. Only CAP `status: Actual`
+        alerts are returned; `include_non_actual=true` adds the Test,
         Exercise, System and Draft ones (every feature carries `cap_status`).
         Alerts whose onset is still ahead are included with `status: upcoming`. The body has a
         top-level `meta` (`source`, `last_success_at`, `data_age_seconds`, `stale`).
         `/area` and `/radius` answer the same way for a polygon / `within` distance. See
         docs/nws-alerts-api.md.
+
+        **`datetime` on `nws-alerts`** (`/position`, `/area`, `/radius` and `/items` with
+        `status=active`): without it, or with `datetime=now`, the alerts in force now. With an instant, the alerts that
+        were in force at that moment: issued by then (`effective`, else `sent`), not yet replaced
+        by a newer message (over from the moment the replacement was issued), not yet ended (the
+        poll that stopped listing it) and before their end time (`ends`, else `expires`;
+        exclusive). An alert issued after the instant is not returned; one since superseded or
+        ended is, if it was in force then. Each feature's `status` is as of the instant:
+        `upcoming` while its onset is still ahead, otherwise `active`. History goes back only as
+        far as retention keeps ended and replaced alerts (7 days by default); an older instant
+        returns what is still stored, not an error.
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -177,7 +188,8 @@ paths:
         you, and must be a simple ring: at most 500 vertices, no inner rings (holes), no two
         edges crossing, touching or overlapping, no edge spanning more than 180 degrees of
         longitude (a polygon over the antimeridian is a 400: split it into two requests), and
-        not all on one line. Anything else is a 400 with the reason. See docs/nws-alerts-api.md.
+        not all on one line. Anything else is a 400 with the reason. `datetime` is read as on
+        `/position`. See docs/nws-alerts-api.md.
       parameters:
         - $ref: '#/components/parameters/collectionId'
         - $ref: '#/components/parameters/coords'
@@ -547,12 +559,14 @@ paths:
       description: |
         `nws-alerts` only: one alert in any state (active, upcoming, ended, superseded) with all
         text (`description`, `instruction`, raw originals), `sections`, `vtec`, `parameters`,
-        `ugc`, `zones`, `references` and lifecycle (`superseded_by`, `ended_at`, `first_seen_at`,
-        `last_seen_at`). `featureId` is the NWS URN (`urn:oid:2.49.0.1.840.0....`), URL-encoded
+        `ugc`, `zones`, `references` and lifecycle (`superseded_by`, `superseded_at`, `ended_at`,
+        `first_seen_at`, `last_seen_at`). `featureId` is the NWS URN (`urn:oid:2.49.0.1.840.0....`), URL-encoded
         or raw. `geometry=false` omits the geometry.
 
-        `/items` for `nws-alerts` takes `bbox`, `datetime` (instant: active then; interval needs
-        `status=all`), `status=active|all` (default active), `severity`, `event`, `limit`
+        `/items` for `nws-alerts` takes `bbox`, `datetime` (instant: the alerts in force then, as
+        on `/position`; interval needs `status=all`), `status=active|all` (default active),
+        `include_superseded=true` (`status=all` only: also messages a newer one replaced),
+        `severity`, `event`, `limit`
         (default 500, max 2000; `truncated: true` when cut), `geometry` (default true),
         `simplify` (degrees; default scales with the bbox, `0` disables) and
         `include_non_actual=true` (also Test/Exercise/System/Draft alerts; default Actual only).

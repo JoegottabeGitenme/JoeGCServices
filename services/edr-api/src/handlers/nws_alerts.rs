@@ -109,11 +109,12 @@ pub fn trim_text(s: &str, max: usize) -> String {
 ///
 /// NWS lists an alert as active from the moment it is issued, even when the
 /// hazard starts hours later, so `upcoming` is "onset (else effective) is still
-/// ahead".
+/// ahead". Replaced and ended count only once they had happened by `now`, so an
+/// alert read at a past instant shows what it was then, not what became of it.
 pub fn alert_status(a: &StoredAlert, now: DateTime<Utc>) -> &'static str {
-    if a.superseded_by.is_some() {
+    if a.superseded_by.is_some() && a.superseded_at.is_none_or(|s| s <= now) {
         "superseded"
-    } else if a.ended_at.is_some() || a.end_time.is_some_and(|e| e <= now) {
+    } else if a.ended_at.is_some_and(|e| e <= now) || a.end_time.is_some_and(|e| e <= now) {
         "ended"
     } else if a.onset.or(a.effective).is_some_and(|s| s > now) {
         "upcoming"
@@ -291,6 +292,7 @@ pub fn full_feature(a: &StoredAlert, now: DateTime<Utc>, base_url: &str) -> Valu
     p.insert("is_marine".into(), json!(a.is_marine));
     p.insert("references".into(), json!(a.references_ids));
     p.insert("superseded_by".into(), json!(a.superseded_by));
+    p.insert("superseded_at".into(), opt_ts(a.superseded_at));
     p.insert("ended_at".into(), opt_ts(a.ended_at));
     p.insert("first_seen_at".into(), json!(ts(a.first_seen_at)));
     p.insert("last_seen_at".into(), json!(ts(a.last_seen_at)));
@@ -917,12 +919,25 @@ fn base_search(
     }
 }
 
-/// An instant-or-nothing `datetime` for the "active at" queries.
-fn active_time(q: &NwsQuery) -> Result<DateTime<Utc>, String> {
+/// Scope an "active at" search to an explicit `datetime`: the alerts in force at that instant,
+/// each labelled as of it. No instant leaves the live set at the wall clock, answered from the
+/// lifecycle flags on the indexed fast path.
+fn at_instant(search: AlertSearch, instant: Option<DateTime<Utc>>) -> AlertSearch {
+    match instant {
+        Some(t) => search.in_force_at(t),
+        None => search,
+    }
+}
+
+/// The instant of an instant-or-nothing `datetime` for the "active at" queries; `None` is the
+/// live set at the wall clock.
+fn active_time(q: &NwsQuery) -> Result<Option<DateTime<Utc>>, String> {
     let wall = Utc::now();
     match parse_when(q.datetime.as_deref(), wall)? {
-        When::None => Ok(wall),
-        When::Instant(t) => Ok(t),
+        When::None => Ok(None),
+        // `datetime=now` is the wall clock, not an instant of its own
+        When::Instant(t) if t == wall => Ok(None),
+        When::Instant(t) => Ok(Some(t)),
         When::Interval(..) => Err(
             "datetime must be a single instant here (alerts active at that time), not an interval"
                 .into(),
@@ -940,7 +955,7 @@ pub async fn position(state: Arc<AppState>, q: NwsQuery) -> Response {
         Ok(p) => p,
         Err(e) => return bad_request(e),
     };
-    let now = match active_time(&q) {
+    let at = match active_time(&q) {
         Ok(t) => t,
         Err(e) => return bad_request(e),
     };
@@ -955,12 +970,12 @@ pub async fn position(state: Arc<AppState>, q: NwsQuery) -> Response {
     let search = base_search(
         AlertRegion::Point { lon, lat },
         &q,
-        now,
+        Utc::now(),
         NEARBY_LIMIT,
         geometry,
         include_non_actual,
     );
-    respond(&state, search, vec![]).await
+    respond(&state, at_instant(search, at), vec![]).await
 }
 
 /// `GET /collections/nws-alerts/area?coords=POLYGON((...))`.
@@ -986,7 +1001,7 @@ pub async fn radius(state: Arc<AppState>, q: NwsQuery) -> Response {
 }
 
 async fn nearby(state: Arc<AppState>, q: NwsQuery, region: AlertRegion) -> Response {
-    let now = match active_time(&q) {
+    let at = match active_time(&q) {
         Ok(t) => t,
         Err(e) => return bad_request(e),
     };
@@ -1002,9 +1017,10 @@ async fn nearby(state: Arc<AppState>, q: NwsQuery, region: AlertRegion) -> Respo
         .limit
         .unwrap_or(DEFAULT_ITEMS_LIMIT)
         .clamp(1, MAX_ITEMS_LIMIT);
+    let search = base_search(region, &q, Utc::now(), limit, geometry, include_non_actual);
     respond(
         &state,
-        base_search(region, &q, now, limit, geometry, include_non_actual),
+        at_instant(search, at),
         vec![("limit", json!(limit))],
     )
     .await
@@ -1051,35 +1067,43 @@ pub async fn items(state: Arc<AppState>, q: NwsQuery) -> Response {
         .unwrap_or(DEFAULT_ITEMS_LIMIT)
         .clamp(1, MAX_ITEMS_LIMIT);
 
-    let (now, window) = match (all, when) {
-        (false, When::None) => (wall, None),
-        (false, When::Instant(t)) => (t, None),
+    let mut search = base_search(
+        AlertRegion::Bbox(bbox),
+        &q,
+        wall,
+        limit,
+        geometry,
+        include_non_actual,
+    );
+    search.simplify = Some(q.simplify.unwrap_or_else(|| default_simplify(&bbox)));
+    match (all, when) {
+        (false, When::None) => {}
+        // `datetime=now` is the wall clock, not an instant of its own
+        (false, When::Instant(t)) if t == wall => {}
+        // in force then, whatever became of it since (include_superseded does not apply)
+        (false, When::Instant(t)) => search = search.in_force_at(t),
         (false, When::Interval(..)) => {
             return bad_request(
                 "status=active takes a single instant; use status=all for an interval",
             )
         }
-        (true, When::None) => (wall, Some((wall - Duration::hours(24), wall))),
-        (true, When::Instant(t)) => (t, Some((t, t))),
-        (true, When::Interval(a, b)) => (
-            wall,
-            Some((
-                a.unwrap_or(wall - Duration::days(365)),
-                b.unwrap_or(wall + Duration::days(365)),
-            )),
-        ),
-    };
-    let mut search = base_search(
-        AlertRegion::Bbox(bbox),
-        &q,
-        now,
-        limit,
-        geometry,
-        include_non_actual,
-    );
-    search.window = window;
-    search.include_superseded = include_superseded;
-    search.simplify = Some(q.simplify.unwrap_or_else(|| default_simplify(&bbox)));
+        (true, when) => {
+            let (now, window) = match when {
+                When::None => (wall, (wall - Duration::hours(24), wall)),
+                When::Instant(t) => (t, (t, t)),
+                When::Interval(a, b) => (
+                    wall,
+                    (
+                        a.unwrap_or(wall - Duration::days(365)),
+                        b.unwrap_or(wall + Duration::days(365)),
+                    ),
+                ),
+            };
+            search.now = now;
+            search.window = Some(window);
+            search.include_superseded = include_superseded;
+        }
+    }
     respond(&state, search, vec![("limit", json!(limit))]).await
 }
 
@@ -1227,6 +1251,7 @@ mod tests {
             color: p.color.clone(),
             references_ids: p.references.clone(),
             superseded_by: None,
+            superseded_at: None,
             ended_at: None,
             geometry_source: "polygon".into(),
             first_seen_at: now,
@@ -1251,7 +1276,6 @@ mod tests {
             "urn%3Aoid%3A2.49.0.1.840.0.abc.001.1"
         );
         assert_eq!(encode_id("a/b c"), "a%2Fb%20c");
-            superseded_at: None,
     }
 
     #[test]
@@ -1412,6 +1436,19 @@ mod tests {
         assert_eq!(alert_status(&a, t0()), "ended");
         a.superseded_by = Some("x".into());
         assert_eq!(alert_status(&a, t0()), "superseded");
+        // read at a past instant, replaced / ended later is not yet replaced / ended
+        a.superseded_at = Some(t0());
+        a.ended_at = Some(t0() + Duration::minutes(5));
+        assert_eq!(alert_status(&a, t0() - Duration::seconds(1)), "upcoming");
+        assert_eq!(
+            alert_status(&a, t0()),
+            "superseded",
+            "from the instant it was replaced"
+        );
+        a.superseded_by = None;
+        a.superseded_at = None;
+        assert_eq!(alert_status(&a, t0() + Duration::minutes(4)), "upcoming");
+        assert_eq!(alert_status(&a, t0() + Duration::minutes(5)), "ended");
         // no onset: effective decides
         let mut b = by_event("Severe Thunderstorm Warning");
         b.onset = None;
@@ -1813,5 +1850,22 @@ mod tests {
             ..Default::default()
         };
         assert!(active_time(&q).is_err());
+    }
+
+    #[test]
+    fn only_an_explicit_instant_leaves_the_live_set() {
+        let q = |dt: Option<&str>| NwsQuery {
+            datetime: dt.map(str::to_string),
+            ..Default::default()
+        };
+        // no datetime, an empty one and `now` are all the wall clock: the live, indexed read
+        for live in [None, Some(""), Some("now"), Some(" NOW ")] {
+            assert_eq!(active_time(&q(live)), Ok(None), "{live:?}");
+        }
+        assert_eq!(
+            active_time(&q(Some("2026-11-01T18:00:00-06:00"))),
+            Ok(Some(Utc.with_ymd_and_hms(2026, 11, 2, 0, 0, 0).unwrap()))
+        );
+        assert!(active_time(&q(Some("yesterday"))).is_err());
     }
 }

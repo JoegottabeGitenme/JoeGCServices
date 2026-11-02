@@ -15,11 +15,46 @@ it as GeoJSON. Config: `config/edr/nws-alerts.yaml`; code: `services/edr-api/src
 
 Common parameters: `severity=Severe,Extreme`, `event=Tornado Warning,Flash Flood Warning` (comma
 lists, case-insensitive), `geometry=true|false` (default: false on position/area/radius, true on
-items), `datetime=<instant>` (alerts active at that time; default now), `simplify=<degrees>` on
+items), `datetime=<instant>` (the alerts in force at that moment; default now, see
+[`datetime` instants](#datetime-instants)), `simplify=<degrees>` on
 `/items` (`0` disables; default scales with the bbox so a CONUS view stays small).
 `/items` also takes `status=active|all` (with `all`, `datetime=from/to` returns history,
 default window the last 24 h; superseded messages hidden unless `include_superseded=true`),
 `limit` (default 500, max 2000; `"truncated": true` when cut).
+
+### `datetime` instants
+
+`datetime=<instant>` on `/position`, `/area`, `/radius` and `/items` (`status=active`) answers
+"what was in force at that moment", from each message's own history rather than from today's
+flags. A message is returned when, at the instant:
+
+- it had been issued (`effective`, else `sent`, at or before the instant);
+- no newer message had replaced it. An update, or the cancellation of the alert, replaces it from
+  the moment that message was issued, not from the later poll that noticed: a warning replaced at
+  11:00 by an update with a smaller polygon is still returned at 10:59 for a point only its old
+  polygon covered, and not at 11:00;
+- it had not ended: the poll that first no longer listed it had not happened yet;
+- its end time (`ends`, else `expires`) had not been reached. The end is exclusive: an alert
+  ending at 18:00 is not in force at 18:00.
+
+So an alert issued after the instant is never returned, and one that was in force then is returned
+even if it has been replaced or has ended since.
+
+Each feature's `status` is read at the instant too: `upcoming` while its onset (else effective) is
+still ahead of it, otherwise `active`. `ended` and `superseded` do not occur, since a message that
+had ended or been replaced by then is not returned. `include_superseded` does not apply to
+`status=active`; `status=all` with an instant is the same window and the same labels, but hides a
+message since replaced unless `include_superseded=true`.
+
+No `datetime`, or `datetime=now`, is the live set: the alerts in force right now, read from the
+current lifecycle flags (the fast path the apps use). A future instant returns what is in force
+now and will still be at that instant; replacements NWS has not issued yet are not known.
+
+**History is as deep as retention.** An alert is kept for 7 days after it ended, expired or was
+replaced (`NWS_ALERTS_RETENTION_HOURS` on the ingester, default 168, minimum 24). An older instant
+is not an error: it returns the alerts still stored that were in force then, so the answer is
+incomplete, and empty once everything of that time has been deleted. `meta` describes the feed's
+freshness now, not at the instant.
 
 **`/area` polygons.** `coords` is one `POLYGON((lon lat, lon lat, ...))` ring in either winding
 order (lon -180..180, lat -90..90; the closing vertex is optional). Rings PostGIS would have to
@@ -71,13 +106,15 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
 
 - `status`: `active`, `upcoming` (issued, hazard starts later: label it "Starts 6 PM"), `ended`,
   `superseded` (a newer message replaced it; only seen via `/items/{id}` or `include_superseded`).
-  This is the lifecycle status; the CAP one (`Actual`, `Test`, ...) is `cap_status`.
+  As of now, or as of the request's `datetime` instant (see above). This is the lifecycle status;
+  the CAP one (`Actual`, `Test`, ...) is `cap_status`.
 - `significance`: `warning` / `watch` / `advisory` / `statement` / `other`. Group updates of one
   event by `vtec_event` (NEW, CON, EXT, UPG share it).
 - `summary` has only the keys present (`what`, `where`, `when`, `impacts`, `hazard`, `source`,
   `impact`), trimmed to 500 characters; `instruction` to 600 (`…`). `/items/{id}` adds the untrimmed
   text, `description`, `description_raw`, `instruction_raw`, `sections`, `vtec`, `parameters`, `ugc`,
-  `zones`, `references`, `superseded_by`, `ended_at`, `first_seen_at`, `last_seen_at`.
+  `zones`, `references`, `superseded_by`, `superseded_at`, `ended_at`, `first_seen_at`,
+  `last_seen_at`.
 - An empty `features` array is a valid "no alerts" answer **only when `meta.stale` is false**.
   `stale` is true when the last successful poll is over 5 minutes old (or never happened);
   `meta.last_error` appears when a poll has failed since the last success.
@@ -98,6 +135,9 @@ A FeatureCollection with `numberReturned`, `timeStamp` and `meta`:
   listing it, a newer message replaces it, or it is a cancellation (`messageType: Cancel` or a VTEC
   `CAN` action). A VTEC `EXP` message ("will expire at ...") is **not** over when it arrives: it
   stays in force until its end time.
+- `superseded_at` (on `/items/{id}`) is when a replacement was issued, never later than the poll
+  that first showed it; `ended_at` is the poll that stopped listing the alert. Both feed the
+  `datetime` instants above.
 - The ingester ignores a feed whose own `updated` stamp is older than the one it already applied
   (NWS is behind a CDN and a lagging node can serve a stale copy): the poll counts for
   `meta.last_success_at`, but nothing in it changes an alert, so a stale copy cannot end alerts
