@@ -335,6 +335,25 @@ mod tests {
     }
 
     #[test]
+    fn avalanche_advisory_labels_written_without_a_space_are_sections() {
+        let all = parsed();
+        let a = by_event(&all, "Avalanche Advisory")[0];
+        assert!(a.description.as_deref().unwrap().contains("\n*WHAT..."));
+        for k in ["what", "where", "when", "impacts", "precautionary_actions"] {
+            assert!(a.sections[k].is_string(), "{k} in {}", a.sections);
+        }
+        assert_eq!(
+            a.sections["what"],
+            "Avalanche conditions are dangerous above treeline."
+        );
+        // the preamble is all that is left over
+        assert_eq!(a.sections["narrative"].as_array().unwrap().len(), 2);
+        assert_eq!(a.color, "#CD853F");
+        assert!(a.ends.is_none(), "NWS gave no `ends` for it");
+        assert!(a.expires.is_some());
+    }
+
+    #[test]
     fn county_ugc_alert() {
         let all = parsed();
         let t = by_event(&all, "Test Message")[0];
