@@ -64,6 +64,11 @@ fn zone(key: &str, geom: String) -> ZoneRecord {
 }
 
 async fn env() -> Env {
+    env_with_read_timeout(None).await
+}
+
+/// `env()` whose alert reads run under a database time limit, like the service's own.
+async fn env_with_read_timeout(read_timeout: Option<std::time::Duration>) -> Env {
     let (url, minio, infra) = match std::env::var("NWS_TEST_DATABASE_URL") {
         Ok(u) => (u, "http://127.0.0.1:1".to_string(), None),
         Err(_) => {
@@ -103,7 +108,10 @@ async fn env() -> Env {
         linear_feature_catalog: Arc::new(LinearFeatureCatalog::new(catalog.pool_clone())),
         segment_conditions_catalog: Arc::new(SegmentConditionsCatalog::new(catalog.pool_clone())),
         lightning_catalog: Arc::new(LightningCatalog::new(catalog.pool_clone())),
-        nws_alert_catalog: Arc::new(NwsAlertCatalog::new(catalog.pool_clone())),
+        nws_alert_catalog: Arc::new(match read_timeout {
+            Some(t) => NwsAlertCatalog::new(catalog.pool_clone()).with_read_timeout(t),
+            None => NwsAlertCatalog::new(catalog.pool_clone()),
+        }),
         collections_snapshot: Arc::new(edr_api::snapshot_cache::SnapshotCache::new(
             std::time::Duration::from_secs(60),
         )),
@@ -784,5 +792,73 @@ async fn area_rejects_rings_that_are_expensive_or_ambiguous_and_answers_ordinary
             events(&v).contains(&"Winter Storm Warning".to_string()),
             "{coords}"
         );
+    }
+}
+
+/// A read that the database cancels at its time limit is a 503 with a JSON body on every route
+/// that reads alerts; once the contention is gone the same requests work, so the limit neither
+/// broke the pool nor stuck to a connection.
+#[tokio::test]
+#[ignore = "requires docker (PostGIS)"]
+async fn a_read_that_hits_the_time_limit_is_a_503_and_the_service_recovers() {
+    let e = env_with_read_timeout(Some(std::time::Duration::from_millis(300))).await;
+    e.load().await;
+    let sps = handlers::nws_alerts::encode_id(&e.id("Special Weather Statement"));
+    let routes = vec![
+        format!("/edr/collections/nws-alerts/position?coords=-107,37.5&datetime={AT}"),
+        format!("/edr/collections/nws-alerts/area?coords=POLYGON((-108%2037,-106%2037,-106%2038.5,-108%2038.5,-108%2037))&datetime={AT}"),
+        format!("/edr/collections/nws-alerts/radius?coords=POINT(-107%2037.5)&within=50&datetime={AT}"),
+        format!("/edr/collections/nws-alerts/items?bbox=-108,36,-106,39&datetime={AT}"),
+        format!("/edr/collections/nws-alerts/items/{sps}"),
+    ];
+    for r in &routes {
+        let (st, _, v, _) = e.get(r).await;
+        assert_eq!(st, 200, "{r}: {v}");
+    }
+
+    // Another session holds the alert tables exclusively, so every read queues until the limit.
+    let mut holder = e.catalog.pool().begin().await.unwrap();
+    sqlx::query("LOCK TABLE nws_alerts, nws_alerts_status IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    for r in &routes {
+        let started = std::time::Instant::now();
+        let (st, h, v, _) = e.get(r).await;
+        assert_eq!(st, 503, "{r}: {v}");
+        assert_eq!(h["content-type"], "application/json", "{r}");
+        assert_eq!(v["status"], 503, "{r}: {v}");
+        assert!(
+            v["detail"].as_str().unwrap().contains("too expensive"),
+            "{r}: {v}"
+        );
+        let took = started.elapsed();
+        assert!(
+            took >= std::time::Duration::from_millis(250)
+                && took < std::time::Duration::from_secs(5),
+            "{r}: {took:?}"
+        );
+    }
+    // The collection document degrades to "no poll known" instead of failing.
+    let (st, _, c, _) = e.get("/edr/collections/nws-alerts").await;
+    assert_eq!(st, 200, "{c}");
+    assert!(c["description"].as_str().unwrap().contains("STALE"));
+    holder.rollback().await.unwrap();
+
+    for r in &routes {
+        let (st, _, v, _) = e.get(r).await;
+        assert_eq!(st, 200, "{r} after the lock is gone: {v}");
+    }
+    // No connection of the shared pool kept the limit, so other queries are not cut short.
+    let mut held = Vec::new();
+    for _ in 0..10 {
+        held.push(e.catalog.pool().acquire().await.unwrap());
+    }
+    for conn in &mut held {
+        let t: String = sqlx::query_scalar("SHOW statement_timeout")
+            .fetch_one(&mut **conn)
+            .await
+            .unwrap();
+        assert_eq!(t, "0");
     }
 }
