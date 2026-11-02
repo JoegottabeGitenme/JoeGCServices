@@ -36,7 +36,7 @@ use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
 use storage::nws_alerts::catalog::radius_boxes;
-use storage::nws_alerts::sections::derived_what;
+use storage::nws_alerts::sections::{derived_what, ForecastClock};
 use storage::{AlertRegion, AlertSearch, FeedStatus, StoredAlert};
 use wms_common::WmsError;
 
@@ -200,9 +200,16 @@ fn links(a: &StoredAlert, base_url: &str) -> Value {
 ///
 /// An alert whose text has neither `WHAT...` nor `HAZARD...` gets a `what` all the same when
 /// there is something to say (see [`derived_what`]): the forecast period(s) its headline names for
-/// the Alaska coastal-water alerts, the first sentence or two of a free-text statement.
-fn summary(a: &StoredAlert, cap: Option<usize>) -> Value {
-    let derived = derived_what(&a.sections, headline(a));
+/// the Alaska coastal-water alerts, the first sentence or two of a free-text statement. The
+/// forecast's `Today` and `Tonight` are read against the day the alert was sent (`now` is when
+/// it is read), so a forecast read a day late says `Sun night`, and leaves out the periods
+/// that are over.
+fn summary(a: &StoredAlert, now: DateTime<Utc>, cap: Option<usize>) -> Value {
+    let clock = a
+        .sent
+        .zip(a.headline.as_deref())
+        .and_then(|(sent, formal)| ForecastClock::new(sent, now, formal));
+    let derived = derived_what(&a.sections, headline(a), clock.as_ref());
     let mut m = Map::new();
     for k in SUMMARY_KEYS {
         let text = match a.sections.get(k).and_then(|v| v.as_str()).map(str::trim) {
@@ -270,7 +277,10 @@ fn common_properties(
             .unwrap_or(Value::Null),
     );
     p.insert("vtec_event".into(), json!(a.vtec_event_key));
-    p.insert("summary".into(), summary(a, compact.then_some(SUMMARY_MAX)));
+    p.insert(
+        "summary".into(),
+        summary(a, now, compact.then_some(SUMMARY_MAX)),
+    );
     let instr = instruction_text(a).map(|t| {
         if compact {
             trim_text(t, INSTRUCTION_MAX)
@@ -1785,6 +1795,27 @@ mod tests {
             json!({ "what": "Rest of today: SW wind 25 kt. Seas 16 ft." })
         );
 
+        // The same Juneau advisory read on Monday morning (07:07 AKST), a day after it was sent
+        // (Sunday 12:12 AKST): `Rest of today` and `Tonight` were Sunday's and are over, what is
+        // in force is Monday's.
+        let monday = Utc.with_ymd_and_hms(2026, 11, 2, 16, 7, 0).unwrap();
+        for f in [
+            compact_feature(&a, monday, ""),
+            full_feature(&a, monday, ""),
+        ] {
+            assert_eq!(
+                f["properties"]["summary"],
+                json!({ "what": "Mon: S wind 10 kt. Seas 9 ft. SW swell." })
+            );
+        }
+        // and with the zone the office is in not to be had (no formal headline), as NWS wrote it
+        let mut b = a.clone();
+        b.headline = None;
+        assert_eq!(
+            compact_feature(&b, monday, "")["properties"]["summary"],
+            json!({ "what": "Rest of today: SW wind 25 kt. Seas 16 ft." })
+        );
+
         // a long run of periods is trimmed like any other summary text in the list, not in full
         let mut a = no_labels("4ed4e123.003.1");
         a.nws_headline = Some("GALE WARNING TODAY AND TONIGHT AND TUESDAY AND WEDNESDAY".into());
@@ -2633,11 +2664,20 @@ mod tests {
     /// full record) to `NWS_SUMMARY_OUT`:
     /// `NWS_FEED_JSON=feed.json NWS_SUMMARY_OUT=out.json cargo test -p edr-api --lib
     /// live_feed_summaries -- --ignored`
+    /// The answers are made as of `NWS_NOW` (RFC 3339) when it is set, else of 2026-11-01T23:30Z.
     #[test]
     #[ignore = "reads NWS_FEED_JSON, a saved copy of the live feed"]
     fn live_feed_summaries() {
         let feed = std::env::var("NWS_FEED_JSON").expect("NWS_FEED_JSON: path of the saved feed");
         let out = std::env::var("NWS_SUMMARY_OUT").expect("NWS_SUMMARY_OUT: where to write");
+        let now = std::env::var("NWS_NOW")
+            .ok()
+            .map(|n| {
+                DateTime::parse_from_rfc3339(&n)
+                    .expect("NWS_NOW: RFC 3339")
+                    .to_utc()
+            })
+            .unwrap_or_else(t0);
         let v: Value = serde_json::from_str(&std::fs::read_to_string(feed).unwrap()).unwrap();
         let rows: Vec<Value> = v["features"]
             .as_array()
@@ -2645,8 +2685,8 @@ mod tests {
             .iter()
             .map(|f| {
                 let a = stored(&parse_feature(f).unwrap());
-                let list = compact_feature(&a, t0(), "https://x.test/edr");
-                let full = full_feature(&a, t0(), "https://x.test/edr");
+                let list = compact_feature(&a, now, "https://x.test/edr");
+                let full = full_feature(&a, now, "https://x.test/edr");
                 json!({
                     "id": a.id,
                     "event": a.event,
