@@ -1651,6 +1651,24 @@ impl Catalog {
         Ok(times)
     }
 
+    /// Every `(reference_time, valid_time)` the model holds (any parameter), unique, ordered by
+    /// valid time. [`Self::get_model_valid_times`] with the run each instant belongs to, for
+    /// [`stitch_valid_times`].
+    pub async fn get_model_run_valid_times(
+        &self,
+        model: &str,
+    ) -> WmsResult<Vec<(DateTime<Utc>, DateTime<Utc>)>> {
+        sqlx::query_as::<_, (DateTime<Utc>, DateTime<Utc>)>(
+            "SELECT DISTINCT reference_time, valid_time FROM datasets \
+             WHERE model = $1 AND status = 'available' \
+             ORDER BY valid_time ASC, reference_time DESC",
+        )
+        .bind(model)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))
+    }
+
     /// The valid times one model run holds (any parameter), unique and ascending. Empty for a run
     /// the catalog does not hold. The run's own share of [`Self::get_model_valid_times`], for a
     /// request that names the run and a span of time: the model's earliest instant may belong to
@@ -2730,10 +2748,185 @@ CREATE TABLE IF NOT EXISTS lightning_ingest_progress (
 )
 "#;
 
+/// The valid times a forecast model's time axis should offer, from the `(reference_time,
+/// valid_time)` pairs of its runs (see [`Catalog::get_model_run_valid_times`]): one run's own
+/// cadence at every stretch, never a mix of runs'.
+///
+/// The union of every run's valid times is not that. A model whose runs do not all step alike
+/// (NBM: hourly for two days, then every 3 h on valid times that are multiples of 3 for most runs
+/// but shifted by the cycle hour for the long ones) has, in its tail, one phase of 3-hourly times
+/// per kind of run, so the union alternates 1 h and 2 h. A series asked for those instants finds
+/// no grid at the extra ones and answers with the neighbouring one, a value repeated under
+/// another time.
+///
+/// Runs are taken newest first. The newest contributes every time it has. An older run then
+/// fills only what the times so far leave open:
+/// - times before the earliest or after the latest (the past, and the tail of a longer run, e.g.
+///   HRRR's extended cycle behind the newest hourly one);
+/// - times inside a hole: an instant between two taken times that are further apart than the
+///   steps on either side of the pair, like a file of the newest run that was ingested late. A
+///   gap as wide as a neighbouring one is the cadence itself (NBM's 1 h to 3 h change) and is
+///   left alone.
+///
+/// Returns the times unique and ascending.
+pub fn stitch_valid_times(runs: &[(DateTime<Utc>, DateTime<Utc>)]) -> Vec<DateTime<Utc>> {
+    let mut by_run: std::collections::BTreeMap<DateTime<Utc>, Vec<DateTime<Utc>>> =
+        std::collections::BTreeMap::new();
+    for (reference, valid) in runs {
+        by_run.entry(*reference).or_default().push(*valid);
+    }
+
+    let mut taken: Vec<DateTime<Utc>> = Vec::new();
+    for (_, mut times) in by_run.into_iter().rev() {
+        times.sort_unstable();
+        times.dedup();
+        if taken.is_empty() {
+            taken = times;
+            continue;
+        }
+        // Judged against what the earlier runs left, not against this run's own additions.
+        let open: Vec<DateTime<Utc>> = times.into_iter().filter(|t| is_open(&taken, *t)).collect();
+        taken.extend(open);
+        taken.sort_unstable();
+    }
+    taken
+}
+
+/// Whether the sorted, non-empty `taken` leaves `t` open (see [`stitch_valid_times`]).
+fn is_open(taken: &[DateTime<Utc>], t: DateTime<Utc>) -> bool {
+    let i = taken.partition_point(|x| *x < t);
+    if i == 0 || i == taken.len() {
+        return taken.get(i) != Some(&t);
+    }
+    if taken[i] == t {
+        return false;
+    }
+    let gap = taken[i] - taken[i - 1];
+    let before = i
+        .checked_sub(2)
+        .map_or(chrono::Duration::zero(), |j| taken[i - 1] - taken[j]);
+    let after = taken
+        .get(i + 1)
+        .map_or(chrono::Duration::zero(), |next| *next - taken[i]);
+    gap > before.max(after)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    // =========================================================================
+    // stitch_valid_times
+    // =========================================================================
+
+    fn day(d: u32, h: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 11, d, h, 0, 0).unwrap()
+    }
+
+    /// `(run, valid)` pairs for a run at `run` holding the lead hours `leads`.
+    fn run_at(
+        run: DateTime<Utc>,
+        leads: impl IntoIterator<Item = i64>,
+    ) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
+        leads
+            .into_iter()
+            .map(|h| (run, run + chrono::Duration::hours(h)))
+            .collect()
+    }
+
+    fn steps_h(times: &[DateTime<Utc>]) -> Vec<i64> {
+        times
+            .windows(2)
+            .map(|w| (w[1] - w[0]).num_hours())
+            .collect()
+    }
+
+    /// NBM as ingested: every run hourly to f48; the 00z run then steps 3 h on valid times that are
+    /// multiples of 3 (f51, f54 ...), a 19z run hourly to f60 and then 3 h on ITS lead hours
+    /// (f63 = 10z), so its tail is shifted one hour from the other's.
+    #[test]
+    fn a_tail_of_runs_with_different_phases_is_served_from_the_newest_run_alone() {
+        let mut rows = run_at(day(4, 0), (1..=48).chain((51..=120).step_by(3)));
+        rows.extend(run_at(day(3, 23), (1..=48).chain((49..=58).step_by(3))));
+        rows.extend(run_at(day(3, 19), (1..=60).chain((63..=120).step_by(3))));
+
+        let union: std::collections::BTreeSet<_> = rows.iter().map(|(_, v)| *v).collect();
+        assert!(
+            steps_h(&union.into_iter().collect::<Vec<_>>()).contains(&2),
+            "the premise: the union alternates 1 h and 2 h"
+        );
+
+        let axis = stitch_valid_times(&rows);
+        // the past comes from the older runs, hourly
+        assert_eq!(axis[0], day(3, 20));
+        // after the newest run's first hour: hourly to its f48 (06T00), then every 3 h
+        let from = axis.iter().position(|t| *t == day(4, 1)).unwrap();
+        let steps = steps_h(&axis[from..]);
+        let hourly = 47;
+        assert!(steps[..hourly].iter().all(|s| *s == 1), "{steps:?}");
+        assert!(steps[hourly..].iter().all(|s| *s == 3), "{steps:?}");
+        assert_eq!(axis[from + 48], day(6, 3), "f51 of the newest run");
+        assert_eq!(
+            *axis.last().unwrap(),
+            day(4, 0) + chrono::Duration::hours(120)
+        );
+        assert!(axis.windows(2).all(|w| w[0] < w[1]), "unique and ascending");
+    }
+
+    #[test]
+    fn the_tail_of_a_longer_older_run_is_used_behind_a_shorter_newest_one() {
+        // HRRR: the newest cycle stops at f18, the 00z extended one runs to f48
+        let mut rows = run_at(day(4, 5), 0..=18);
+        rows.extend(run_at(day(4, 4), 0..=18));
+        rows.extend(run_at(day(4, 0), 0..=48));
+        let axis = stitch_valid_times(&rows);
+        assert_eq!(axis.first(), Some(&day(4, 0)));
+        assert_eq!(axis.last(), Some(&day(6, 0)));
+        assert!(
+            steps_h(&axis).iter().all(|s| *s == 1),
+            "{:?}",
+            steps_h(&axis)
+        );
+    }
+
+    #[test]
+    fn a_hole_in_the_newest_run_is_filled_from_an_older_one() {
+        let mut newest = run_at(day(4, 5), 0..=18);
+        newest.retain(|(_, v)| *v != day(4, 10) && *v != day(4, 11));
+        let mut rows = newest;
+        rows.extend(run_at(day(4, 4), 0..=18));
+        let axis = stitch_valid_times(&rows);
+        assert!(axis.contains(&day(4, 10)) && axis.contains(&day(4, 11)));
+        assert!(
+            steps_h(&axis).iter().all(|s| *s == 1),
+            "{:?}",
+            steps_h(&axis)
+        );
+    }
+
+    #[test]
+    fn a_newest_run_still_arriving_is_continued_by_the_previous_one() {
+        let mut rows = run_at(day(4, 0), 1..=3);
+        rows.extend(run_at(day(3, 23), (1..=48).chain((49..=58).step_by(3))));
+        let axis = stitch_valid_times(&rows);
+        assert_eq!(axis[0], day(4, 0));
+        assert!(
+            axis.contains(&day(4, 12)),
+            "the previous run takes over after f3"
+        );
+        assert!(axis.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn stitching_nothing_or_one_run() {
+        assert!(stitch_valid_times(&[]).is_empty());
+        let rows = run_at(day(4, 0), [3, 1, 2, 2]);
+        assert_eq!(
+            stitch_valid_times(&rows),
+            vec![day(4, 1), day(4, 2), day(4, 3)]
+        );
+    }
 
     // =========================================================================
     // CatalogEntry Tests
