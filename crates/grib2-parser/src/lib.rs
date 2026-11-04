@@ -192,6 +192,20 @@ impl Grib2Message {
                 .map_err(|e| Grib2Error::UnpackingError(format!("Failed to decode values: {}", e)))?
                 .collect();
 
+            // A bitmap (Section 6) is whole bytes, and the grib crate yields one value per bit,
+            // so when the grid's point count is not a multiple of 8 the padding bits come out as
+            // trailing NaNs: HRRR's simulated brightness temperature (1799 x 1059 = 1905141
+            // points, 3 bits of padding) decoded to 1905144 values and the ingester then refused
+            // it as a grid of the wrong size. Only trailing NaNs are dropped, never a real value.
+            let expected = self.grid_definition.num_points_longitude as usize
+                * self.grid_definition.num_points_latitude as usize;
+            if expected > 0
+                && values.len() > expected
+                && values[expected..].iter().all(|v| v.is_nan())
+            {
+                values.truncate(expected);
+            }
+
             // Normalize scanning mode to standard WE:SN order
             // The grib crate decodes values in storage order, which may be:
             // - Boustrophedon (alternating row directions) - scanning mode bit 4 = 1

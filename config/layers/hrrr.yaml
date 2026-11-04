@@ -178,6 +178,20 @@ layers:
       - value: "entire atmosphere"
         default: true
 
+  # Simulated infrared brightness temperature: what GOES band 13 would show, forecast (see
+  # config/models/hrrr.yaml). Drawn with the same style as the GOES IR layers.
+  - id: hrrr_SBT124
+    parameter: SBT124
+    title: "Simulated Satellite IR (10.7µm)"
+    abstract: "Simulated infrared brightness temperature at the top of the atmosphere; cold values are high cloud tops"
+    style_file: goes_ir.json
+    units:
+      native: K
+      display: K
+    levels:
+      - value: "top of atmosphere"
+        default: true
+
   # ==========================================================================
   # Smoke / Aerosols (HRRR-Smoke)
   # ==========================================================================

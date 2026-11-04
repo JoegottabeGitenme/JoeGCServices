@@ -1405,4 +1405,178 @@ mod integration_tests {
         assert_eq!(d.format(0), "0 m above MSL");
         assert_eq!(d.format(500), "500 m above MSL");
     }
+
+    // ------------------------------------------------------------------
+    // HRRR simulated satellite (SBT124): GRIB2 discipline 3, the only parameter of that discipline
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn hrrr_simulated_infrared_is_accepted_at_level_type_8_in_both_hrrr_models() {
+        // Real wrfprsf06 / wrfsubhf02 messages of 2026-11-04: discipline 3 (space products),
+        // category 192, number 2, level type 8 ("top of atmosphere" in the .idx), Kelvin.
+        for model in ["hrrr", "hrrr-subh"] {
+            let f = real_filter(model);
+            assert!(
+                f.should_ingest("SBT124", 8, 0),
+                "{model}: SBT124 at level 8"
+            );
+            for other in [10, 200, 1, 103] {
+                assert!(
+                    !f.should_ingest("SBT124", other, 0),
+                    "{model}: SBT124 must not be keyed to level {other}"
+                );
+            }
+            // the other three simulated bands NCEP publishes next to it are not taken
+            for band in ["SBT123", "SBT113", "SBT114"] {
+                assert!(!f.should_ingest(band, 8, 0), "{model}: {band}");
+            }
+            let range = f.get_valid_range("SBT124").expect("valid_range");
+            assert!(range.is_valid(190.0) && range.is_valid(325.0), "{model}");
+            assert!(!range.is_valid(179.0) && !range.is_valid(331.0), "{model}");
+            assert_eq!(f.get_units("SBT124"), "K", "{model}");
+
+            let (params, levels) = real_tables(model);
+            assert_eq!(
+                params.get(&(3, 192, 2)).map(String::as_str),
+                Some("SBT124"),
+                "{model}"
+            );
+            assert_eq!(
+                levels.get(&8).map(|d| d.format(0)).as_deref(),
+                Some("top of atmosphere"),
+                "{model}"
+            );
+        }
+        // the sub-hourly model still takes its lead time from each message, the hourly one does not
+        assert!(real_filter("hrrr-subh").lead_time_from_messages());
+        assert!(!real_filter("hrrr").lead_time_from_messages());
+    }
+
+    /// Tables for `model` from its real config, as `build_tables_for_model` makes them.
+    fn real_grib2_tables(model: &str) -> Arc<Grib2Tables> {
+        let (params, levels) = real_tables(model);
+        let mut tables = Grib2Tables::new();
+        for ((d, c, n), name) in params {
+            tables.add_parameter(d, c, n, name);
+        }
+        for (level_type, description) in levels {
+            tables.add_level(level_type, description);
+        }
+        Arc::new(tables)
+    }
+
+    /// The one message of a small fixture, read with the real config's tables.
+    ///
+    /// The fixtures are real SBT124 messages from NCEP's 12Z HRRR cycle of 2026-11-04, cut by
+    /// wgrib2 to a 21 x 18 window of the 1799 x 1059 grid (i 450-470, j 655-672; four of its 378
+    /// points are undefined in the message's bitmap) and repacked as template 5.3 with a bitmap,
+    /// which is how NCEP writes them. The full messages are 1.7 MB each.
+    fn read_fixture(model: &str, name: &str, dir: &str) -> grib2_parser::Grib2Message {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(dir)
+            .join(name);
+        let data = bytes::Bytes::from(std::fs::read(&path).unwrap());
+        let mut reader = grib2_parser::Grib2Reader::new(data, real_grib2_tables(model));
+        let msg = reader.next_message().unwrap().expect("one message");
+        assert!(
+            reader.next_message().unwrap().is_none(),
+            "exactly one message"
+        );
+        msg
+    }
+
+    #[test]
+    fn a_real_discipline_3_simulated_infrared_message_parses_and_decodes() {
+        for (model, dir, name, lead_minutes) in [
+            (
+                "hrrr-subh",
+                "hrrr-subh",
+                "hrrr-subh_20261104_12z_f002_sbt124_small.grib2",
+                75,
+            ),
+            (
+                "hrrr",
+                "hrrr",
+                "hrrr_20261104_12z_f006_sbt124_small.grib2",
+                360,
+            ),
+        ] {
+            let msg = read_fixture(model, name, dir);
+            assert_eq!(msg.indicator.discipline, 3, "{model}");
+            let pd = &msg.product_definition;
+            assert_eq!(
+                (pd.parameter_category, pd.parameter_number),
+                (192, 2),
+                "{model}"
+            );
+            assert_eq!(msg.parameter(), "SBT124", "{model}");
+            assert_eq!(pd.level_type, 8, "{model}");
+            assert_eq!(msg.level(), "top of atmosphere", "{model}");
+            assert_eq!(pd.lead_minutes, lead_minutes, "{model}");
+            assert_eq!(
+                msg.valid_time(),
+                chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 11, 4, 12, 0, 0).unwrap()
+                    + chrono::Duration::minutes(lead_minutes as i64),
+                "{model}"
+            );
+            assert_eq!(
+                (
+                    msg.grid_definition.num_points_longitude,
+                    msg.grid_definition.num_points_latitude
+                ),
+                (21, 18),
+                "{model}"
+            );
+
+            // what the ingester does with it: filter on (name, level type), then valid_range
+            let filter = real_filter(model);
+            assert!(filter.should_ingest(msg.parameter(), pd.level_type, pd.level_value));
+            let range = filter.get_valid_range("SBT124").unwrap();
+            let values = msg
+                .unpack_data()
+                .expect("template 5.3 with a bitmap decodes");
+            // 378 points is not a multiple of 8: the bitmap's padding bits must not become
+            // extra values (the full grid, 1905141 points, decoded to 1905144 and was refused)
+            assert_eq!(values.len(), 21 * 18, "{model}");
+            // the bitmap's four undefined points are not valid Kelvin values, so the
+            // valid_range step turns them to NaN like every other fill value
+            let valid: Vec<f32> = values
+                .iter()
+                .copied()
+                .filter(|v| range.is_valid(*v))
+                .collect();
+            assert_eq!(valid.len(), 21 * 18 - 4, "{model}: {values:?}");
+            let (lo, hi) = valid
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+            assert!(
+                (200.0..=300.0).contains(&lo) && (200.0..=300.0).contains(&hi),
+                "{model}: {lo}..{hi} K is not a cloud-top brightness temperature"
+            );
+        }
+    }
+
+    #[test]
+    fn the_subhourly_fixture_decodes_to_the_values_wgrib2_reads() {
+        // wgrib2 -text of the same file: first row starts 273.1, 273.1, 271.6, 268.2, 267.2 and the
+        // window holds 251.1 .. 274.5 K
+        let msg = read_fixture(
+            "hrrr-subh",
+            "hrrr-subh_20261104_12z_f002_sbt124_small.grib2",
+            "hrrr-subh",
+        );
+        let values = msg.unpack_data().unwrap();
+        for (got, want) in values.iter().zip([273.1f32, 273.1, 271.6, 268.2, 267.2]) {
+            assert!((got - want).abs() < 0.06, "{got} vs {want}");
+        }
+        let range = real_filter("hrrr-subh").get_valid_range("SBT124").unwrap();
+        let valid: Vec<f32> = values.into_iter().filter(|v| range.is_valid(*v)).collect();
+        let lo = valid.iter().copied().fold(f32::MAX, f32::min);
+        let hi = valid.iter().copied().fold(f32::MIN, f32::max);
+        assert!(
+            (lo - 251.1).abs() < 0.06 && (hi - 274.5).abs() < 0.06,
+            "{lo}..{hi}"
+        );
+    }
 }

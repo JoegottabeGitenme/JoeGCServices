@@ -459,6 +459,8 @@ pub fn build_level_string(
                             "cloud_base" => "cloud base",
                             "entire_atmosphere" => "entire atmosphere",
                             "mean_sea_level" => "mean sea level",
+                            // HRRR's simulated satellite band is stored under NCEP's own wording
+                            "top_of_atmosphere" => "top of atmosphere",
                             // For satellite data (GOES), level names use underscores in DB
                             // (e.g., "visible_blue", "upper_vapor")
                             _ => name.as_str(),
@@ -1507,5 +1509,42 @@ collections:
         // the hourly model's collections are untouched and keep their own model
         let (hourly, _) = cfg.find_collection("hrrr-atmosphere").unwrap();
         assert_eq!(hourly.model, "hrrr");
+    }
+
+    #[test]
+    fn hrrr_simulated_satellite_collections_read_the_catalog_level_the_ingester_writes() {
+        // SBT124 is level type 8; the ingester stores it under the model config's `display`
+        // ("top of atmosphere", the same string as the .idx line), and the collection names it
+        // `top_of_atmosphere`, which must map to that string (GOES keeps its own band names).
+        let cfg = real_edr_config();
+        for (id, model_id) in [
+            ("hrrr-satellite", "hrrr"),
+            ("hrrr-subh-satellite", "hrrr-subh"),
+        ] {
+            let (model, coll) = cfg.find_collection(id).unwrap_or_else(|| panic!("{id}"));
+            assert_eq!(model.model, model_id, "{id}");
+            assert_eq!(param_names(coll), ["SBT124"], "{id}");
+            assert_eq!(coll.level_filter.level_type, "top_of_atmosphere", "{id}");
+            assert_eq!(coll.level_filter.level_code, Some(8), "{id}");
+            let sbt = &coll.parameters[0];
+            assert_eq!(
+                (sbt.valid_range.as_ref().map(|r| (r.min, r.max))),
+                Some((180.0, 330.0)),
+                "{id}"
+            );
+            assert_eq!(
+                build_level_string(&coll.level_filter, Some(sbt), None).as_deref(),
+                Some("top of atmosphere"),
+                "{id}"
+            );
+        }
+        // GOES collections name their own bands and are unaffected
+        let goes = cfg
+            .find_collection("goes19-infrared")
+            .expect("goes19-infrared");
+        assert_eq!(
+            build_level_string(&goes.1.level_filter, Some(&goes.1.parameters[0]), None).as_deref(),
+            Some("clean_ir")
+        );
     }
 }

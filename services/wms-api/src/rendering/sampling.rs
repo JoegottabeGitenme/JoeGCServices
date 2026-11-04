@@ -836,6 +836,7 @@ fn get_parameter_display_name(parameter: &str) -> String {
         "MCDC" => "Medium Cloud Cover".to_string(),
         "HCDC" => "High Cloud Cover".to_string(),
         "REFC" => "Composite Reflectivity".to_string(),
+        "SBT124" => "Simulated IR Brightness Temperature".to_string(),
         _ => parameter.to_string(),
     }
 }

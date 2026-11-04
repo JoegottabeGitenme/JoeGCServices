@@ -156,6 +156,21 @@ collections:
         valid_range: { min: 0, max: 100 }  # percent
     run_mode: instances
 
+  # Simulated infrared brightness temperature: the forecast counterpart of the GOES band 13
+  # imagery (`goes19-infrared`, `goes18-infrared`), in the same unit. Hourly out to 48 h; the
+  # 15-minute steps of the first 18 h are `hrrr-subh-satellite`.
+  - id: hrrr-satellite
+    title: "HRRR - Simulated Satellite"
+    description: "Simulated infrared brightness temperature (10.7µm) at the top of the atmosphere, cloud tops read as cold"
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: SBT124
+        levels: [top_of_atmosphere]
+        valid_range: { min: 180, max: 330 }  # Kelvin
+    run_mode: instances
+
   # Soil temperature & moisture (RUC land model POINT depths; level values =
   # depth in cm). z parameter selects the depth. TSOIL: Kelvin, native SI.
   # SOILW: volumetric fraction 0-1, native SI. Note the two params have
