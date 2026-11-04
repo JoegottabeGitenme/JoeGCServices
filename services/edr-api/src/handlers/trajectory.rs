@@ -46,7 +46,7 @@ fn filter_available_parameters(
         .map(|p| p.name.clone())
         .collect()
 }
-use crate::limits::ResponseSizeEstimate;
+use crate::limits::{check_trajectory_points, ResponseSizeEstimate};
 use crate::state::AppState;
 use crate::validation::validate_z_against_vertical_extent;
 
@@ -86,6 +86,38 @@ pub struct TrajectoryQueryParams {
 // `run` is validated but the newest run is queried, so it does not pin the time
 // for caching (see cache_policy).
 impl_time_selectors!(TrajectoryQueryParams, ignores_run);
+
+/// How many waypoints of one parameter are read at the same time. Each read is a catalog lookup
+/// and a blocking chunk read that waits on the grid service's permits; this keeps one route from
+/// taking them all.
+const TRAJECTORY_READ_CONCURRENCY: usize = 8;
+
+/// Whether a `datetime` names more than one time.
+fn selects_several_times(dq: &DateTimeQuery) -> bool {
+    match dq {
+        DateTimeQuery::Instant(_) => false,
+        DateTimeQuery::List(times) => times.len() > 1,
+        DateTimeQuery::Interval { .. } => true,
+    }
+}
+
+/// `f` applied to every item, at most `limit` at a time, each on its own task so that blocking
+/// work really runs in parallel. The results are in the order of `items`; an item whose task
+/// failed (it panicked) is `None`.
+async fn map_bounded<I, T, F, Fut>(items: Vec<I>, limit: usize, f: F) -> Vec<Option<T>>
+where
+    F: Fn(I) -> Fut,
+    Fut: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    use futures::StreamExt;
+    futures::stream::iter(items)
+        .map(|item| tokio::spawn(f(item)))
+        .buffered(limit.max(1))
+        .map(|joined| joined.ok())
+        .collect()
+        .await
+}
 
 /// GET /edr/collections/:collection_id/trajectory
 pub async fn trajectory_handler(
@@ -224,6 +256,13 @@ async fn trajectory_query(
         );
     }
 
+    if let Err(limit_err) = check_trajectory_points(&model_config.limits, waypoints.len()) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            ExceptionResponse::bad_request(limit_err.to_string()),
+        );
+    }
+
     // Check for conflicting z parameter when coords already has Z
     if line_type.has_z() && params.z.is_some() {
         return error_response(
@@ -296,6 +335,22 @@ async fn trajectory_query(
     } else {
         None
     };
+
+    // Without M every waypoint is read at one time (a trajectory has one value per waypoint), so
+    // an interval or a list would only label the response with times it does not hold.
+    if !line_type.has_m() {
+        if datetime_query.as_ref().is_some_and(selects_several_times) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request(format!(
+                    "A trajectory without M coordinates is sampled at a single time, but datetime '{}' selects \
+                     several. Give one instant, or put each waypoint's time in the coordinates \
+                     (LINESTRINGM or LINESTRINGZM, M in Unix seconds).",
+                    params.datetime.as_deref().unwrap_or_default()
+                )),
+            );
+        }
+    }
 
     // Parse parameter names
     let requested_params = params
@@ -497,54 +552,59 @@ async fn trajectory_query(
 
         query = query.in_run_at(reference_time, query_time);
 
-        // Sample values at each waypoint
-        let mut values: Vec<Option<f32>> = Vec::with_capacity(waypoints.len());
-
-        for waypoint in &waypoints {
-            // For trajectory queries with embedded time (M coords), we might need
-            // to query at different valid times for each waypoint.
-            // For simplicity, we'll sample at the waypoint location using the first time.
-            // A more sophisticated implementation could query each waypoint at its embedded time.
-
-            let wp_query = if line_type.has_m() {
-                // Use the waypoint's embedded time
-                if let Some(epoch) = waypoint.m {
-                    if let Some(dt) = Utc.timestamp_opt(epoch, 0).single() {
-                        query.clone().in_run_at(reference_time, Some(dt))
-                    } else {
-                        query.clone()
+        // Sample values at each waypoint. With embedded time (M coords) each waypoint is read at
+        // its own valid time. The reads run concurrently (a route is up to a few hundred of them,
+        // each a catalog lookup and a chunk read), in waypoint order.
+        let queries: Vec<_> = waypoints
+            .iter()
+            .map(|waypoint| {
+                let at = line_type
+                    .has_m()
+                    .then(|| {
+                        waypoint
+                            .m
+                            .and_then(|epoch| Utc.timestamp_opt(epoch, 0).single())
+                    })
+                    .flatten();
+                let wp_query = match at {
+                    Some(dt) => query.clone().in_run_at(reference_time, Some(dt)),
+                    None => query.clone(),
+                };
+                (wp_query, waypoint.lon, waypoint.lat)
+            })
+            .collect();
+        let values: Vec<Option<f32>> = map_bounded(queries, TRAJECTORY_READ_CONCURRENCY, {
+            let state = Arc::clone(&state);
+            let param_name = param_name.clone();
+            move |(wp_query, lon, lat)| {
+                let state = Arc::clone(&state);
+                let param_name = param_name.clone();
+                async move {
+                    match state
+                        .grid_data_service
+                        .read_point(&wp_query, lon, lat)
+                        .await
+                    {
+                        // PointValue has an Option<f32> value field
+                        Ok(point_value) => point_value.value.filter(|v| !v.is_nan()),
+                        Err(e) => {
+                            tracing::debug!(
+                                "Failed to sample {} at ({}, {}): {}",
+                                param_name,
+                                lon,
+                                lat,
+                                e
+                            );
+                            None
+                        }
                     }
-                } else {
-                    query.clone()
-                }
-            } else {
-                query.clone()
-            };
-
-            match state
-                .grid_data_service
-                .read_point(&wp_query, waypoint.lon, waypoint.lat)
-                .await
-            {
-                Ok(point_value) => {
-                    // PointValue has an Option<f32> value field
-                    match point_value.value {
-                        Some(v) if !v.is_nan() => values.push(Some(v)),
-                        _ => values.push(None),
-                    }
-                }
-                Err(e) => {
-                    tracing::debug!(
-                        "Failed to sample {} at ({}, {}): {}",
-                        param_name,
-                        waypoint.lon,
-                        waypoint.lat,
-                        e
-                    );
-                    values.push(None);
                 }
             }
-        }
+        })
+        .await
+        .into_iter()
+        .map(Option::flatten)
+        .collect();
 
         // Get metadata for units
         let metadata = state.grid_data_service.get_metadata(&query).await.ok();
@@ -683,6 +743,60 @@ mod tests {
         assert_eq!(parsed.line_type, LineStringType::LineStringZM);
         assert!(parsed.line_type.has_z());
         assert!(parsed.line_type.has_m());
+    }
+
+    #[test]
+    fn only_a_single_instant_is_one_time() {
+        let parse = |s: &str| DateTimeQuery::parse(s).unwrap();
+        assert!(!selects_several_times(&parse("2026-11-04T12:00:00Z")));
+        assert!(selects_several_times(&parse(
+            "2026-11-04T12:00:00Z,2026-11-04T13:00:00Z"
+        )));
+        assert!(selects_several_times(&parse(
+            "2026-11-04T12:00:00Z/2026-11-04T18:00:00Z"
+        )));
+        assert!(selects_several_times(&parse("2026-11-04T12:00:00Z/..")));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn map_bounded_keeps_the_order_and_the_bound() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let running = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let items: Vec<u64> = (0..40).collect();
+        let out = map_bounded(items, 8, {
+            let (running, peak) = (Arc::clone(&running), Arc::clone(&peak));
+            move |i: u64| {
+                let (running, peak) = (Arc::clone(&running), Arc::clone(&peak));
+                async move {
+                    let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    // the early items finish last
+                    tokio::time::sleep(std::time::Duration::from_millis(40 - i)).await;
+                    running.fetch_sub(1, Ordering::SeqCst);
+                    i * 2
+                }
+            }
+        })
+        .await;
+        assert_eq!(out, (0..40).map(|i| Some(i * 2)).collect::<Vec<_>>());
+        let peak = peak.load(Ordering::SeqCst);
+        assert!(
+            (2..=8).contains(&peak),
+            "reads overlap, but never more than the bound: {peak}"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_bounded_marks_a_failed_task_and_goes_on() {
+        let out = map_bounded(vec![1, 2, 3], 2, |i: i32| async move {
+            if i == 2 {
+                panic!("a read failed");
+            }
+            i
+        })
+        .await;
+        assert_eq!(out, vec![Some(1), None, Some(3)]);
     }
 
     #[test]

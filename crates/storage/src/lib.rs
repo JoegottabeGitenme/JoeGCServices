@@ -24,8 +24,8 @@ pub use self::object_store::{
 };
 pub use cache::{CacheKey, TileCache};
 pub use catalog::{
-    Catalog, CatalogEntry, DatasetInfo, DatasetQuery, ModelStats, ParameterAvailability,
-    ParameterStats, PurgePreview,
+    stitch_valid_times, Catalog, CatalogEntry, DatasetInfo, DatasetQuery, ModelStats,
+    ParameterAvailability, ParameterStats, PurgePreview,
 };
 pub use lightning::{FlashArea, FlashQuery, LightningCatalog, NewFlash, StoredFlash};
 pub use linear_features::{LinearFeature, LinearFeatureCatalog, LinearFeatureItem};
