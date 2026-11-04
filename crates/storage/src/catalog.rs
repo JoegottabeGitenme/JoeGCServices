@@ -1651,19 +1651,22 @@ impl Catalog {
         Ok(times)
     }
 
-    /// Every `(reference_time, valid_time)` the model holds (any parameter), unique, ordered by
-    /// valid time. [`Self::get_model_valid_times`] with the run each instant belongs to, for
-    /// [`stitch_valid_times`].
+    /// Every `(reference_time, valid_time)` the model holds for any of `parameters`, unique,
+    /// ordered by valid time. [`Self::get_model_valid_times`] with the run each instant belongs
+    /// to, for [`stitch_valid_times`]. Only the parameters asked for shape the axis: a run that
+    /// so far holds just a 12-hourly one must not make the hourly ones coarse.
     pub async fn get_model_run_valid_times(
         &self,
         model: &str,
+        parameters: &[String],
     ) -> WmsResult<Vec<(DateTime<Utc>, DateTime<Utc>)>> {
         sqlx::query_as::<_, (DateTime<Utc>, DateTime<Utc>)>(
             "SELECT DISTINCT reference_time, valid_time FROM datasets \
-             WHERE model = $1 AND status = 'available' \
+             WHERE model = $1 AND parameter = ANY($2) AND status = 'available' \
              ORDER BY valid_time ASC, reference_time DESC",
         )
         .bind(model)
+        .bind(parameters)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))
@@ -2785,15 +2788,40 @@ pub fn stitch_valid_times(runs: &[(DateTime<Utc>, DateTime<Utc>)]) -> Vec<DateTi
             continue;
         }
         // Judged against what the earlier runs left, not against this run's own additions.
-        let open: Vec<DateTime<Utc>> = times.into_iter().filter(|t| is_open(&taken, *t)).collect();
+        let finest_from = finest_steps_from(&taken);
+        let open: Vec<DateTime<Utc>> = times
+            .into_iter()
+            .filter(|t| is_open(&taken, &finest_from, *t))
+            .collect();
         taken.extend(open);
         taken.sort_unstable();
     }
     taken
 }
 
-/// Whether the sorted, non-empty `taken` leaves `t` open (see [`stitch_valid_times`]).
-fn is_open(taken: &[DateTime<Utc>], t: DateTime<Utc>) -> bool {
+/// For each index `i` of the sorted `taken`, the finest step it takes from `taken[i]` onward
+/// (`None` for the last: no step follows).
+fn finest_steps_from(taken: &[DateTime<Utc>]) -> Vec<Option<chrono::Duration>> {
+    let mut finest = vec![None; taken.len()];
+    for i in (0..taken.len().saturating_sub(1)).rev() {
+        let step = taken[i + 1] - taken[i];
+        finest[i] = Some(finest[i + 1].map_or(step, |later: chrono::Duration| later.min(step)));
+    }
+    finest
+}
+
+/// Whether the sorted, non-empty `taken` leaves `t` open (see [`stitch_valid_times`]);
+/// `finest_from` is [`finest_steps_from`] of `taken`.
+///
+/// A gap is a hole when it is wider than the finest step the run takes from there on, not just
+/// wider than its neighbours: with every other hour missing, each 2 h gap has a 2 h neighbour. A
+/// gap wider than the step before it but equal to the finest step after it is a change of
+/// cadence (NBM's 1 h to 3 h) and is left alone.
+fn is_open(
+    taken: &[DateTime<Utc>],
+    finest_from: &[Option<chrono::Duration>],
+    t: DateTime<Utc>,
+) -> bool {
     let i = taken.partition_point(|x| *x < t);
     if i == 0 || i == taken.len() {
         return taken.get(i) != Some(&t);
@@ -2805,10 +2833,8 @@ fn is_open(taken: &[DateTime<Utc>], t: DateTime<Utc>) -> bool {
     let before = i
         .checked_sub(2)
         .map_or(chrono::Duration::zero(), |j| taken[i - 1] - taken[j]);
-    let after = taken
-        .get(i + 1)
-        .map_or(chrono::Duration::zero(), |next| *next - taken[i]);
-    gap > before.max(after)
+    let later = finest_from[i];
+    later.is_some_and(|finest| gap > finest) || (gap > before && Some(gap) != later)
 }
 
 #[cfg(test)]
@@ -2916,6 +2942,28 @@ mod tests {
             "the previous run takes over after f3"
         );
         assert!(axis.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    /// GFS 18z mid-ingest (captured 2026-10-29): files arrived out of order, so every other
+    /// hour is missing around f77-f83 and the 12z run holds them hourly.
+    #[test]
+    fn alternate_hours_missing_in_the_newest_run_are_filled_from_an_older_one() {
+        let mut rows = run_at(day(4, 18), [77, 79, 81, 83, 84]);
+        rows.extend(run_at(day(4, 12), 70..=90));
+        let axis = stitch_valid_times(&rows);
+        let from = axis
+            .iter()
+            .position(|t| *t == day(4, 18) + chrono::Duration::hours(77));
+        let from = from.unwrap();
+        let until = axis
+            .iter()
+            .position(|t| *t == day(4, 18) + chrono::Duration::hours(84))
+            .unwrap();
+        assert!(
+            steps_h(&axis[from..=until]).iter().all(|s| *s == 1),
+            "{:?}",
+            steps_h(&axis[from..=until])
+        );
     }
 
     #[test]

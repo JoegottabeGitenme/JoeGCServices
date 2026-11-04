@@ -475,7 +475,7 @@ async fn position_query(
     let model_name = &model_config.model;
     let model_run_times = state
         .catalog
-        .get_model_run_valid_times(model_name)
+        .get_model_run_valid_times(model_name, &params_to_query)
         .await
         .ok()
         .unwrap_or_default();
@@ -491,8 +491,22 @@ async fn position_query(
     // holds, but one run's cadence at a time (`stitch_valid_times`): NBM's long runs step 3 h in
     // the tail on different phases than the others, and the union of them alternates 1 h and 2 h,
     // with the instants no run has this parameter at answered by a neighbour's value.
+    // A request that names one run keeps that run's own instants.
+    let instance_run = instance_id
+        .as_deref()
+        .and_then(|id| chrono::DateTime::parse_from_rfc3339(id).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
     let axis_times = if is_observation_model {
         available_times.clone()
+    } else if let Some(run) = instance_run {
+        let mut times: Vec<DateTime<Utc>> = model_run_times
+            .iter()
+            .filter(|(r, _)| *r == run)
+            .map(|(_, valid)| *valid)
+            .collect();
+        times.sort_unstable();
+        times.dedup();
+        times
     } else {
         storage::stitch_valid_times(&model_run_times)
     };
