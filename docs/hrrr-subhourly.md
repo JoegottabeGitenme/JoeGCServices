@@ -56,7 +56,7 @@ parameter, which the platform could not represent:
 largest parameter: ~1.65 MB of GRIB2 per message (the six others together are ~0.7 MB), and about
 2.6 MB of Zarr per step (estimated: zstd of the decoded field is 2.1 MB, against 0.70 MB for REFC,
 whose measured Zarr is 869 kB). Per cycle that is +4 messages in each of 19 files (about +125 MB
-downloaded) and +73 steps x ~2.6 MB (about +190 MB stored), which roughly triples the figures below.
+downloaded) and +73 steps x ~2.6 MB (about +190 MB stored), which about 2.6x the figures below.
 The sizes below are for the other six parameters.
 
 Cost, measured on production (Zarr per 15-minute step: REFC 869 kB, PRATE 406 kB, CRAIN 172 kB,

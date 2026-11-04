@@ -575,8 +575,8 @@ parameters:
   # products", category 192 is NCEP local, number 2, level type 8 (nominal top of atmosphere).
   # Codes read from live wrfprsf06 and wrfsubhf02 messages of 2026-11-04 (wgrib2 calls the message
   # `var3_2_1_7_192_2` / SBT124); the .idx line is `SBT124:top of atmosphere`.
-  # About 1.7 MB of GRIB2 per message; a bitmap marks ~100
-  # corner points undefined.
+  # About 1.7 MB of GRIB2 per message; a bitmap marks ~116
+  # scattered points undefined.
   - name: SBT124
     description: "Simulated Brightness Temperature (GOES IR 10.7um)"
     grib2:
