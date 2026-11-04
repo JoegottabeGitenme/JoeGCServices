@@ -182,6 +182,8 @@ pub enum LimitExceeded {
     TooManyTimeSteps { requested: usize, limit: usize },
     TooManyLevels { requested: usize, limit: usize },
     ResponseTooLarge { estimated_mb: f64, limit_mb: usize },
+    TooManyTrajectoryPoints { requested: usize, limit: usize },
+    CorridorTooLong { length_km: f64, limit_km: f64 },
 }
 
 impl std::fmt::Display for LimitExceeded {
@@ -218,15 +220,111 @@ impl std::fmt::Display for LimitExceeded {
                     estimated_mb, limit_mb
                 )
             }
+            LimitExceeded::TooManyTrajectoryPoints { requested, limit } => {
+                write!(
+                    f,
+                    "Too many trajectory points: {} given, limit is {}. Simplify the path or sample it \
+                     at fewer points.",
+                    requested, limit
+                )
+            }
+            LimitExceeded::CorridorTooLong {
+                length_km,
+                limit_km,
+            } => {
+                write!(
+                    f,
+                    "Corridor too long: {:.0} km, limit is {:.0} km",
+                    length_km, limit_km
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for LimitExceeded {}
 
+/// The number of waypoints of a trajectory against `limits.max_trajectory_points`.
+pub fn check_trajectory_points(limits: &LimitsConfig, points: usize) -> Result<(), LimitExceeded> {
+    match limits.max_trajectory_points {
+        Some(limit) if points > limit => Err(LimitExceeded::TooManyTrajectoryPoints {
+            requested: points,
+            limit,
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// The length of a corridor's centreline against `limits.max_corridor_length_km`.
+pub fn check_corridor_length(
+    limits: &LimitsConfig,
+    waypoints: &[edr_protocol::TrajectoryWaypoint],
+) -> Result<(), LimitExceeded> {
+    let Some(limit_km) = limits.max_corridor_length_km else {
+        return Ok(());
+    };
+    let length_km = waypoints
+        .windows(2)
+        .map(|w| {
+            edr_protocol::RadiusQuery::haversine_distance(w[0].lon, w[0].lat, w[1].lon, w[1].lat)
+        })
+        .sum::<f64>()
+        / 1000.0;
+    if length_km > limit_km {
+        return Err(LimitExceeded::CorridorTooLong {
+            length_km,
+            limit_km,
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn waypoint(lon: f64, lat: f64) -> edr_protocol::TrajectoryWaypoint {
+        edr_protocol::TrajectoryWaypoint::new_2d(lon, lat)
+    }
+
+    #[test]
+    fn trajectory_points_are_limited_by_the_configured_maximum() {
+        let limits = LimitsConfig {
+            max_trajectory_points: Some(100),
+            ..LimitsConfig::default()
+        };
+        assert!(check_trajectory_points(&limits, 100).is_ok());
+        let err = check_trajectory_points(&limits, 101).unwrap_err();
+        assert!(
+            err.to_string().contains("101") && err.to_string().contains("100"),
+            "{err}"
+        );
+        let unlimited = LimitsConfig {
+            max_trajectory_points: None,
+            ..LimitsConfig::default()
+        };
+        assert!(check_trajectory_points(&unlimited, 100_000).is_ok());
+    }
+
+    #[test]
+    fn a_corridor_is_limited_by_the_length_of_its_centreline() {
+        let limits = LimitsConfig {
+            max_corridor_length_km: Some(100.0),
+            ..LimitsConfig::default()
+        };
+        // 0.5 degrees of latitude is about 55.6 km
+        let leg = |lat: f64| vec![waypoint(-105.0, 40.0), waypoint(-105.0, lat)];
+        assert!(check_corridor_length(&limits, &leg(40.5)).is_ok());
+        let three_legs = vec![
+            waypoint(-105.0, 40.0),
+            waypoint(-105.0, 40.5),
+            waypoint(-105.0, 41.0),
+        ];
+        let err = check_corridor_length(&limits, &three_legs).unwrap_err();
+        assert!(err.to_string().contains("111 km"), "{err}");
+        assert!(check_corridor_length(&limits, &[]).is_ok());
+        assert!(check_corridor_length(&limits, &[waypoint(-105.0, 40.0)]).is_ok());
+    }
 
     #[test]
     fn test_position_estimate() {

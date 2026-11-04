@@ -61,7 +61,7 @@ fn filter_available_parameters(
         .map(|p| p.name.clone())
         .collect()
 }
-use crate::limits::ResponseSizeEstimate;
+use crate::limits::{check_corridor_length, ResponseSizeEstimate};
 use crate::metrics::{
     extract_client_ip, extract_user_agent, format_from_output, EndpointType, Timer,
 };
@@ -494,6 +494,13 @@ async fn corridor_query(
         return error_response(
             StatusCode::BAD_REQUEST,
             ExceptionResponse::bad_request("Corridor must contain at least one waypoint"),
+        );
+    }
+
+    if let Err(limit_err) = check_corridor_length(&model_config.limits, &waypoints) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            ExceptionResponse::bad_request(limit_err.to_string()),
         );
     }
 
