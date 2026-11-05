@@ -104,19 +104,33 @@ async fn collection(e: &Env, id: &str) -> (StatusCode, Value) {
 
 /// Register `parameter` of `hrrr` at each lead of the 2026-11-04 00z run.
 async fn register(pool: &sqlx::PgPool, parameter: &str, level: &str, leads: &[i32]) {
+    register_run(pool, "2026-11-04T00:00:00Z", parameter, level, leads).await;
+}
+
+/// Register `parameter` of `hrrr` at each lead of the run initialised at `reference`.
+async fn register_run(
+    pool: &sqlx::PgPool,
+    reference: &str,
+    parameter: &str,
+    level: &str,
+    leads: &[i32],
+) {
     for lead in leads {
         sqlx::query(
             "INSERT INTO datasets (id, model, parameter, level, reference_time, forecast_hour, \
                valid_time, bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y, storage_path, \
                file_size, ingested_at, status, forecast_minute) \
-             VALUES (gen_random_uuid(), 'hrrr', $1, $2, '2026-11-04T00:00:00Z', $3, \
-               '2026-11-04T00:00:00Z'::timestamptz + $3 * interval '1 hour', \
+             VALUES (gen_random_uuid(), 'hrrr', $1, $2, $5::timestamptz, $3, \
+               $5::timestamptz + $3 * interval '1 hour', \
                -130, 20, -60, 55, $4, 1024, now(), 'available', 0)",
         )
         .bind(parameter)
         .bind(level)
         .bind(lead)
-        .bind(format!("grids/hrrr/{parameter}/f{lead:03}.zarr"))
+        .bind(format!(
+            "grids/hrrr/{parameter}/{reference}/f{lead:03}.zarr"
+        ))
+        .bind(reference)
         .execute(pool)
         .await
         .unwrap();
@@ -159,5 +173,31 @@ async fn a_collection_lists_only_the_valid_times_of_its_own_parameters() {
     assert_eq!(
         interval,
         serde_json::json!([["2026-11-04T01:00:00Z", "2026-11-04T06:00:00Z"]])
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn a_collection_lists_only_the_runs_that_hold_its_parameters() {
+    let e = env().await;
+    // The 00z run holds PRES and SBT124; the newer 01z run has PRES only so far
+    register(&e.pool, "PRES", "surface", &[1, 2]).await;
+    register(&e.pool, "SBT124", "top of atmosphere", &[1]).await;
+    register_run(&e.pool, "2026-11-04T01:00:00Z", "PRES", "surface", &[1, 2]).await;
+
+    let (status, satellite) = collection(&e, "hrrr-satellite").await;
+    assert_eq!(status, StatusCode::OK, "{satellite}");
+    assert_eq!(
+        satellite["extent"]["custom"][0]["values"],
+        serde_json::json!(["2026-11-04T00:00:00Z"]),
+        "{satellite}"
+    );
+
+    let (status, surface) = collection(&e, "hrrr-surface").await;
+    assert_eq!(status, StatusCode::OK, "{surface}");
+    assert_eq!(
+        surface["extent"]["custom"][0]["values"],
+        serde_json::json!(["2026-11-04T01:00:00Z", "2026-11-04T00:00:00Z"]),
+        "{surface}"
     );
 }

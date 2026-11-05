@@ -34,21 +34,33 @@ async fn build_extent_from_catalog_filtered(
     // Get bounding box from catalog
     let bbox = catalog.get_model_bbox(model_name).await.ok();
 
-    // The collection's own valid times: those of its parameters, not of the whole model, or a
-    // parameter that only some runs hold would list instants it cannot serve. A collection that
-    // names no parameters keeps the model-wide axis.
+    // The collection's own runs and valid times: those of its parameters, not of the whole
+    // model, or a parameter that only some runs hold would list instants and runs it cannot
+    // serve. One query gives both. A collection that names no parameters keeps the model-wide
+    // axis and runs.
     let parameter_names: Vec<String> = collection_def
         .parameters
         .iter()
         .map(|p| p.name.clone())
         .collect();
-    let valid_times = if parameter_names.is_empty() {
-        catalog.get_model_valid_times(model_name).await.ok()
+    let (valid_times, parameter_runs) = if parameter_names.is_empty() {
+        (catalog.get_model_valid_times(model_name).await.ok(), None)
     } else {
-        catalog
-            .get_parameters_valid_times(model_name, &parameter_names)
+        match catalog
+            .get_model_run_valid_times(model_name, &parameter_names)
             .await
-            .ok()
+        {
+            Ok(rows) => {
+                // Rows come ordered by valid time, so equal instants are adjacent.
+                let mut times: Vec<_> = rows.iter().map(|(_, valid)| *valid).collect();
+                times.dedup();
+                let mut runs: Vec<_> = rows.iter().map(|(reference, _)| *reference).collect();
+                runs.sort_unstable_by(|a, b| b.cmp(a));
+                runs.dedup();
+                (Some(times), Some(runs))
+            }
+            Err(_) => (None, None),
+        }
     };
     let temporal_extent = valid_times
         .as_ref()
@@ -142,15 +154,17 @@ async fn build_extent_from_catalog_filtered(
     if is_forecast_model {
         let mut custom_dims = Vec::new();
 
-        // Get all available runs for this model
-        if let Ok(runs) = catalog.get_all_model_runs(model_name).await {
-            if !runs.is_empty() {
-                let run_values: Vec<String> = runs
-                    .iter()
-                    .map(|r| r.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-                    .collect();
-                custom_dims.push(CustomDimension::for_runs(run_values));
-            }
+        // Get the available runs: the collection's parameters' own, else the model's
+        let runs = match parameter_runs {
+            Some(runs) => Some(runs),
+            None => catalog.get_all_model_runs(model_name).await.ok(),
+        };
+        if let Some(runs) = runs.filter(|r| !r.is_empty()) {
+            let run_values: Vec<String> = runs
+                .iter()
+                .map(|r| r.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+                .collect();
+            custom_dims.push(CustomDimension::for_runs(run_values));
         }
 
         // Get forecast hours from the latest run
