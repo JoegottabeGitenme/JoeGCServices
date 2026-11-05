@@ -470,6 +470,67 @@ async fn a_runs_valid_times_are_only_the_ones_that_run_holds() {
         .is_empty());
 }
 
+/// A parameter's valid times are its own: one added later than its siblings lacks the older
+/// instants the model-wide list has.
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn parameters_valid_times_are_only_the_ones_those_parameters_hold() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+    catalog.migrate().await.unwrap();
+
+    let run = now_micros().trunc_subsecs(0) - Duration::hours(6);
+    let register = |model: &str, parameter: &str, hour| {
+        let mut e = test_entry(model, parameter, hour);
+        e.reference_time = run;
+        let catalog = &catalog;
+        async move { catalog.register_dataset(&e).await.unwrap() }
+    };
+    for hour in 1..=4 {
+        register("hrrr", "TMP", hour).await;
+    }
+    register("hrrr", "UGRD", 5).await;
+    register("hrrr", "SBT124", 3).await;
+    register("gfs", "SBT124", 9).await;
+
+    let hours = |times: Vec<DateTime<Utc>>| {
+        times
+            .into_iter()
+            .map(|t| (t - run).num_hours())
+            .collect::<Vec<_>>()
+    };
+    let names = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        hours(
+            catalog
+                .get_parameters_valid_times("hrrr", &names(&["SBT124"]))
+                .await
+                .unwrap()
+        ),
+        vec![3]
+    );
+    assert_eq!(
+        hours(
+            catalog
+                .get_parameters_valid_times("hrrr", &names(&["TMP", "SBT124"]))
+                .await
+                .unwrap()
+        ),
+        vec![1, 2, 3, 4],
+        "each instant once, ascending, whichever parameter holds it"
+    );
+    assert_eq!(
+        hours(catalog.get_model_valid_times("hrrr").await.unwrap()),
+        vec![1, 2, 3, 4, 5],
+        "the model-wide list still has every parameter's instants"
+    );
+    assert!(catalog
+        .get_parameters_valid_times("hrrr", &[])
+        .await
+        .unwrap()
+        .is_empty());
+}
+
 #[tokio::test]
 #[ignore] // Requires Docker
 async fn a_fresh_database_ends_up_with_the_same_single_key() {

@@ -34,15 +34,25 @@ async fn build_extent_from_catalog_filtered(
     // Get bounding box from catalog
     let bbox = catalog.get_model_bbox(model_name).await.ok();
 
-    // Get temporal extent from catalog
-    let temporal_extent = catalog
-        .get_model_temporal_extent(model_name)
-        .await
-        .ok()
-        .flatten();
-
-    // Get all valid times for the values array
-    let valid_times = catalog.get_model_valid_times(model_name).await.ok();
+    // The collection's own valid times: those of its parameters, not of the whole model, or a
+    // parameter that only some runs hold would list instants it cannot serve. A collection that
+    // names no parameters keeps the model-wide axis.
+    let parameter_names: Vec<String> = collection_def
+        .parameters
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+    let valid_times = if parameter_names.is_empty() {
+        catalog.get_model_valid_times(model_name).await.ok()
+    } else {
+        catalog
+            .get_parameters_valid_times(model_name, &parameter_names)
+            .await
+            .ok()
+    };
+    let temporal_extent = valid_times
+        .as_ref()
+        .and_then(|times| Some((*times.first()?, *times.last()?)));
 
     // Build spatial extent
     let spatial_bbox = bbox

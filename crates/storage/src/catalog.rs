@@ -1651,6 +1651,27 @@ impl Catalog {
         Ok(times)
     }
 
+    /// The valid times the model holds for any of `parameters`, unique and ascending. A
+    /// collection's own share of [`Self::get_model_valid_times`]: a parameter added later than
+    /// the rest (older runs lack it) must not inherit the instants only its siblings have.
+    /// Served by `idx_datasets_model_param`.
+    pub async fn get_parameters_valid_times(
+        &self,
+        model: &str,
+        parameters: &[String],
+    ) -> WmsResult<Vec<DateTime<Utc>>> {
+        sqlx::query_scalar::<_, DateTime<Utc>>(
+            "SELECT DISTINCT valid_time FROM datasets \
+             WHERE model = $1 AND parameter = ANY($2) AND status = 'available' \
+             ORDER BY valid_time ASC",
+        )
+        .bind(model)
+        .bind(parameters)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))
+    }
+
     /// Every `(reference_time, valid_time)` the model holds for any of `parameters`, unique,
     /// ordered by valid time. [`Self::get_model_valid_times`] with the run each instant belongs
     /// to, for [`stitch_valid_times`]. Only the parameters asked for shape the axis: a run that
