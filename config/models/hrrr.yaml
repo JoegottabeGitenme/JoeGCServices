@@ -564,6 +564,34 @@ parameters:
     units: "%"
     valid_range: [0, 100]
 
+  # Simulated infrared brightness temperature (GOES 12 channel 4, 10.7 um)
+  #
+  # The same physical quantity as the GOES band 13 imagery (`goes19` / `goes18`, CMI_C13: a clean
+  # window IR channel at 10.3 um, against 10.7 um here), so a forecast cloud loop can continue the
+  # observed one without a change of quantity at "now". NCEP's files carry four simulated bands
+  # (SBT123, SBT124, SBT113, SBT114); only SBT124 is taken.
+  #
+  # Unlike every other parameter in this file it is not discipline 0: GRIB2 discipline 3 is "space
+  # products", category 192 is NCEP local, number 2, level type 8 (nominal top of atmosphere).
+  # Codes read from live wrfprsf06 and wrfsubhf02 messages of 2026-11-04 (wgrib2 calls the message
+  # `var3_2_1_7_192_2` / SBT124); the .idx line is `SBT124:top of atmosphere`.
+  # About 1.7 MB of GRIB2 per message; a bitmap marks ~116
+  # scattered points undefined.
+  - name: SBT124
+    description: "Simulated Brightness Temperature (GOES IR 10.7um)"
+    grib2:
+      discipline: 3
+      category: 192
+      number: 2
+    downsample: mean
+    levels:
+      - type: top_of_atmosphere
+        level_code: 8
+        display: "top of atmosphere"
+        idx_level: "top of atmosphere"
+    units: K
+    valid_range: [180, 330] # cold overshooting tops ~190 K, warm desert surface ~325 K
+
   # Precipitable Water
   # The .idx line is the long form "entire atmosphere (considered as a single layer)"; the plain
   # "entire atmosphere" derived from level code 200 matches nothing (the selective download needs an

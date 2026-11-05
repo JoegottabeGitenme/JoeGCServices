@@ -1,6 +1,7 @@
 # HRRR 15-minute data (`hrrr-subh`)
 
-Composite reflectivity, precipitation rate and precipitation type every 15 minutes, for the first
+Composite reflectivity, precipitation rate, precipitation type and simulated infrared brightness
+temperature every 15 minutes, for the first
 18 hours of every HRRR cycle (the most NCEP publishes). EDR only (no WMS layer).
 
 ## For the frontend
@@ -9,6 +10,7 @@ Composite reflectivity, precipitation rate and precipitation type every 15 minut
 |---|---|---|
 | `hrrr-subh-atmosphere` | `REFC` | Composite reflectivity, dBZ. `-10` means no echo. |
 | `hrrr-subh-surface` | `PRATE`, `CRAIN`, `CSNOW`, `CFRZR`, `CICEP` | `PRATE` is kg/m^2/s (multiply by 3600 for mm/h). The four type flags are `0`/`1`, read from the nearest cell, never blended. |
+| `hrrr-subh-satellite` | `SBT124` | Simulated 10.7 µm brightness temperature in K (cold = high cloud top), the forecast twin of the GOES band 13 collections (`goes19-infrared`). Valid range 180-330 K. Hourly steps to 48 h are `hrrr-satellite` on the `hrrr` model. GRIB2 discipline 3, category 192, number 2, level type 8. |
 
 ```
 GET /edr/collections/hrrr-subh-atmosphere/position
@@ -49,6 +51,13 @@ parameter, which the platform could not represent:
 * **Model name**: `hrrr-subh_*` files must not be filed under `hrrr` (`contains("hrrr")` would).
 * **Downloader** reads `wrfsubhf00-18` (S3 mirror, selective download by `.idx`: about 2.8 MB of a
   ~230 MB file), with the cycle lookback from `docs/downloader-cycle-lookback.md`.
+
+`SBT124` (added 2026-11) is a full-grid float field with a lot of texture, so it is by far the
+largest parameter: ~1.65 MB of GRIB2 per message (the six others together are ~0.7 MB), and about
+2.6 MB of Zarr per step (estimated: zstd of the decoded field is 2.1 MB, against 0.70 MB for REFC,
+whose measured Zarr is 869 kB). Per cycle that is +4 messages in each of 19 files (about +125 MB
+downloaded) and +73 steps x ~2.6 MB (about +190 MB stored), which about 2.6x the figures below.
+The sizes below are for the other six parameters.
 
 Cost, measured on production (Zarr per 15-minute step: REFC 869 kB, PRATE 406 kB, CRAIN 172 kB,
 CSNOW 67 kB, CICEP 46 kB, CFRZR 44 kB, ~1.6 MB together): 73 steps x 6 parameters = 438 datasets and

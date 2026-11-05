@@ -1515,7 +1515,7 @@ retention:
             filters.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(
             names.into_iter().collect::<Vec<_>>(),
-            ["CFRZR", "CICEP", "CRAIN", "CSNOW", "PRATE", "REFC"]
+            ["CFRZR", "CICEP", "CRAIN", "CSNOW", "PRATE", "REFC", "SBT124"]
         );
     }
 
@@ -1531,12 +1531,13 @@ retention:
         // the real file is 234,766,844 bytes (S3 Content-Length)
         let index = GribIndex::parse(&subhourly_idx(), Some(234_766_844)).unwrap();
         let ranges = index.get_byte_ranges(&filters);
-        // 6 parameters x 4 steps, not just the first message of each parameter
-        assert_eq!(ranges.len(), 24);
+        // 7 parameters x 4 steps, not just the first message of each parameter
+        assert_eq!(ranges.len(), 28);
         let total: u64 = ranges.iter().map(|r| r.size()).sum();
+        // ~2.8 MB for the six radar/precipitation parameters, plus four ~1.6 MB SBT124 messages
         assert!(
-            total < 5_000_000,
-            "selected {total} bytes of a 234 MB file; expected ~2.8 MB"
+            total < 10_000_000,
+            "selected {total} bytes of a 234 MB file; expected ~9.4 MB"
         );
         let steps: std::collections::BTreeSet<String> = index
             .find_matching_entries(&filters)
@@ -1547,5 +1548,66 @@ retention:
             steps.into_iter().collect::<Vec<_>>(),
             ["15 min fcst", "30 min fcst", "45 min fcst", "60 min fcst"]
         );
+    }
+
+    #[test]
+    fn hrrr_subh_takes_exactly_one_simulated_infrared_message_per_fifteen_minute_step() {
+        use crate::grib_index::{GribIndex, ParamFilter};
+        // wrfsubhf01 lists four simulated bands per step (SBT123, SBT124, SBT113, SBT114, all at
+        // "top of atmosphere"); only SBT124 is wanted
+        let idx = subhourly_idx();
+        assert_eq!(idx.lines().filter(|l| l.contains(":SBT1")).count(), 16);
+        let m = real_model("hrrr-subh");
+        let sbt: Vec<ParamFilter> = m
+            .build_param_filters()
+            .into_iter()
+            .filter(|(p, _)| p == "SBT124")
+            .map(|(p, l)| ParamFilter::new(p, l))
+            .collect();
+        assert_eq!(sbt.len(), 1, "one filter: {sbt:?}");
+        assert_eq!(sbt[0].level, "top of atmosphere");
+
+        let index = GribIndex::parse(&idx, Some(234_766_844)).unwrap();
+        let entries = index.find_matching_entries(&sbt);
+        let steps: Vec<&str> = entries.iter().map(|e| e.forecast_type.as_str()).collect();
+        assert_eq!(
+            steps,
+            ["15 min fcst", "30 min fcst", "45 min fcst", "60 min fcst"]
+        );
+        assert!(entries.iter().all(|e| e.parameter == "SBT124"));
+
+        // each message is a ~1.6 MB range of its own (the next message is SBT113, not wanted)
+        let ranges = index.get_byte_ranges(&sbt);
+        assert_eq!(ranges.len(), 4);
+        for r in &ranges {
+            assert!(
+                (1_000_000..2_500_000).contains(&r.size()),
+                "SBT124 message of {} bytes",
+                r.size()
+            );
+        }
+    }
+
+    #[test]
+    fn hrrr_hourly_takes_one_simulated_infrared_message_from_the_pressure_file() {
+        use crate::grib_index::{GribIndex, ParamFilter};
+        let idx = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/hrrr.t23z.wrfprsf02.grib2.idx"),
+        )
+        .expect("fixture");
+        let filters = real_model("hrrr").build_param_filters();
+        assert!(filters
+            .iter()
+            .any(|(p, l)| p == "SBT124" && l == "top of atmosphere"));
+        let sbt: Vec<ParamFilter> = filters
+            .into_iter()
+            .filter(|(p, _)| p == "SBT124")
+            .map(|(p, l)| ParamFilter::new(p, l))
+            .collect();
+        let index = GribIndex::parse(&idx, None).unwrap();
+        let entries = index.find_matching_entries(&sbt);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].forecast_type, "2 hour fcst");
     }
 }

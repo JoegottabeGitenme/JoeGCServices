@@ -210,6 +210,7 @@ pub mod level_matching {
             "surface" => "surface".to_string(),
             "entire_atmosphere" | "atmosphere" => "entire atmosphere".to_string(),
             "mean_sea_level" | "msl" => "mean sea level".to_string(),
+            "top_of_atmosphere" => "top of atmosphere".to_string(),
             "low_cloud_layer" => "low cloud layer".to_string(),
             "middle_cloud_layer" => "middle cloud layer".to_string(),
             "high_cloud_layer" => "high cloud layer".to_string(),
@@ -297,5 +298,20 @@ mod tests {
         assert_eq!(parse_level_numeric("1000 mb"), Some(1000.0));
         assert_eq!(parse_level_numeric("2 m above ground"), Some(2.0));
         assert_eq!(parse_level_numeric("surface"), None);
+    }
+
+    #[test]
+    fn test_format_named_level_top_of_atmosphere() {
+        let filter = LevelFilter {
+            level_type: "top_of_atmosphere".to_string(),
+            level_code: Some(8),
+            level_codes: None,
+        };
+        // HRRR's simulated satellite band; GOES band names pass through unchanged
+        assert_eq!(
+            format_named_level("top_of_atmosphere", &filter),
+            "top of atmosphere"
+        );
+        assert_eq!(format_named_level("clean_ir", &filter), "clean_ir");
     }
 }
