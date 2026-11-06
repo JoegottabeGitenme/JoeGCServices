@@ -683,7 +683,25 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
 
         let grid_bbox = &self.metadata.bbox;
 
-        // Normalize longitude for grids using 0-360 convention (e.g., GFS)
+        // A grid whose columns go all the way round takes any spelling of a longitude: fold it into
+        // [min_lon, min_lon + 360), so the strip between the last column and the first one plus 360
+        // (GFS 359.75..360, i.e. -0.25..0; GLDAS 179.875..180.125) is inside. Without this GFS
+        // answered null for London (-0.12).
+        if self.metadata.wraps_longitude() {
+            if !(lat >= grid_bbox.min_lat && lat <= grid_bbox.max_lat) {
+                return None;
+            }
+            let (res_x, res_y) = self.metadata.resolution();
+            let folded = grid_bbox.min_lon + (lon - grid_bbox.min_lon).rem_euclid(360.0);
+            let grid_x = (folded - grid_bbox.min_lon) / res_x;
+            let grid_y = match self.metadata.row_origin {
+                RowOrigin::North => (grid_bbox.max_lat - lat) / res_y,
+                RowOrigin::South => (lat - grid_bbox.min_lat) / res_y,
+            };
+            return Some((grid_x, grid_y));
+        }
+
+        // Normalize longitude for grids using 0-360 convention
         let normalized_lon = if grid_bbox.uses_0_360_longitude() && lon < 0.0 {
             lon + 360.0
         } else {
@@ -715,7 +733,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             return Ok(None);
         };
         let (grid_w, grid_h) = self.metadata.shape;
-        let col = grid_x.round() as usize;
+        let col = self.wrap_col(grid_x.round() as usize);
         let row = grid_y.round() as usize;
         if col >= grid_w || row >= grid_h {
             return Ok(None);
@@ -725,6 +743,15 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             return Ok(None);
         }
         Ok(Some(value))
+    }
+
+    /// Column `grid_w` (rounded up from the seam) is column 0 again on a grid that wraps.
+    fn wrap_col(&self, col: usize) -> usize {
+        if col == self.metadata.shape.0 && self.metadata.wraps_longitude() {
+            0
+        } else {
+            col
+        }
     }
 
     async fn read_single_value(&self, col: usize, row: usize) -> Result<f32> {
@@ -956,7 +983,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
 
         if near_grid_point {
             // Snap to nearest grid point and return exact value
-            let col = grid_x.round() as usize;
+            let col = self.wrap_col(grid_x.round() as usize);
             let row = grid_y.round() as usize;
             if col >= grid_w || row >= grid_h {
                 return Ok(None);
@@ -974,7 +1001,8 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
         let y1 = grid_y.floor() as usize;
 
         // For global grids (like GFS 0-360), wrap x2 around
-        let is_global = grid_bbox.max_lon - grid_bbox.min_lon > 359.0;
+        let is_global =
+            self.metadata.wraps_longitude() || grid_bbox.max_lon - grid_bbox.min_lon > 359.0;
         let x2 = if is_global && x1 + 1 >= grid_w {
             0 // Wrap to column 0
         } else {
@@ -1009,7 +1037,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
             || v22 == fill
         {
             // If any corner is missing, fall back to nearest neighbor
-            let col = grid_x.round() as usize;
+            let col = self.wrap_col(grid_x.round() as usize);
             let row = grid_y.round() as usize;
             if col >= grid_w || row >= grid_h {
                 return Ok(None);
