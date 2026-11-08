@@ -301,6 +301,181 @@ async fn test_zarr_read_point() {
     println!("  Tested {} points", test_points.len());
 }
 
+/// A global grid in the 0-360 convention (GFS: 0..359.75) wraps: a point just west of 0 deg lies
+/// between the last column and column 0. It used to fall outside the bbox and answer None, so
+/// GFS had no data for London (-0.12).
+#[tokio::test]
+async fn test_zarr_read_point_across_the_0_360_seam() {
+    let (width, height, chunk_size) = (360, 3, 64);
+    let bbox = BoundingBox::new(0.0, -1.0, 359.0, 1.0); // 1 deg spacing, last column at 359
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let zarr_path = temp_dir.path().join("test_seam.zarr");
+    write_zarr_array_simple(
+        &zarr_path,
+        &create_test_data(width, height),
+        width,
+        height,
+        chunk_size,
+        &bbox,
+    )
+    .expect("Failed to write Zarr");
+    let store = FilesystemStore::new(&zarr_path).expect("Failed to open store");
+    let processor = ZarrGridProcessor::open(store, "/", GridProcessorConfig::default())
+        .expect("Failed to open ZarrGridProcessor");
+    assert!(processor.metadata().wraps_longitude());
+
+    // Row 1 is lat 0. Column 359 holds 359001, column 0 holds 1.
+    let mid = processor
+        .read_point(-0.5, 0.0)
+        .await
+        .unwrap()
+        .expect("seam point has a value");
+    assert!(
+        (mid - 179_501.0).abs() < 1.0,
+        "halfway between col 359 and col 0, got {mid}"
+    );
+    let east = processor
+        .read_point(-0.004, 0.0)
+        .await
+        .unwrap()
+        .expect("snaps to column 0");
+    assert!((east - 1.0).abs() < 0.001, "got {east}");
+    let same = processor
+        .read_point(359.5, 0.0)
+        .await
+        .unwrap()
+        .expect("0-360 spelling too");
+    assert!((same - mid).abs() < 0.001);
+
+    assert_eq!(
+        processor.read_point_nearest(-0.3, 0.0).await.unwrap(),
+        Some(1.0)
+    );
+    assert_eq!(
+        processor.read_point_nearest(-0.7, 0.0).await.unwrap(),
+        Some(359_001.0)
+    );
+    assert_eq!(
+        processor.read_point(-0.5, 5.0).await.unwrap(),
+        None,
+        "latitude is still checked"
+    );
+    let col0 = processor
+        .read_point(360.0, 0.0)
+        .await
+        .unwrap()
+        .expect("360 is column 0");
+    assert!((col0 - 1.0).abs() < 0.001, "got {col0}");
+    let west = processor
+        .read_point(-359.5, 0.0)
+        .await
+        .unwrap()
+        .expect("-359.5 is 0.5");
+    let half = processor.read_point(0.5, 0.0).await.unwrap().expect("0.5");
+    assert!((west - half).abs() < 0.001);
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            processor.read_point(bad, 0.0).await.unwrap(),
+            None,
+            "lon {bad}"
+        );
+        assert_eq!(
+            processor.read_point_nearest(bad, 0.0).await.unwrap(),
+            None,
+            "lon {bad}"
+        );
+    }
+}
+
+/// A global grid in -180..180 with cell-centred columns (GLDAS: -179.875..179.875) wraps on both
+/// sides of the dateline, and longitudes above 180 fold back.
+#[tokio::test]
+async fn test_zarr_read_point_across_the_dateline() {
+    let (width, height, chunk_size) = (360, 3, 64);
+    let bbox = BoundingBox::new(-179.5, -1.0, 179.5, 1.0);
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let zarr_path = temp_dir.path().join("test_dateline.zarr");
+    write_zarr_array_simple(
+        &zarr_path,
+        &create_test_data(width, height),
+        width,
+        height,
+        chunk_size,
+        &bbox,
+    )
+    .expect("Failed to write Zarr");
+    let store = FilesystemStore::new(&zarr_path).expect("Failed to open store");
+    let processor = ZarrGridProcessor::open(store, "/", GridProcessorConfig::default())
+        .expect("Failed to open ZarrGridProcessor");
+    assert!(processor.metadata().wraps_longitude());
+
+    // Halfway between column 359 (179.5) and column 0 (-179.5) is the dateline, from either side.
+    let east = processor
+        .read_point(179.9, 0.0)
+        .await
+        .unwrap()
+        .expect("east of the last column");
+    let west = processor
+        .read_point(-179.9, 0.0)
+        .await
+        .unwrap()
+        .expect("west of the first column");
+    let dateline = processor
+        .read_point(180.0, 0.0)
+        .await
+        .unwrap()
+        .expect("180");
+    let minus = processor
+        .read_point(-180.0, 0.0)
+        .await
+        .unwrap()
+        .expect("-180");
+    assert!((dateline - 179_501.0).abs() < 1.0, "got {dateline}");
+    assert!((minus - dateline).abs() < 0.001);
+    assert!(
+        east > dateline && west < dateline,
+        "east {east} west {west}"
+    );
+    let folded = processor
+        .read_point(190.0, 0.0)
+        .await
+        .unwrap()
+        .expect("190 is -170");
+    let plain = processor
+        .read_point(-170.0, 0.0)
+        .await
+        .unwrap()
+        .expect("-170");
+    assert!((folded - plain).abs() < 0.001);
+}
+
+/// A regional grid does not wrap: the strip past its last column stays outside.
+#[tokio::test]
+async fn test_zarr_regional_grid_does_not_wrap() {
+    let (width, height, chunk_size) = (50, 40, 16);
+    let bbox = BoundingBox::new(0.0, 1.0, 49.0, 40.0);
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let zarr_path = temp_dir.path().join("test_regional.zarr");
+    write_zarr_array_simple(
+        &zarr_path,
+        &create_test_data(width, height),
+        width,
+        height,
+        chunk_size,
+        &bbox,
+    )
+    .expect("Failed to write Zarr");
+    let store = FilesystemStore::new(&zarr_path).expect("Failed to open store");
+    let processor = ZarrGridProcessor::open(store, "/", GridProcessorConfig::default())
+        .expect("Failed to open ZarrGridProcessor");
+    assert!(!processor.metadata().wraps_longitude());
+    assert_eq!(processor.read_point(49.5, 20.0).await.unwrap(), None);
+    assert_eq!(
+        processor.read_point_nearest(49.4, 20.0).await.unwrap(),
+        None
+    );
+}
+
 #[tokio::test]
 async fn test_chunk_cache_efficiency() {
     // Test that the chunk cache works - reading the same region twice should hit cache

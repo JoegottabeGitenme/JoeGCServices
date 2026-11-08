@@ -480,6 +480,14 @@ pub fn point_spacing(extent: f64, n: usize) -> f64 {
 }
 
 impl GridMetadata {
+    /// Whether the columns go all the way round the globe: the last point sits one spacing short of
+    /// the first plus 360 degrees (GFS 0..359.75 over 1440 columns), so a point between them lies
+    /// between the last column and column 0, not outside the grid.
+    pub fn wraps_longitude(&self) -> bool {
+        let (res_x, _) = self.resolution();
+        self.shape.0 > 1 && (self.bbox.width() + res_x - 360.0).abs() < res_x * 0.5
+    }
+
     /// Calculate the grid resolution in degrees per point.
     ///
     /// The bbox runs from the first grid point to the last (GFS 0..359.75 x 90..-90 over
