@@ -1160,7 +1160,7 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
         );
 
         // Create GridMetadata for this level
-        let level_metadata = self.metadata_for_level(level_info);
+        let level_metadata = self.metadata_for_level(level_info)?;
 
         debug!(
             base_path = %self.base_path,
@@ -1192,31 +1192,45 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
     /// value range come from the catalog entry -- but the model selects a projected grid's
     /// projection, so a level of a projected dataset needs the right one.
     ///
-    /// The `bbox` is the dataset's: the first-to-last point extent of level 0. A level has fewer
-    /// points over it, so its `resolution()` is the extent over one less than ITS point count
-    /// (MRMS level 2: 69.99 / 1749 degrees, not 0.04) and `read_region` draws each cell further
-    /// from its data the further it is from the first column or row (by about half a level cell
-    /// over the eastern US at MRMS level 2). A projected level is placed by index instead (see
-    /// [`crate::window::level_index`]), so only a lat/lon level is affected; `edr-api` reads none.
-    fn metadata_for_level(&self, level: &PyramidLevel) -> GridMetadata {
+    /// A lat/lon level gets its own `bbox`: the first-to-last cell-centre extent of the cells it
+    /// holds (see [`MultiscaleMetadata::level_bbox`]). Its `resolution()` is then the level's
+    /// real spacing (MRMS level 2: 0.04 degrees) and a read draws each cell where its data is.
+    /// Reusing level 0's bbox, whose extent is first to last point of ITS cells, with the level's
+    /// shape made the spacing extent over one less than the level's cell count (69.99 / 1749
+    /// degrees at MRMS level 2) and put cell `k` at the wrong place, by up to `(scale - 1) / 2`
+    /// native cells and growing east and south (about 1.5 km at MRMS level 2). A projected level
+    /// is placed by index instead (see [`crate::window::level_index`]), and keeps the dataset's
+    /// bbox because a read of a projected grid takes the whole grid.
+    fn metadata_for_level(&self, level: &PyramidLevel) -> Result<GridMetadata> {
         // Note: level.resolution() returns the resolution at this pyramid level,
         // but GridMetadata calculates resolution from bbox/shape, so we don't need it here
         let level_name = format!("pyramid_level_{}", level.level);
 
+        let bbox = if self.multiscale.projection.requires_projection_transform() {
+            self.multiscale.bbox
+        } else {
+            self.multiscale.level_bbox(level).ok_or_else(|| {
+                GridProcessorError::invalid_metadata(format!(
+                    "Pyramid level {} cannot be placed: the multiscale metadata has no level 0",
+                    level.level
+                ))
+            })?
+        };
+
         if let Some(dataset) = &self.dataset {
-            return GridMetadata {
+            return Ok(GridMetadata {
                 level: level_name,
-                bbox: self.multiscale.bbox,
+                bbox,
                 shape: level.shape,
                 chunk_shape: level.chunk_shape,
                 num_chunks: level.num_chunks(),
                 row_origin: self.multiscale.row_origin,
                 projection: self.multiscale.projection,
                 ..dataset.clone()
-            };
+            });
         }
 
-        GridMetadata {
+        Ok(GridMetadata {
             model: self
                 .multiscale
                 .name
@@ -1235,14 +1249,14 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
             units: String::new(),
             reference_time: chrono::Utc::now(), // Will be overwritten if available
             forecast_hour: 0,
-            bbox: self.multiscale.bbox,
+            bbox,
             shape: level.shape,
             chunk_shape: level.chunk_shape,
             num_chunks: level.num_chunks(),
             fill_value: f32::NAN,
             row_origin: self.multiscale.row_origin,
             projection: self.multiscale.projection,
-        }
+        })
     }
 
     /// Check if multiscale data is available (has more than just native level).

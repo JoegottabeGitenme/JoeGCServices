@@ -2336,7 +2336,10 @@ mod tests {
         assert_eq!(new.entry_ttl, None);
 
         let unresolved = plan_for_request("mrms", DimensionParams::default(), None);
-        assert_eq!(unresolved.dimension_suffix.as_deref(), Some("@unresolved"));
+        assert_eq!(
+            unresolved.dimension_suffix.as_deref(),
+            Some(format!("@unresolved.{}", crate::tile_version::TILE_GEOMETRY).as_str())
+        );
         assert_eq!(
             unresolved.entry_ttl,
             Some(std::time::Duration::from_secs(LATEST_MAX_AGE_SECS as u64))
