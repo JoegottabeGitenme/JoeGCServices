@@ -1,7 +1,7 @@
 # HRRR sub-hourly EDR Configuration
 #
-# 15-minute composite reflectivity, precipitation rate and precipitation type for the first
-# 18 hours of every HRRR cycle (model `hrrr-subh`, see config/models/hrrr-subh.yaml).
+# 15-minute composite reflectivity, precipitation rate, precipitation type and simulated infrared
+# brightness temperature for the first 18 hours of every HRRR cycle (model `hrrr-subh`, see config/models/hrrr-subh.yaml).
 #
 # Query a series with `datetime=<start>/<end>`; the steps are 15 minutes apart and where two
 # cycles cover the same instant the newer cycle wins. `hrrr-atmosphere` (model `hrrr`) keeps the
@@ -49,6 +49,20 @@ collections:
       - name: CICEP
         levels: [surface]
         valid_range: { min: 0, max: 1 }  # categorical flag
+    run_mode: instances
+
+  # Simulated infrared brightness temperature, 15-minute steps. Same quantity as the GOES band 13
+  # imagery (`goes19-infrared`), so a loop can run from the observed frames into this one.
+  - id: hrrr-subh-satellite
+    title: "HRRR 15-minute - Simulated Satellite"
+    description: "Simulated infrared brightness temperature (10.7µm) every 15 minutes, 0-18 h ahead of each HRRR cycle; cloud tops read as cold"
+    level_filter:
+      level_type: top_of_atmosphere
+      level_code: 8
+    parameters:
+      - name: SBT124
+        levels: [top_of_atmosphere]
+        valid_range: { min: 180, max: 330 }  # Kelvin
     run_mode: instances
 
 settings:
