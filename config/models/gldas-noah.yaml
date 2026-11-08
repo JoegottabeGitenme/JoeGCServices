@@ -7,7 +7,7 @@ model:
   id: gldas-noah
   name: "GLDAS-2.1 Noah Land Surface Model (EP)"
   description: "Global Land Data Assimilation System - Noah 0.25 3-hourly Early Products"
-  enabled: true
+  enabled: false # Disabled 2026-11-08: nothing reads it; the Early product lags ~1 month, so it is never current. Not downloaded, ingested or advertised; retention purges leftovers
 
 dimensions:
   type: observation
@@ -36,6 +36,7 @@ schedule:
 
 retention:
   hours: 720
+  purge_when_disabled: true # model is disabled: expire all leftovers (ignored again once enabled: true)
 
 parameters:
   # ===========================================================================

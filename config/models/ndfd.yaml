@@ -10,7 +10,7 @@ model:
   id: ndfd
   name: "NDFD - National Digital Forecast Database"
   description: "NWS official digital gridded forecasts for CONUS, 2.5km resolution"
-  enabled: true
+  enabled: false # Disabled 2026-11-08: nothing reads it; HRRR/NBM/GFS cover its parameters. Not downloaded, ingested or advertised; retention purges leftovers
 
 # WMS/WMTS dimension configuration
 # NDFD uses TIME dimension only (like observations) since there's no run/cycle concept
@@ -76,6 +76,7 @@ schedule:
 retention:
   hours: 24                         # Keep data for 24 hours (allows rollback)
   keep_latest_updates: 6            # Keep at least 6 recent versions for looping
+  purge_when_disabled: true # model is disabled: expire all leftovers (ignored again once enabled: true)
 
 # Precaching - disabled for now
 precaching:
