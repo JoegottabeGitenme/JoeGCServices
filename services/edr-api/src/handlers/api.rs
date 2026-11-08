@@ -62,10 +62,12 @@ pub async fn api_handler(query: Result<Query<ApiQuery>, QueryRejection>) -> Resp
         .unwrap()
 }
 
-/// GET /edr/api.html - API documentation (redirect to ReDoc/Swagger)
-pub async fn api_html_handler() -> Response {
-    // Return simple HTML with embedded ReDoc
-    let html = r#"<!DOCTYPE html>
+/// ReDoc page for the spec at `api` (relative, so it resolves to /edr/api).
+///
+/// The bundle is pinned to an exact release. It used to load `redoc/latest`, and when
+/// `latest` moved to Redoc 3 (an ES module: the bundle ends in `export {...}`) the classic
+/// `<script>` tag threw a SyntaxError and the page went blank.
+const API_HTML: &str = r#"<!DOCTYPE html>
 <html>
 <head>
     <title>Weather WMS EDR API Documentation</title>
@@ -78,21 +80,37 @@ pub async fn api_html_handler() -> Response {
 </head>
 <body>
     <redoc spec-url='api'></redoc>
-    <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+    <script src="https://cdn.redoc.ly/redoc/v2.5.4/bundles/redoc.standalone.js"></script>
 </body>
 </html>"#;
 
+/// GET /edr/api.html - API documentation (ReDoc)
+pub async fn api_html_handler() -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
         .header(header::CACHE_CONTROL, "max-age=3600")
-        .body(html.into())
+        .body(API_HTML.into())
         .unwrap()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A floating CDN version (`redoc/latest`) once blanked this page when Redoc 3 shipped
+    /// as an ES module. Keep the bundle pinned.
+    #[test]
+    fn api_html_pins_the_redoc_version() {
+        assert!(
+            API_HTML.contains("cdn.redoc.ly/redoc/v2."),
+            "ReDoc bundle is not pinned to 2.x"
+        );
+        assert!(
+            !API_HTML.contains("/latest/"),
+            "api.html loads a floating `latest` asset"
+        );
+    }
 
     async fn get(f: Option<&str>) -> (String, String) {
         let q = ApiQuery {
