@@ -894,9 +894,10 @@ Returns CoverageJSON (default) or GeoJSON with data at the location:
 
 ### Caching
 
-Location query responses include caching headers:
-- `Cache-Control: max-age=300` (5 minutes for gridded data)
-- `Cache-Control: max-age=60` (1 minute for METAR - updates frequently)
+Data query responses (position, radius, area, cube, corridor, trajectory, locations) include caching headers:
+- `Cache-Control: max-age=300` (5 minutes) when the query names its time with `datetime`, with an instance (`/instances/{id}/...`), or, on `position` only, with `run`. A `datetime` interval counts only once it has ended
+- `Cache-Control: max-age=60` (1 minute) when it does not, so the server picks the newest scan or run: `*-latest` collections, and e.g. `mrms-single-level/area` with no `datetime`. An interval that is still open also counts, because it grows as data arrives: an open end (`datetime=2026-10-07T20:00:00Z/..`) or a closed end that lies in the future. `run` is accepted but ignored (the newest run is queried) by every data endpoint except `position`, so there it does not make a query explicit
+- `Cache-Control: max-age=60` for METAR, and for TAF (always the newest issued TAF)
 - `X-Cache: HIT` or `X-Cache: MISS` indicates cache status
 
 ---

@@ -87,6 +87,28 @@ Returns XML with available layers and tile matrix sets.
 | PNG | `image/png` | `.png` |
 | JPEG | `image/jpeg` | `.jpg` |
 
+## Caching
+
+Tile responses carry `Cache-Control: max-age` and an `X-Cache` header
+(`L1-HIT`, `L2-HIT` or `MISS`).
+
+| Request | `max-age` |
+|---------|-----------|
+| Names its time (`TIME=` on radar/satellite layers) | 300 s from the in-memory cache, 3600 s otherwise |
+| Names no time (or `TIME=default`) | 60 s |
+| Model layer with no `RUN`, or a `RUN` that is no longer the newest run | 60 s |
+| Model layer with a `RUN` that is the newest run | 300 s from the in-memory cache, 3600 s otherwise |
+
+A tile without a time is the newest radar scan or satellite image, and a model
+tile always comes from the newest model run (the `RUN` dimension is accepted but
+does not select a run), so these change as new data arrives and are kept for
+only a minute by browsers and CDNs. A `RUN` is treated as naming the tile only
+while it is the run being rendered; once a newer run lands the same URL returns
+that run and drops to 60 s. The server's own tile cache keys such a tile by the
+dataset it was rendered from, so a new scan or run is never answered with an
+older tile. Wind barb layers are keyed by the wind components they are drawn
+from.
+
 ## OGC Compliance
 
 The WMTS implementation follows OGC WMTS 1.0.0 specification, including:

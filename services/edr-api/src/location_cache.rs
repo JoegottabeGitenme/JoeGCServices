@@ -4,11 +4,18 @@
 //! enabling fast repeated queries at the same location.
 //!
 //! ## Cache Key Structure
-//! Keys are composed of: collection_id:location_id:instance_id:datetime:params:z
+//! Keys are composed of:
+//! collection_id:location_id:instance_id:datetime:params:z:format:run:forecast_hour
+//!
+//! `run` and `forecast_hour` are in the key even though `location_query`
+//! currently ignores them: a key must name every input that can change the
+//! body, so honouring them later cannot serve one run's answer for another.
 //!
 //! ## Eviction Strategy
 //! - Memory-based LRU eviction when size limit is exceeded
 //! - TTL-based expiration on read (lazy)
+//! - A per-entry TTL shorter than the default for responses about the latest
+//!   data (see [`LocationCache::put`])
 //!
 //! TODO: Add background pre-caching for configured high-traffic locations
 //! when new data is ingested. This would involve:
@@ -41,6 +48,10 @@ pub struct LocationCacheKey {
     pub z: Option<String>,
     /// Output format (e.g., "geojson", "covjson")
     pub format: Option<String>,
+    /// `run` parameter (see [`Self::with_run`]).
+    pub run: Option<String>,
+    /// `forecast-hour` parameter (see [`Self::with_run`]).
+    pub forecast_hour: Option<String>,
 }
 
 impl LocationCacheKey {
@@ -62,13 +73,23 @@ impl LocationCacheKey {
             parameters,
             z,
             format,
+            run: None,
+            forecast_hour: None,
         }
+    }
+
+    /// Add the `run` and `forecast-hour` the query was made with, so two URLs
+    /// that differ only in them never share an entry.
+    pub fn with_run(mut self, run: Option<String>, forecast_hour: Option<String>) -> Self {
+        self.run = run;
+        self.forecast_hour = forecast_hour;
+        self
     }
 
     /// Convert to a string key for the LRU cache.
     fn to_string_key(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}:{}:{}",
             self.collection_id,
             self.location_id,
             self.instance_id.as_deref().unwrap_or("-"),
@@ -76,6 +97,8 @@ impl LocationCacheKey {
             self.parameters.as_deref().unwrap_or("-"),
             self.z.as_deref().unwrap_or("-"),
             self.format.as_deref().unwrap_or("-"),
+            self.run.as_deref().unwrap_or("-"),
+            self.forecast_hour.as_deref().unwrap_or("-"),
         )
     }
 }
@@ -196,13 +219,26 @@ impl LocationCache {
     }
 
     /// Store a response in the cache.
-    pub async fn put(&self, key: &LocationCacheKey, data: Bytes, content_type: String) {
+    ///
+    /// `ttl` shortens this entry's lifetime; `None` uses the default. It can
+    /// only shorten, never extend, the default. WHY: a response about the
+    /// latest data (no datetime / instance) goes to the client with a short
+    /// `max-age`; if the entry behind it lived for the full default (5 min) a
+    /// cache HIT would hand out a body far older than that header admits, and
+    /// the CDN would hold it on top.
+    pub async fn put(
+        &self,
+        key: &LocationCacheKey,
+        data: Bytes,
+        content_type: String,
+        ttl: Option<Duration>,
+    ) {
         let string_key = key.to_string_key();
         let entry = CachedResponse {
             data,
             content_type,
             inserted_at: Instant::now(),
-            ttl: self.default_ttl,
+            ttl: ttl.map_or(self.default_ttl, |t| t.min(self.default_ttl)),
         };
         let entry_size = entry.size() as u64;
 
@@ -288,7 +324,9 @@ mod tests {
         let data = Bytes::from(r#"{"type":"Coverage"}"#);
         let content_type = "application/vnd.cov+json".to_string();
 
-        cache.put(&key, data.clone(), content_type.clone()).await;
+        cache
+            .put(&key, data.clone(), content_type.clone(), None)
+            .await;
 
         let result = cache.get(&key).await;
         assert!(result.is_some());
@@ -327,6 +365,79 @@ mod tests {
         assert!(string_key.contains("geojson"));
     }
 
+    #[test]
+    fn run_and_forecast_hour_are_part_of_the_key() {
+        let base = || LocationCacheKey::new("hrrr-surface", "KJFK", None, None, None, None, None);
+        let plain = base().to_string_key();
+        let run = base().with_run(Some("2024-12-29T12:00:00Z".to_string()), None);
+        let hour = base().with_run(None, Some("6".to_string()));
+        assert_ne!(run.to_string_key(), plain);
+        assert_ne!(hour.to_string_key(), plain);
+        assert_ne!(run.to_string_key(), hour.to_string_key());
+        // ...and an absent run is not the same key as a run called "-".
+        assert_eq!(base().with_run(None, None).to_string_key(), plain);
+    }
+
+    /// The finding being fixed: a latest response was cached for the default
+    /// 5 minutes while the header said 60 s.
+    #[tokio::test]
+    async fn an_entry_with_a_short_ttl_expires_before_the_default() {
+        let cache = LocationCache::new(10, 300);
+        let latest = LocationCacheKey::new("mrms", "KOKC", None, None, None, None, None);
+        let pinned = LocationCacheKey::new(
+            "mrms",
+            "KOKC",
+            None,
+            Some("2024-12-29T12:00:00Z".to_string()),
+            None,
+            None,
+            None,
+        );
+        cache
+            .put(
+                &latest,
+                Bytes::from("latest"),
+                "text/plain".to_string(),
+                Some(Duration::from_millis(5)),
+            )
+            .await;
+        cache
+            .put(
+                &pinned,
+                Bytes::from("pinned"),
+                "text/plain".to_string(),
+                None,
+            )
+            .await;
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        assert!(
+            cache.get(&latest).await.is_none(),
+            "a latest entry must not outlive its short TTL"
+        );
+        assert!(
+            cache.get(&pinned).await.is_some(),
+            "an entry without an override keeps the default TTL"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_ttl_override_never_extends_the_default() {
+        let cache = LocationCache::new(10, 0);
+        let key = LocationCacheKey::new("col", "loc", None, None, None, None, None);
+        cache
+            .put(
+                &key,
+                Bytes::from("data"),
+                "text/plain".to_string(),
+                Some(Duration::from_secs(3600)),
+            )
+            .await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert!(cache.get(&key).await.is_none());
+    }
+
     #[tokio::test]
     async fn test_cache_stats() {
         let cache = LocationCache::new(10, 300);
@@ -340,7 +451,7 @@ mod tests {
 
         // Put
         cache
-            .put(&key1, Bytes::from("data"), "text/plain".to_string())
+            .put(&key1, Bytes::from("data"), "text/plain".to_string(), None)
             .await;
         assert_eq!(cache.stats().entry_count.load(Ordering::Relaxed), 1);
 

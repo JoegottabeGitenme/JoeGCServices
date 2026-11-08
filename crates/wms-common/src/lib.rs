@@ -1,6 +1,7 @@
 //! Common types and utilities shared across all weather-wms services.
 
 pub mod bbox;
+pub mod cache_control;
 pub mod crs;
 pub mod error;
 pub mod grid;

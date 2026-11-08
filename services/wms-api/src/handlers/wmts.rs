@@ -20,6 +20,7 @@ use tracing::{debug, error, info, instrument};
 
 use storage::CacheKey;
 use wms_common::{
+    cache_control::TimeSelection,
     tile::{web_mercator_tile_matrix_set, wgs84_tile_to_latlon_bounds},
     BoundingBox, CrsCode, TileCoord,
 };
@@ -33,6 +34,7 @@ use super::common::{
 use crate::layer_config::LayerConfigRegistry;
 use crate::model_config::ModelDimensionRegistry;
 use crate::state::AppState;
+use crate::tile_version::{l1_cache_key, resolve_latest_version, TileCachePlan, TileRequestDims};
 use storage::ParameterAvailability;
 
 // ============================================================================
@@ -444,7 +446,7 @@ pub async fn wmts_kvp_handler(
                 }
             }
 
-            let (forecast_hour, observation_time, _) =
+            let (forecast_hour, observation_time, run) =
                 dimensions.parse_for_layer(model, &state.model_dimensions);
 
             wmts_get_tile(
@@ -457,6 +459,7 @@ pub async fn wmts_kvp_handler(
                 tile_row,
                 forecast_hour,
                 observation_time,
+                run,
                 dimensions.effective_elevation(),
                 format,
             )
@@ -624,7 +627,7 @@ pub async fn wmts_rest_handler(
         }
     }
 
-    let (forecast_hour, observation_time, _) =
+    let (forecast_hour, observation_time, run) =
         dimensions.parse_for_layer(model, &state.model_dimensions);
 
     // REST always uses PNG (format determined by file extension)
@@ -638,6 +641,7 @@ pub async fn wmts_rest_handler(
         y,
         forecast_hour,
         observation_time,
+        run,
         dimensions.elevation.as_deref(),
         "image/png",
     )
@@ -662,7 +666,7 @@ pub async fn xyz_tile_handler(
     };
 
     let model = layer.split('_').next().unwrap_or("");
-    let (forecast_hour, observation_time, _) =
+    let (forecast_hour, observation_time, run) =
         dimensions.parse_for_layer(model, &state.model_dimensions);
 
     // XYZ always uses WebMercatorQuad and PNG
@@ -676,6 +680,7 @@ pub async fn xyz_tile_handler(
         y_val,
         forecast_hour,
         observation_time,
+        run,
         dimensions.elevation.as_deref(),
         "image/png",
     )
@@ -852,6 +857,41 @@ async fn wmts_get_filtered_capabilities(state: Arc<AppState>, requested: Vec<Str
 // GetTile
 // ============================================================================
 
+/// `max-age` for a tile whose time the request pinned and that was answered
+/// from the in-memory (L1) cache. Unchanged from before the latest-time rule.
+const TILE_L1_HIT_MAX_AGE_SECS: u32 = 300;
+
+/// `max-age` for a tile whose time the request pinned and that came from Redis
+/// (L2) or was just rendered. Unchanged from before the latest-time rule.
+const TILE_MAX_AGE_SECS: u32 = 3600;
+
+/// A successful tile response.
+///
+/// The one place a tile's `Cache-Control` is decided, so the L1, L2 and fresh
+/// render paths cannot drift apart. `explicit_max_age_secs` is the TTL used
+/// when the request named its time; a latest tile gets the short latest TTL
+/// instead (see `wms_common::cache_control`). Body, status and CORS are the
+/// same for every tile.
+fn tile_response(
+    body: Vec<u8>,
+    content_type: &str,
+    selection: TimeSelection,
+    explicit_max_age_secs: u32,
+    x_cache: &str,
+) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(
+            header::CACHE_CONTROL,
+            selection.cache_control(explicit_max_age_secs),
+        )
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header("X-Cache", x_cache)
+        .body(body.into())
+        .unwrap()
+}
+
 async fn wmts_get_tile(
     state: Arc<AppState>,
     layer: &str,
@@ -862,6 +902,7 @@ async fn wmts_get_tile(
     y: u32,
     forecast_hour: Option<u32>,
     observation_time: Option<chrono::DateTime<chrono::Utc>>,
+    run: Option<chrono::DateTime<chrono::Utc>>,
     elevation: Option<&str>,
     format: &str,
 ) -> Response {
@@ -884,12 +925,16 @@ async fn wmts_get_tile(
     // The layer config lookup is case-insensitive, so "AVGSURFT" matches "AvgSurfT".
     // Using the config's parameter name ensures catalog queries match what the ingester stored
     // (important for CF-convention NetCDF data with mixed-case variable names like AvgSurfT).
-    {
+    let layer_configured = {
         let configs = state.layer_configs.read().await;
-        if let Some(lc) = configs.get_layer_by_param(model, &parameter) {
-            parameter = lc.parameter.clone();
+        match configs.get_layer_by_param(model, &parameter) {
+            Some(lc) => {
+                parameter = lc.parameter.clone();
+                true
+            }
+            None => false,
         }
-    }
+    };
 
     // Get effective elevation - preserve original value for data lookup
     // URL encoding uses %20 for space, which becomes a space when parsed
@@ -908,17 +953,45 @@ async fn wmts_get_tile(
 
     info!(layer = %layer, style = %style, tile_matrix_set = %tile_matrix_set, z = z, x = x, y = y, forecast_hour = ?forecast_hour, elevation = ?elevation, "GetTile request");
 
-    // Build cache key - include TileMatrixSet to avoid cache collisions
-    let time_key = forecast_hour
-        .map(|h| format!("t{}", h))
-        .or_else(|| observation_time.map(|t| format!("obs{}", t.timestamp())));
-    let elevation_key = elevation.map(|e| e.replace(' ', "_"));
-    let dimension_suffix = match (&time_key, &elevation_key) {
-        (Some(t), Some(e)) => Some(format!("{}_{}", t, e)),
-        (Some(t), None) => Some(t.clone()),
-        (None, Some(e)) => Some(e.clone()),
-        (None, None) => None,
+    // Did the request name its time, or does the server pick it ("latest")? A
+    // latest tile changes when new data arrives, so its cache key must say which
+    // data it was rendered from, and its Cache-Control must be short. See
+    // `tile_version` for the why.
+    let dims = TileRequestDims {
+        is_observation: state.model_dimensions.is_observation(model),
+        observation_time,
+        run,
+        forecast_hour,
+        elevation,
     };
+
+    // Resolve "latest" to the concrete dataset BEFORE building the key, so new
+    // data means a new key instead of an old tile served from "current". Only
+    // for configured layers: an unknown layer name is rejected below without
+    // touching the database, and must stay that way.
+    let latest_version = if layer_configured && dims.needs_latest_lookup() {
+        resolve_latest_version(
+            &state.catalog,
+            &state.latest_versions,
+            model,
+            &parameter,
+            forecast_hour,
+            elevation,
+        )
+        .await
+    } else {
+        None
+    };
+
+    // Selection (Cache-Control), key suffix and entry lifetime, decided in one
+    // place shared with prefetch and warming. Entries whose key cannot tell old
+    // data from new (no version resolved) get a TTL that cannot outlive the
+    // response's max-age.
+    let TileCachePlan {
+        selection,
+        dimension_suffix,
+        entry_ttl,
+    } = dims.cache_plan(latest_version.as_ref());
 
     // Use appropriate CRS code based on TileMatrixSet
     let crs_code = if tile_matrix_set == "WorldCRS84Quad" {
@@ -939,15 +1012,14 @@ async fn wmts_get_tile(
     );
 
     // Cache key includes TileMatrixSet to avoid collisions between different projections
-    let cache_key_str = format!(
-        "{}:{}:{}:{}_{}_{}:{}",
+    let cache_key_str = l1_cache_key(
         tile_matrix_set,
         layer,
         style,
         z,
         x,
         y,
-        dimension_suffix.as_deref().unwrap_or("current")
+        dimension_suffix.as_deref(),
     );
 
     // Get tile bounds based on TileMatrixSet
@@ -995,14 +1067,13 @@ async fn wmts_get_tile(
                 _ => (tile_data.to_vec(), "image/png"),
             };
 
-            return Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, content_type)
-                .header(header::CACHE_CONTROL, "max-age=300")
-                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                .header("X-Cache", "L1-HIT")
-                .body(output_data.into())
-                .unwrap();
+            return tile_response(
+                output_data,
+                content_type,
+                selection,
+                TILE_L1_HIT_MAX_AGE_SECS,
+                "L1-HIT",
+            );
         }
         state.metrics.record_l1_cache_miss();
     }
@@ -1020,7 +1091,7 @@ async fn wmts_get_tile(
                 let data_bytes = bytes::Bytes::from(cached_data.to_vec());
                 state
                     .tile_memory_cache
-                    .set(&cache_key_str, data_bytes.clone(), None)
+                    .set(&cache_key_str, data_bytes.clone(), entry_ttl)
                     .await;
             }
 
@@ -1037,14 +1108,13 @@ async fn wmts_get_tile(
                 _ => (cached_data.to_vec(), "image/png"),
             };
 
-            return Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, content_type)
-                .header(header::CACHE_CONTROL, "max-age=3600")
-                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                .header("X-Cache", "L2-HIT")
-                .body(output_data.into())
-                .unwrap();
+            return tile_response(
+                output_data,
+                content_type,
+                selection,
+                TILE_MAX_AGE_SECS,
+                "L2-HIT",
+            );
         }
         state.metrics.record_cache_miss().await;
     }
@@ -1249,7 +1319,7 @@ async fn wmts_get_tile(
                 let png_bytes = bytes::Bytes::from(png_data.clone());
                 state
                     .tile_memory_cache
-                    .set(&cache_key_str, png_bytes, None)
+                    .set(&cache_key_str, png_bytes, entry_ttl)
                     .await;
             }
 
@@ -1258,7 +1328,7 @@ async fn wmts_get_tile(
             let cache_key_clone = cache_key.clone();
             tokio::spawn(async move {
                 let mut cache = state_clone.cache.lock().await;
-                let _ = cache.set(&cache_key_clone, &cache_data, None).await;
+                let _ = cache.set(&cache_key_clone, &cache_data, entry_ttl).await;
             });
 
             // Prefetch neighbors
@@ -1275,14 +1345,13 @@ async fn wmts_get_tile(
                 );
             }
 
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, content_type)
-                .header(header::CACHE_CONTROL, "max-age=3600")
-                .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                .header("X-Cache", "MISS")
-                .body(output_data.into())
-                .unwrap()
+            tile_response(
+                output_data,
+                content_type,
+                selection,
+                TILE_MAX_AGE_SECS,
+                "MISS",
+            )
         }
         Err(e) => {
             state.metrics.record_render(timer.elapsed_us(), false).await;
@@ -1383,24 +1452,6 @@ fn spawn_tile_prefetch(
 }
 
 async fn prefetch_single_tile(state: Arc<AppState>, layer: &str, style: &str, coord: TileCoord) {
-    let cache_key = CacheKey::new(
-        layer,
-        style,
-        CrsCode::Epsg3857,
-        BoundingBox::new(coord.x as f64, coord.y as f64, coord.z as f64, 0.0),
-        256,
-        256,
-        None,
-        "png",
-    );
-
-    {
-        let mut cache = state.cache.lock().await;
-        if let Ok(Some(_)) = cache.get(&cache_key).await {
-            return;
-        }
-    }
-
     let parts: Vec<&str> = layer.split('_').collect();
     let (model, mut parameter) = if parts.len() >= 2 {
         (parts[0], parts[1..].join("_").to_uppercase())
@@ -1409,10 +1460,61 @@ async fn prefetch_single_tile(state: Arc<AppState>, layer: &str, style: &str, co
     };
 
     // Resolve canonical parameter name from layer config (see wmts_get_tile for details)
-    {
+    let layer_configured = {
         let configs = state.layer_configs.read().await;
-        if let Some(lc) = configs.get_layer_by_param(model, &parameter) {
-            parameter = lc.parameter.clone();
+        match configs.get_layer_by_param(model, &parameter) {
+            Some(lc) => {
+                parameter = lc.parameter.clone();
+                true
+            }
+            None => false,
+        }
+    };
+
+    // Prefetch renders the latest dataset with no forecast hour or level, so its
+    // key is the one a latest, dimension-less GetTile builds: same version token
+    // (see `tile_version`), or the short-lived unresolved key.
+    let dims = TileRequestDims {
+        is_observation: state.model_dimensions.is_observation(model),
+        observation_time: None,
+        run: None,
+        forecast_hour: None,
+        elevation: None,
+    };
+    let latest_version = if layer_configured && dims.needs_latest_lookup() {
+        resolve_latest_version(
+            &state.catalog,
+            &state.latest_versions,
+            model,
+            &parameter,
+            None,
+            None,
+        )
+        .await
+    } else {
+        None
+    };
+    let TileCachePlan {
+        dimension_suffix,
+        entry_ttl,
+        ..
+    } = dims.cache_plan(latest_version.as_ref());
+
+    let cache_key = CacheKey::new(
+        layer,
+        style,
+        CrsCode::Epsg3857,
+        BoundingBox::new(coord.x as f64, coord.y as f64, coord.z as f64, 0.0),
+        256,
+        256,
+        dimension_suffix,
+        "png",
+    );
+
+    {
+        let mut cache = state.cache.lock().await;
+        if let Ok(Some(_)) = cache.get(&cache_key).await {
+            return;
         }
     }
 
@@ -1510,7 +1612,7 @@ async fn prefetch_single_tile(state: Arc<AppState>, layer: &str, style: &str, co
 
     if let Ok(png_data) = result {
         let mut cache = state.cache.lock().await;
-        let _ = cache.set(&cache_key, &png_data, None).await;
+        let _ = cache.set(&cache_key, &png_data, entry_ttl).await;
     }
 }
 
@@ -2002,6 +2104,271 @@ fn normalize_bbox_wmts(bbox: &wms_common::BoundingBox) -> (f64, f64, f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tile_version::LatestVersion;
+    use wms_common::cache_control::LATEST_MAX_AGE_SECS;
+
+    // ---- Cache-Control on tile responses ----
+    //
+    // `wmts_get_tile` needs a full AppState (Postgres, Redis, MinIO), which only
+    // exists in the Docker integration tests. These tests instead run the same
+    // steps every tile request runs, with the real model config and the real
+    // helpers: request dimensions -> (observation time, forecast hour, run) ->
+    // `TileRequestDims::cache_plan` (which decides Cache-Control, the key suffix
+    // and the entry lifetime for GetTile, prefetch and warming alike), then the
+    // shared `tile_response` that all three cache tiers answer through.
+
+    fn registry() -> ModelDimensionRegistry {
+        let registry = ModelDimensionRegistry::load_from_directory(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../config"
+        ));
+        // Guard against a silently empty registry (everything would default to
+        // a forecast model and the radar cases below would pass for the wrong
+        // reason).
+        assert!(
+            registry.is_observation("mrms"),
+            "config/models/mrms.yaml not loaded"
+        );
+        assert!(
+            registry.is_observation("goes19"),
+            "config/models/goes19.yaml not loaded"
+        );
+        assert!(
+            !registry.is_observation("gfs"),
+            "config/models/gfs.yaml not loaded"
+        );
+        registry
+    }
+
+    fn secs(s: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::from_timestamp(s, 0).unwrap()
+    }
+
+    /// The dataset the catalog would resolve "latest" to: `run` seconds is the
+    /// run, which is what a RUN pin is compared against.
+    fn newest(run: i64) -> LatestVersion {
+        LatestVersion {
+            token: format!("r{run}f0m0"),
+            run: Some(secs(run)),
+        }
+    }
+
+    /// The plan a GetTile for `model` with `dims` runs, given what the catalog
+    /// resolved (`latest`; `None` = nothing resolved).
+    fn plan_for_request(
+        model: &str,
+        dims: DimensionParams,
+        latest: Option<&LatestVersion>,
+    ) -> TileCachePlan {
+        let registry = registry();
+        let (forecast_hour, observation_time, run) = dims.parse_for_layer(model, &registry);
+        TileRequestDims {
+            is_observation: registry.is_observation(model),
+            observation_time,
+            run,
+            forecast_hour,
+            elevation: dims.effective_elevation(),
+        }
+        .cache_plan(latest)
+    }
+
+    /// What a GetTile for `model` with `dims` is answered with, as a miss.
+    fn tile_for_request(model: &str, dims: DimensionParams) -> Response {
+        tile_for_request_on(model, dims, TILE_MAX_AGE_SECS, "MISS")
+    }
+
+    fn tile_for_request_on(
+        model: &str,
+        dims: DimensionParams,
+        explicit_max_age_secs: u32,
+        x_cache: &str,
+    ) -> Response {
+        let latest = newest(1_700_000_000);
+        let plan = plan_for_request(model, dims, Some(&latest));
+        tile_response(
+            vec![0x89, b'P', b'N', b'G'],
+            "image/png",
+            plan.selection,
+            explicit_max_age_secs,
+            x_cache,
+        )
+    }
+
+    fn cache_control(resp: &Response) -> &str {
+        resp.headers()
+            .get(header::CACHE_CONTROL)
+            .expect("tile response must carry Cache-Control")
+            .to_str()
+            .unwrap()
+    }
+
+    fn time_dims(time: &str) -> DimensionParams {
+        DimensionParams {
+            time: Some(time.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn radar_tile_without_a_time_is_short_lived() {
+        let resp = tile_for_request("mrms", DimensionParams::default());
+        assert_eq!(
+            cache_control(&resp),
+            format!("max-age={LATEST_MAX_AGE_SECS}")
+        );
+    }
+
+    #[test]
+    fn satellite_tile_without_a_time_is_short_lived() {
+        let resp = tile_for_request("goes19", DimensionParams::default());
+        assert_eq!(cache_control(&resp), "max-age=60");
+    }
+
+    #[test]
+    fn default_and_latest_keywords_still_mean_latest() {
+        // WMTS "default" is parsed to no time; "latest" is not an ISO timestamp
+        // and also resolves to no time.
+        for keyword in ["default", "DEFAULT", "latest"] {
+            let resp = tile_for_request("mrms", time_dims(keyword));
+            assert_eq!(cache_control(&resp), "max-age=60", "TIME={keyword}");
+        }
+    }
+
+    #[test]
+    fn radar_tile_with_an_explicit_time_keeps_its_long_ttl() {
+        let resp = tile_for_request("mrms", time_dims("2026-10-07T20:00:00Z"));
+        assert_eq!(cache_control(&resp), "max-age=3600");
+    }
+
+    #[test]
+    fn explicit_time_keeps_each_tiers_original_ttl() {
+        let t = || time_dims("2026-10-07T20:00:00Z");
+        assert_eq!(
+            cache_control(&tile_for_request_on(
+                "mrms",
+                t(),
+                TILE_L1_HIT_MAX_AGE_SECS,
+                "L1-HIT"
+            )),
+            "max-age=300"
+        );
+        assert_eq!(
+            cache_control(&tile_for_request_on(
+                "mrms",
+                t(),
+                TILE_MAX_AGE_SECS,
+                "L2-HIT"
+            )),
+            "max-age=3600"
+        );
+        assert_eq!(
+            cache_control(&tile_for_request_on("mrms", t(), TILE_MAX_AGE_SECS, "MISS")),
+            "max-age=3600"
+        );
+    }
+
+    #[test]
+    fn latest_tile_is_short_on_every_cache_tier() {
+        for (explicit, tier) in [
+            (TILE_L1_HIT_MAX_AGE_SECS, "L1-HIT"),
+            (TILE_MAX_AGE_SECS, "L2-HIT"),
+            (TILE_MAX_AGE_SECS, "MISS"),
+        ] {
+            let resp = tile_for_request_on("mrms", DimensionParams::default(), explicit, tier);
+            assert_eq!(cache_control(&resp), "max-age=60", "{tier}");
+        }
+    }
+
+    #[test]
+    fn model_tile_without_a_run_is_short_lived_with_or_without_a_forecast_hour() {
+        // No RUN: the newest run is rendered, whatever the forecast hour.
+        let resp = tile_for_request("gfs", DimensionParams::default());
+        assert_eq!(cache_control(&resp), "max-age=60");
+
+        let with_hour = DimensionParams {
+            forecast: Some("6".to_string()),
+            ..Default::default()
+        };
+        let resp = tile_for_request("gfs", with_hour);
+        assert_eq!(cache_control(&resp), "max-age=60");
+    }
+
+    #[test]
+    fn model_tile_for_the_run_that_is_newest_keeps_its_long_ttl() {
+        // RUN-pinned URL naming the run GetTile will actually render: stable.
+        let pinned = DimensionParams {
+            forecast: Some("6".to_string()),
+            run: Some("2023-11-14T22:13:20Z".to_string()), // 1_700_000_000
+            ..Default::default()
+        };
+        let resp = tile_for_request("gfs", pinned);
+        assert_eq!(cache_control(&resp), "max-age=3600");
+    }
+
+    #[test]
+    fn model_tile_for_an_older_run_is_short_lived_because_the_newest_run_is_rendered() {
+        // GetTile discards RUN, so once a newer run has landed the URL returns
+        // that one and a long CDN lifetime would pin the wrong run.
+        let pinned = DimensionParams {
+            forecast: Some("6".to_string()),
+            run: Some("2023-11-14T22:13:20Z".to_string()),
+            ..Default::default()
+        };
+        let newer = newest(1_700_021_600);
+        let plan = plan_for_request("gfs", pinned, Some(&newer));
+        let resp = tile_response(
+            vec![0],
+            "image/png",
+            plan.selection,
+            TILE_MAX_AGE_SECS,
+            "MISS",
+        );
+        assert_eq!(cache_control(&resp), "max-age=60");
+    }
+
+    #[test]
+    fn plan_for_a_latest_tile_follows_the_resolved_dataset_and_its_ttl() {
+        // The wiring GetTile relies on: new data -> new key; nothing resolved ->
+        // the unresolved key with a lifetime that cannot outlive max-age.
+        let old = plan_for_request("mrms", DimensionParams::default(), Some(&newest(100)));
+        let new = plan_for_request("mrms", DimensionParams::default(), Some(&newest(220)));
+        assert_ne!(old.dimension_suffix, new.dimension_suffix);
+        assert_eq!(new.entry_ttl, None);
+
+        let unresolved = plan_for_request("mrms", DimensionParams::default(), None);
+        assert_eq!(unresolved.dimension_suffix.as_deref(), Some("@unresolved"));
+        assert_eq!(
+            unresolved.entry_ttl,
+            Some(std::time::Duration::from_secs(LATEST_MAX_AGE_SECS as u64))
+        );
+
+        // An explicit scan time is its own key whatever "latest" is.
+        let explicit = plan_for_request("mrms", time_dims("2026-10-07T20:00:00Z"), None);
+        assert_eq!(explicit.selection, TimeSelection::Explicit);
+        assert_eq!(explicit.entry_ttl, None);
+        assert!(explicit
+            .dimension_suffix
+            .as_deref()
+            .unwrap()
+            .starts_with("obs"));
+    }
+
+    #[test]
+    fn tile_response_keeps_status_cors_and_cache_status() {
+        let resp = tile_for_request("mrms", DimensionParams::default());
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "*"
+        );
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/png"
+        );
+        assert_eq!(resp.headers().get("X-Cache").unwrap(), "MISS");
+    }
 
     #[test]
     fn test_get_tiles_in_rings_ring1() {
