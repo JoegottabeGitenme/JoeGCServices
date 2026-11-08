@@ -73,6 +73,9 @@ async fn run_server(args: Args) {
         .json()
         .init();
 
+    // the OpenAPI document as JSON is built once; fail here, not on the first request
+    handlers::api::init();
+
     info!("Starting EDR API server");
 
     // Initialize Prometheus metrics recorder
@@ -178,7 +181,7 @@ async fn run_server(args: Args) {
         // Position query
         .route(
             "/edr/collections/:collection_id/position",
-            get(handlers::position::position_handler),
+            get(handlers::nws_alerts::position_route),
         )
         .route(
             "/edr/collections/:collection_id/instances/:instance_id/position",
@@ -187,7 +190,7 @@ async fn run_server(args: Args) {
         // Area query
         .route(
             "/edr/collections/:collection_id/area",
-            get(handlers::area::area_handler),
+            get(handlers::nws_alerts::area_route),
         )
         .route(
             "/edr/collections/:collection_id/instances/:instance_id/area",
@@ -196,7 +199,7 @@ async fn run_server(args: Args) {
         // Radius query
         .route(
             "/edr/collections/:collection_id/radius",
-            get(handlers::radius::radius_handler),
+            get(handlers::nws_alerts::radius_route),
         )
         .route(
             "/edr/collections/:collection_id/instances/:instance_id/radius",
@@ -206,7 +209,13 @@ async fn run_server(args: Args) {
         // storm events or linear features, dispatched by observation_source)
         .route(
             "/edr/collections/:collection_id/items",
-            get(handlers::items::items_handler),
+            get(handlers::nws_alerts::items_route),
+        )
+        // One item by id (nws-alerts: ids are URNs like urn:oid:2.49.0.1.840.0.<hash>;
+        // raw or %3A-encoded both work). `/items/:id/conditions` below is longer, so no clash.
+        .route(
+            "/edr/collections/:collection_id/items/:feature_id",
+            get(handlers::nws_alerts::item_route_handler),
         )
         // Per-trail forecast conditions timeseries (linear_features only;
         // Session 14). Distinct from `?conditions=latest` on /items, which
@@ -321,6 +330,9 @@ async fn run_server(args: Args) {
                     HeaderName::from_static("content-type"),
                     HeaderName::from_static("etag"),
                     HeaderName::from_static("x-cache"),
+                    // The seconds a CDN has held the answer. (Not the time it sat in the
+                    // browser's own cache, so clients age data from the body's timestamps.)
+                    HeaderName::from_static("age"),
                     // Custom EDR PNG headers for frontend consumption
                     HeaderName::from_static("x-edr-parameter"),
                     HeaderName::from_static("x-edr-units"),

@@ -18,6 +18,7 @@ mod grib_index;
 mod lis_runner;
 mod model_runner;
 mod ndbc_runner;
+mod nws_alerts_runner;
 mod observation_runner;
 mod scheduler;
 mod server;

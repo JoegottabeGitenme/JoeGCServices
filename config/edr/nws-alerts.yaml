@@ -1,0 +1,48 @@
+# NWS Alerts EDR Configuration
+#
+# Watches, warnings and advisories from api.weather.gov, polled by the
+# downloader (config/models/nws-alerts.yaml), stored in PostGIS by the ingester
+# and served as GeoJSON feature collections.
+#
+# Supported EDR queries:
+# - /collections/nws-alerts/position?coords=POINT(lon lat)   - alerts in force at a point (primary)
+# - /collections/nws-alerts/items?bbox=&datetime=&status=    - alerts in a box (map; history with status=all)
+# - /collections/nws-alerts/items/{id}                       - one alert in full (id is a URN)
+# - /collections/nws-alerts/area?coords=POLYGON(...)         - alerts intersecting a polygon
+# - /collections/nws-alerts/radius?coords=&within=           - alerts near a point
+#
+# Filters on every query: severity=, event= (comma lists), geometry=true|false,
+# include_non_actual=true (also Test/Exercise/System/Draft messages; default Actual only).
+
+model: nws-alerts
+data_type: featurecollection
+observation_source: nws_alerts
+
+collections:
+  - id: nws-alerts
+    title: "NWS Alerts"
+    description: "Active National Weather Service watches, warnings and advisories. Query /position for the alerts in force at a point; each feature carries event, severity, colour, headline, timing and the what/where/when/impacts/instruction text pre-split for display."
+    # Filter fields, not gridded parameters (the collection document lists the same two)
+    parameters:
+      - name: severity
+        levels: [surface]
+      - name: event
+        levels: [surface]
+    run_mode: latest
+
+settings:
+  output_formats:
+    - application/geo+json
+  default_crs: "CRS:84"
+  supported_crs:
+    - "CRS:84"
+  cache_policy:
+    png_max_age: 60
+
+limits:
+  max_parameters_per_request: 1
+  max_time_steps: 1
+  max_vertical_levels: 1
+  max_response_size_mb: 50    # the geometry of one list answer; the alerts beyond it are left out (truncated: true)
+  max_radius_km: 500
+  max_area_sq_degrees: 100000

@@ -1,0 +1,859 @@
+//! NWS alerts runner.
+//!
+//! Polls `GET {base_url}/alerts/active` (GeoJSON, every watch/warning/advisory in
+//! force across all NWS areas including AK/HI/PR/Guam/marine) and hands each
+//! answer to the ingester, which owns all state:
+//!
+//! * `POST /ingest/nws-alerts` with the raw features (or `not_modified` on a 304,
+//!   or `error` when the poll failed). The ingester answers with
+//!   `missing_zones`: zone keys (`forecast/KSZ001`) it has no geometry for.
+//! * Those zones are fetched by a **separate task** (`GET {base_url}/zones/{key}`,
+//!   bounded concurrency, a pause after each request) and posted to
+//!   `POST /ingest/nws-zones` in small batches, so alerts keep flowing at the poll
+//!   cadence while the ~800-zone cold start fills in over a minute or two. A zone whose
+//!   fetch fails transiently is posted as `status: "error"`, which the ingester records
+//!   (and retries after 15 minutes) so it is not fetched again every poll.
+//!
+//! The runner holds only the `ETag` and the in-memory zone queue; a restart loses
+//! nothing (the ingester recomputes `missing_zones` on the next poll).
+//!
+//! NWS requires a descriptive `User-Agent` with contact details; it is configurable.
+
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use futures::stream::{self, StreamExt};
+use reqwest::{header, Client, StatusCode};
+use serde_json::{json, Value};
+use tokio::sync::{broadcast, Notify};
+use tracing::{debug, error, info, warn};
+
+const DEFAULT_BASE_URL: &str = "https://api.weather.gov";
+const DEFAULT_USER_AGENT: &str = "FolkWeather (folkweather.com, support@folkweather.com)";
+const ACCEPT_GEOJSON: &str = "application/geo+json";
+/// Zones posted to the ingester per request.
+const ZONE_POST_BATCH: usize = 25;
+/// After this many refused single-zone retries in a row, stop retrying the rest of the batch.
+const ZONE_RETRY_GIVE_UP: usize = 3;
+/// How long the zone worker sleeps when nothing nudges it.
+const ZONE_IDLE_WAKE: Duration = Duration::from_secs(60);
+
+#[derive(Debug, Clone)]
+pub struct NwsAlertsConfig {
+    pub id: String,
+    /// `https://api.weather.gov` (no trailing slash); overridable for tests.
+    pub base_url: String,
+    pub user_agent: String,
+    pub poll_interval_secs: u64,
+    pub ingester_url: String,
+    /// Zone fetches in flight at once.
+    pub zone_concurrency: usize,
+    /// Pause after each zone request, per lane.
+    pub zone_request_delay_ms: u64,
+    pub request_timeout_secs: u64,
+}
+
+/// Zone keys waiting for a fetch, deduplicated; keys being fetched right now are
+/// not re-queued by the next poll.
+#[derive(Default)]
+struct ZoneQueue {
+    state: Mutex<(BTreeSet<String>, BTreeSet<String>)>, // (pending, inflight)
+    notify: Notify,
+}
+
+impl ZoneQueue {
+    fn add(&self, keys: impl IntoIterator<Item = String>) {
+        let mut s = self.state.lock().unwrap();
+        let mut added = false;
+        for k in keys {
+            if !s.1.contains(&k) {
+                added |= s.0.insert(k);
+            }
+        }
+        drop(s);
+        if added {
+            self.notify.notify_one();
+        }
+    }
+
+    /// Move everything pending to in-flight and return it.
+    fn take(&self) -> Vec<String> {
+        let mut s = self.state.lock().unwrap();
+        let taken: Vec<String> = std::mem::take(&mut s.0).into_iter().collect();
+        s.1.extend(taken.iter().cloned());
+        taken
+    }
+
+    fn done(&self, keys: &[String]) {
+        let mut s = self.state.lock().unwrap();
+        for k in keys {
+            s.1.remove(k);
+        }
+    }
+
+    #[cfg(test)]
+    fn pending_len(&self) -> usize {
+        self.state.lock().unwrap().0.len()
+    }
+}
+
+pub struct NwsAlertsRunner {
+    config: NwsAlertsConfig,
+    client: Client,
+    etag: Mutex<Option<String>>,
+    zones: ZoneQueue,
+}
+
+impl NwsAlertsRunner {
+    pub fn new(config: NwsAlertsConfig) -> Result<Arc<Self>> {
+        let client = Client::builder()
+            .user_agent(config.user_agent.clone())
+            .timeout(Duration::from_secs(config.request_timeout_secs))
+            .build()
+            .context("Failed to create HTTP client")?;
+        Ok(Arc::new(Self {
+            config,
+            client,
+            etag: Mutex::new(None),
+            zones: ZoneQueue::default(),
+        }))
+    }
+
+    /// Poll forever, with the zone worker alongside, until shutdown.
+    pub async fn run_forever(self: Arc<Self>, shutdown: broadcast::Receiver<()>) -> Result<()> {
+        info!(
+            source = "nws_alerts",
+            poll_interval_secs = self.config.poll_interval_secs,
+            zone_concurrency = self.config.zone_concurrency,
+            "Starting NWS alerts runner"
+        );
+        let zone_worker = {
+            let me = Arc::clone(&self);
+            let rx = shutdown.resubscribe();
+            tokio::spawn(async move { me.zone_loop(rx).await })
+        };
+
+        let mut shutdown = shutdown;
+        let interval = Duration::from_secs(self.config.poll_interval_secs);
+        loop {
+            if let Err(e) = self.poll_once().await {
+                warn!(source = "nws_alerts", error = %e, "NWS alerts poll failed; keeping last good state");
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(interval) => {}
+                _ = shutdown.recv() => {
+                    info!(source = "nws_alerts", "NWS alerts runner shutting down");
+                    break;
+                }
+            }
+        }
+        zone_worker.abort();
+        Ok(())
+    }
+
+    fn ingester_endpoint(&self, path: &str) -> String {
+        let base = self.config.ingester_url.trim_end_matches("/ingest");
+        format!("{}{}", base.trim_end_matches('/'), path)
+    }
+
+    async fn post_ingester(&self, path: &str, body: &Value) -> Result<Value> {
+        let resp = self
+            .client
+            .post(self.ingester_endpoint(path))
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("Failed to POST {path} to ingester"))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Ingester returned {status} for {path}: {text}");
+        }
+        resp.json::<Value>()
+            .await
+            .with_context(|| format!("Bad JSON from ingester for {path}"))
+    }
+
+    /// Tell the ingester the poll failed (best effort), then return the error.
+    async fn report_failure(&self, msg: String) -> Result<()> {
+        if let Err(e) = self
+            .post_ingester("/ingest/nws-alerts", &json!({ "error": msg }))
+            .await
+        {
+            debug!(source = "nws_alerts", error = %e, "Could not report poll failure to ingester");
+        }
+        anyhow::bail!(msg)
+    }
+
+    fn queue_missing(&self, answer: &Value) {
+        let keys: Vec<String> = answer
+            .get("missing_zones")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !keys.is_empty() {
+            debug!(source = "nws_alerts", count = keys.len(), "Zones to fetch");
+            self.zones.add(keys);
+        }
+    }
+
+    /// One poll of the active feed.
+    pub async fn poll_once(&self) -> Result<()> {
+        let url = format!("{}/alerts/active", self.config.base_url);
+        // The feed is ~2 MB of JSON and changes most minutes; gzip cuts it about tenfold. Asked for
+        // here (and decoded in `json_body`) rather than through reqwest's `gzip` feature, which
+        // would turn on compression for every client in the downloader, GRIB range requests included.
+        let mut req = self
+            .client
+            .get(&url)
+            .header(header::ACCEPT, ACCEPT_GEOJSON)
+            .header(header::ACCEPT_ENCODING, "gzip");
+        if let Some(tag) = self.etag.lock().unwrap().clone() {
+            req = req.header(header::IF_NONE_MATCH, tag);
+        }
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => return self.report_failure(format!("GET {url} failed: {e}")).await,
+        };
+
+        match resp.status() {
+            StatusCode::NOT_MODIFIED => {
+                let answer = self
+                    .post_ingester("/ingest/nws-alerts", &json!({ "not_modified": true }))
+                    .await?;
+                self.queue_missing(&answer);
+                debug!(source = "nws_alerts", "Alerts unchanged (304)");
+                Ok(())
+            }
+            StatusCode::OK => {
+                let new_etag = resp
+                    .headers()
+                    .get(header::ETAG)
+                    .and_then(|v| v.to_str().ok())
+                    .map(String::from);
+                let body: Value = match json_body(resp).await {
+                    Ok(b) => b,
+                    Err(e) => return self.report_failure(format!("Bad alerts JSON: {e}")).await,
+                };
+                let features = body
+                    .get("features")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if features.is_empty() {
+                    // NWS always has alerts; an empty answer must not end everything.
+                    return self
+                        .report_failure("alerts feed had no features".into())
+                        .await;
+                }
+                let count = features.len();
+                let answer = self
+                    .post_ingester(
+                        "/ingest/nws-alerts",
+                        &json!({ "features": features, "feed_updated": body.get("updated") }),
+                    )
+                    .await?;
+                // Only remember the ETag once the ingester has the data: otherwise a
+                // failed ingest would turn the retry into a 304 and lose the update.
+                *self.etag.lock().unwrap() = new_etag;
+                self.queue_missing(&answer);
+                let n = |k: &str| answer.get(k).and_then(Value::as_u64).unwrap_or(0);
+                let (ended, superseded) = (n("ended"), n("superseded"));
+                let missing_zones = answer
+                    .get("missing_zones")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                info!(
+                    source = "nws_alerts",
+                    count, ended, superseded, missing_zones, "NWS alerts ingested"
+                );
+                Ok(())
+            }
+            other => {
+                self.report_failure(format!("GET {url} returned {other}"))
+                    .await
+            }
+        }
+    }
+
+    // --- zones ---------------------------------------------------------------
+
+    async fn zone_loop(self: Arc<Self>, mut shutdown: broadcast::Receiver<()>) {
+        loop {
+            tokio::select! {
+                _ = self.zones.notify.notified() => {}
+                _ = tokio::time::sleep(ZONE_IDLE_WAKE) => {}
+                _ = shutdown.recv() => return,
+            }
+            if let Err(e) = self.process_zone_queue().await {
+                error!(source = "nws_alerts", error = %e, "Zone fill failed");
+            }
+        }
+    }
+
+    /// Fetch and post everything currently queued. Returns zones posted.
+    pub async fn process_zone_queue(&self) -> Result<usize> {
+        let keys = self.zones.take();
+        if keys.is_empty() {
+            return Ok(0);
+        }
+        info!(
+            source = "nws_alerts",
+            zones = keys.len(),
+            "Fetching NWS zones"
+        );
+        let mut posted = 0usize;
+        for group in keys.chunks(ZONE_POST_BATCH) {
+            let zones: Vec<Value> = stream::iter(group.iter().cloned())
+                .map(|k| async move { self.fetch_zone(&k).await })
+                .buffer_unordered(self.config.zone_concurrency.max(1))
+                .collect()
+                .await;
+            posted += self.post_zones(&zones).await;
+            self.zones.done(group);
+        }
+        // Anything the ingester refused is simply asked for again by a later poll.
+        self.zones.done(&keys);
+        Ok(posted)
+    }
+
+    /// Post one batch of fetched zones; returns how many the ingester accepted.
+    ///
+    /// A batch it refuses is retried zone by zone, so one zone it cannot take (it should store
+    /// those itself, but it is the ingester's database) never costs the rest of the batch, and the
+    /// caller goes on to the next batch either way: keys come out of a sorted set, so giving up
+    /// on the first failure would hit the same batch again every cycle and starve every later one.
+    /// A run of failures in a row means the ingester itself is down: stop retrying one by one.
+    async fn post_zones(&self, zones: &[Value]) -> usize {
+        let err = match self
+            .post_ingester("/ingest/nws-zones", &json!({ "zones": zones }))
+            .await
+        {
+            Ok(_) => return zones.len(),
+            Err(e) => e,
+        };
+        warn!(source = "nws_alerts", zones = zones.len(), error = %err, "Ingester refused a zone batch; retrying its zones one at a time");
+        if zones.len() == 1 {
+            return 0;
+        }
+        let (mut posted, mut consecutive_failures) = (0usize, 0usize);
+        for z in zones {
+            if consecutive_failures >= ZONE_RETRY_GIVE_UP {
+                warn!(
+                    source = "nws_alerts",
+                    "Ingester keeps refusing zones; leaving the rest of this batch for a later poll"
+                );
+                break;
+            }
+            match self
+                .post_ingester("/ingest/nws-zones", &json!({ "zones": [z] }))
+                .await
+            {
+                Ok(_) => {
+                    posted += 1;
+                    consecutive_failures = 0;
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+                    warn!(source = "nws_alerts", zone = %z["zone_key"], error = %e, "Ingester refused a zone");
+                }
+            }
+        }
+        posted
+    }
+
+    /// The outcome to post for one zone. A transient failure (timeout, 5xx, rate limit, garbage
+    /// body) is posted as `status: "error"` with nothing else, so the ingester records the attempt
+    /// and offers the zone again only after its retry delay (15 minutes); returning nothing would
+    /// have every poll queue it again, every minute, for as long as NWS keeps failing. The
+    /// ingester never lets an error replace a geometry it already holds.
+    async fn fetch_zone(&self, key: &str) -> Value {
+        let error = || json!({ "zone_key": key, "status": "error" });
+        let url = format!("{}/zones/{}", self.config.base_url, key);
+        let out = match self
+            .client
+            .get(&url)
+            .header(header::ACCEPT, ACCEPT_GEOJSON)
+            .send()
+            .await
+        {
+            Err(e) => {
+                warn!(source = "nws_alerts", zone = key, error = %e, "Zone fetch failed");
+                error()
+            }
+            Ok(resp) => match resp.status() {
+                StatusCode::OK => match resp.json::<Value>().await {
+                    Ok(f) => {
+                        let p = f.get("properties").unwrap_or(&Value::Null);
+                        let geometry = f.get("geometry").filter(|g| g.is_object()).cloned();
+                        json!({
+                            "zone_key": key,
+                            "status": if geometry.is_some() { "ok" } else { "no_geometry" },
+                            "name": p.get("name"),
+                            "state": p.get("state"),
+                            "kind": p.get("type"),
+                            "geometry": geometry,
+                        })
+                    }
+                    Err(e) => {
+                        warn!(source = "nws_alerts", zone = key, error = %e, "Bad zone JSON");
+                        error()
+                    }
+                },
+                StatusCode::NOT_FOUND => {
+                    debug!(source = "nws_alerts", zone = key, "Zone not found");
+                    json!({ "zone_key": key, "status": "not_found" })
+                }
+                StatusCode::TOO_MANY_REQUESTS => {
+                    warn!(
+                        source = "nws_alerts",
+                        zone = key,
+                        "Rate limited by NWS; backing off"
+                    );
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    error()
+                }
+                s => {
+                    warn!(source = "nws_alerts", zone = key, status = %s, "Zone fetch returned an error status");
+                    error()
+                }
+            },
+        };
+        if self.config.zone_request_delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(self.config.zone_request_delay_ms)).await;
+        }
+        out
+    }
+}
+
+/// Load from a model YAML; `None` unless `source.type: nws_alerts`.
+pub fn load_nws_alerts_config(
+    config_path: &std::path::Path,
+    ingester_url: &str,
+) -> Result<Option<NwsAlertsConfig>> {
+    use crate::config::ModelConfig;
+
+    let mc = ModelConfig::load(config_path)?;
+    if mc.source.source_type != "nws_alerts" {
+        return Ok(None);
+    }
+    Ok(Some(NwsAlertsConfig {
+        id: mc.model.id,
+        base_url: mc
+            .source
+            .base_url
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
+            .trim_end_matches('/')
+            .to_string(),
+        user_agent: mc
+            .source
+            .user_agent
+            .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string()),
+        poll_interval_secs: mc.schedule.poll_interval_secs.max(10),
+        ingester_url: ingester_url.to_string(),
+        zone_concurrency: mc.source.zone_fetch_concurrency.unwrap_or(4),
+        zone_request_delay_ms: mc.source.zone_request_delay_ms.unwrap_or(100),
+        request_timeout_secs: 60,
+    }))
+}
+
+/// The JSON body of a response, gunzipped first when the server sent `Content-Encoding: gzip`.
+async fn json_body(resp: reqwest::Response) -> Result<Value> {
+    let gzipped = resp
+        .headers()
+        .get(header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("gzip"));
+    let bytes = resp.bytes().await.context("reading the alerts body")?;
+    if gzipped {
+        let mut out = Vec::with_capacity(bytes.len() * 8);
+        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)
+            .context("gunzipping the alerts body")?;
+        Ok(serde_json::from_slice(&out)?)
+    } else {
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{header as h, method, path};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    const FIXTURE: &str = include_str!("../tests/fixtures/nws_alerts_active.json");
+
+    fn cfg(nws: &MockServer, ingester: &MockServer) -> NwsAlertsConfig {
+        NwsAlertsConfig {
+            id: "nws-alerts".into(),
+            base_url: nws.uri(),
+            user_agent: "FolkWeather-test (test@example.com)".into(),
+            poll_interval_secs: 60,
+            ingester_url: ingester.uri(),
+            zone_concurrency: 3,
+            zone_request_delay_ms: 0,
+            request_timeout_secs: 5,
+        }
+    }
+
+    fn posted_json(reqs: &[Request], p: &str) -> Vec<Value> {
+        reqs.iter()
+            .filter(|r| r.url.path() == p)
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect()
+    }
+
+    async fn ingester_ok(missing: &[&str]) -> MockServer {
+        let ing = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/ingest/nws-alerts"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": true, "ended": 2, "superseded": 1, "missing_zones": missing
+            })))
+            .mount(&ing)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/ingest/nws-zones"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+            .mount(&ing)
+            .await;
+        ing
+    }
+
+    #[tokio::test]
+    async fn polls_with_user_agent_forwards_features_and_uses_etag() {
+        let nws = MockServer::start().await;
+        let ing = ingester_ok(&["forecast/COZ068", "county/MDC031"]).await;
+        // 304 when the ETag is presented, the feed otherwise
+        Mock::given(method("GET"))
+            .and(path("/alerts/active"))
+            .and(h("if-none-match", "\"abc\""))
+            .respond_with(ResponseTemplate::new(304))
+            .with_priority(1)
+            .mount(&nws)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/alerts/active"))
+            .and(h("user-agent", "FolkWeather-test (test@example.com)"))
+            .and(h("accept", "application/geo+json"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "\"abc\"")
+                    .set_body_raw(FIXTURE, "application/geo+json"),
+            )
+            .with_priority(2)
+            .mount(&nws)
+            .await;
+
+        let runner = NwsAlertsRunner::new(cfg(&nws, &ing)).unwrap();
+        runner.poll_once().await.unwrap();
+        runner.poll_once().await.unwrap(); // second poll: 304
+
+        let posts = posted_json(
+            &ing.received_requests().await.unwrap(),
+            "/ingest/nws-alerts",
+        );
+        assert_eq!(posts.len(), 2);
+        let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+        assert_eq!(
+            posts[0]["features"].as_array().unwrap().len(),
+            fixture["features"].as_array().unwrap().len()
+        );
+        assert_eq!(posts[0]["feed_updated"], fixture["updated"]);
+        assert_eq!(posts[1], json!({"not_modified": true}));
+        assert_eq!(
+            runner.zones.pending_len(),
+            2,
+            "missing zones are queued (deduplicated)"
+        );
+    }
+
+    #[tokio::test]
+    async fn asks_for_gzip_and_reads_a_gzipped_feed() {
+        use std::io::Write;
+        let nws = MockServer::start().await;
+        let ing = ingester_ok(&[]).await;
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(FIXTURE.as_bytes()).unwrap();
+        Mock::given(method("GET"))
+            .and(path("/alerts/active"))
+            .and(h("accept-encoding", "gzip"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "gzip")
+                    .set_body_raw(gz.finish().unwrap(), "application/geo+json"),
+            )
+            .mount(&nws)
+            .await;
+
+        let runner = NwsAlertsRunner::new(cfg(&nws, &ing)).unwrap();
+        runner.poll_once().await.unwrap();
+
+        let posts = posted_json(
+            &ing.received_requests().await.unwrap(),
+            "/ingest/nws-alerts",
+        );
+        let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+        assert_eq!(
+            posts[0]["features"].as_array().unwrap().len(),
+            fixture["features"].as_array().unwrap().len()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_poll_is_reported_and_never_sends_features() {
+        let nws = MockServer::start().await;
+        let ing = ingester_ok(&[]).await;
+        Mock::given(method("GET"))
+            .and(path("/alerts/active"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&nws)
+            .await;
+        let runner = NwsAlertsRunner::new(cfg(&nws, &ing)).unwrap();
+        assert!(runner.poll_once().await.is_err());
+        let posts = posted_json(
+            &ing.received_requests().await.unwrap(),
+            "/ingest/nws-alerts",
+        );
+        assert_eq!(posts.len(), 1);
+        assert!(posts[0]["error"].as_str().unwrap().contains("503"));
+        assert!(posts[0].get("features").is_none());
+    }
+
+    #[tokio::test]
+    async fn an_empty_feed_is_a_failure_not_an_all_clear() {
+        let nws = MockServer::start().await;
+        let ing = ingester_ok(&[]).await;
+        Mock::given(method("GET"))
+            .and(path("/alerts/active"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"type":"FeatureCollection","features":[]})),
+            )
+            .mount(&nws)
+            .await;
+        let runner = NwsAlertsRunner::new(cfg(&nws, &ing)).unwrap();
+        assert!(runner.poll_once().await.is_err());
+        let posts = posted_json(
+            &ing.received_requests().await.unwrap(),
+            "/ingest/nws-alerts",
+        );
+        assert!(posts[0].get("features").is_none() && posts[0]["error"].is_string());
+    }
+
+    #[tokio::test]
+    async fn a_rejected_ingest_does_not_store_the_etag() {
+        let nws = MockServer::start().await;
+        let ing = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&ing)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/alerts/active"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "\"abc\"")
+                    .set_body_raw(FIXTURE, "application/geo+json"),
+            )
+            .mount(&nws)
+            .await;
+        let runner = NwsAlertsRunner::new(cfg(&nws, &ing)).unwrap();
+        assert!(runner.poll_once().await.is_err());
+        assert!(runner.etag.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn zones_are_fetched_posted_and_failures_are_handled() {
+        let nws = MockServer::start().await;
+        let ing = ingester_ok(&[]).await;
+        let square = json!({"type":"Feature","geometry":{"type":"Polygon","coordinates":[[[-1.0,-1.0],[1.0,-1.0],[1.0,1.0],[-1.0,1.0],[-1.0,-1.0]]]},
+            "properties":{"id":"COZ068","name":"Test Zone","state":"CO","type":"public"}});
+        Mock::given(method("GET"))
+            .and(path("/zones/forecast/COZ068"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(square))
+            .mount(&nws)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/zones/county/GONE01"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&nws)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/zones/forecast/FLAKY1"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&nws)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/zones/forecast/BADJSON"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>not json</html>"))
+            .mount(&nws)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/zones/forecast/NOGEO1"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!({"type":"Feature","geometry":null,"properties":{"name":"x"}}),
+                ),
+            )
+            .mount(&nws)
+            .await;
+
+        let runner = NwsAlertsRunner::new(cfg(&nws, &ing)).unwrap();
+        runner.zones.add(
+            [
+                "forecast/COZ068",
+                "county/GONE01",
+                "forecast/FLAKY1",
+                "forecast/BADJSON",
+                "forecast/NOGEO1",
+            ]
+            .map(String::from),
+        );
+        let posted = runner.process_zone_queue().await.unwrap();
+        assert_eq!(
+            posted, 5,
+            "the 500 and the garbage body are posted too, as errors"
+        );
+
+        let zone_posts = posted_json(&ing.received_requests().await.unwrap(), "/ingest/nws-zones");
+        let zones: Vec<&Value> = zone_posts
+            .iter()
+            .flat_map(|p| p["zones"].as_array().unwrap())
+            .collect();
+        let by = |k: &str| zones.iter().find(|z| z["zone_key"] == k).copied().unwrap();
+        assert_eq!(by("forecast/COZ068")["status"], "ok");
+        assert_eq!(by("forecast/COZ068")["name"], "Test Zone");
+        assert_eq!(by("forecast/COZ068")["kind"], "public");
+        assert!(by("forecast/COZ068")["geometry"].is_object());
+        assert_eq!(by("county/GONE01")["status"], "not_found");
+        assert_eq!(by("forecast/NOGEO1")["status"], "no_geometry");
+        // A transient failure is reported to the ingester as an error with nothing else, so it
+        // records the attempt (and retries in 15 minutes) instead of the next poll asking again.
+        for k in ["forecast/FLAKY1", "forecast/BADJSON"] {
+            assert_eq!(by(k), &json!({"zone_key": k, "status": "error"}), "{k}");
+        }
+        // in-flight bookkeeping is cleared, so a later poll can ask for the flaky one again
+        runner.zones.add(["forecast/FLAKY1".to_string()]);
+        assert_eq!(runner.zones.pending_len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_zone_request_that_times_out_is_recorded_as_an_error() {
+        let nws = MockServer::start().await;
+        let ing = ingester_ok(&[]).await;
+        Mock::given(method("GET"))
+            .and(path("/zones/forecast/SLOW01"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(1500)))
+            .mount(&nws)
+            .await;
+        let mut c = cfg(&nws, &ing);
+        c.request_timeout_secs = 1;
+        let runner = NwsAlertsRunner::new(c).unwrap();
+        runner.zones.add(["forecast/SLOW01".to_string()]);
+        assert_eq!(runner.process_zone_queue().await.unwrap(), 1);
+        let zone_posts = posted_json(&ing.received_requests().await.unwrap(), "/ingest/nws-zones");
+        assert_eq!(
+            zone_posts[0]["zones"],
+            json!([{"zone_key": "forecast/SLOW01", "status": "error"}])
+        );
+    }
+
+    /// Zones are posted in batches of `ZONE_POST_BATCH`. The first batch holds a zone the
+    /// ingester chokes on (the whole request fails): that must not keep the later batches from
+    /// being posted, now or on every later cycle.
+    #[tokio::test]
+    async fn a_zone_batch_the_ingester_refuses_does_not_stop_the_later_batches() {
+        use wiremock::matchers::{body_string_contains, path_regex};
+        let nws = MockServer::start().await;
+        let ing = MockServer::start().await;
+        let square = json!({"type":"Feature","geometry":{"type":"Polygon","coordinates":[[[-1.0,-1.0],[1.0,-1.0],[1.0,1.0],[-1.0,1.0],[-1.0,-1.0]]]},
+            "properties":{"name":"z","state":"CO","type":"public"}});
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/zones/forecast/Z\d+$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(square))
+            .mount(&nws)
+            .await;
+        // any request that carries the poison zone is refused...
+        Mock::given(method("POST"))
+            .and(path("/ingest/nws-zones"))
+            .and(body_string_contains("forecast/Z003"))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(1)
+            .mount(&ing)
+            .await;
+        // ...everything else is accepted
+        Mock::given(method("POST"))
+            .and(path("/ingest/nws-zones"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+            .with_priority(2)
+            .mount(&ing)
+            .await;
+
+        let runner = NwsAlertsRunner::new(cfg(&nws, &ing)).unwrap();
+        let keys: Vec<String> = (0..60).map(|i| format!("forecast/Z{i:03}")).collect();
+        runner.zones.add(keys.clone());
+        let posted = runner
+            .process_zone_queue()
+            .await
+            .expect("a refused batch is not an error for the cycle");
+        assert_eq!(posted, 59, "everything but the poison zone was accepted");
+
+        let accepted: BTreeSet<String> = ing
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == "/ingest/nws-zones")
+            .filter(|r| !String::from_utf8_lossy(&r.body).contains("forecast/Z003"))
+            .flat_map(|r| {
+                let b: Value = serde_json::from_slice(&r.body).unwrap();
+                b["zones"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|z| z["zone_key"].as_str().unwrap().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let want: BTreeSet<String> = keys.into_iter().filter(|k| k != "forecast/Z003").collect();
+        assert_eq!(
+            accepted, want,
+            "later batches and the rest of the first one got through"
+        );
+        // nothing is stuck in flight: the next poll can ask for any of them again
+        runner
+            .zones
+            .add(["forecast/Z003".to_string(), "forecast/Z030".to_string()]);
+        assert_eq!(runner.zones.pending_len(), 2);
+    }
+
+    #[test]
+    fn config_loads_from_yaml_and_ignores_other_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("nws.yaml");
+        std::fs::write(&p, include_str!("../../../config/models/nws-alerts.yaml")).unwrap();
+        let c = load_nws_alerts_config(&p, "http://ingester:8082")
+            .unwrap()
+            .unwrap();
+        assert_eq!(c.id, "nws-alerts");
+        assert_eq!(c.base_url, "https://api.weather.gov");
+        assert_eq!(c.poll_interval_secs, 60);
+        assert_eq!(c.zone_concurrency, 4);
+        assert!(c.user_agent.contains("folkweather"));
+        let other = dir.path().join("storm.yaml");
+        std::fs::write(
+            &other,
+            include_str!("../../../config/models/storm-events.yaml"),
+        )
+        .unwrap();
+        assert!(load_nws_alerts_config(&other, "x").unwrap().is_none());
+    }
+}

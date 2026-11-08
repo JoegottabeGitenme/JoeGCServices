@@ -115,7 +115,7 @@ The EDR API provides OpenAPI documentation:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /edr/api` | OpenAPI specification (YAML) |
+| `GET /edr/api` | OpenAPI specification (JSON; `?f=yaml` for the YAML source) |
 | `GET /edr/api.html` | Interactive API documentation (ReDoc) |
 
 ## Conformance

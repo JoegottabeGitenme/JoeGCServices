@@ -198,6 +198,7 @@ async fn setup() -> (Router, Arc<AppState>, TestInfrastructure) {
         linear_feature_catalog: Arc::new(LinearFeatureCatalog::new(catalog.pool_clone())),
         segment_conditions_catalog: Arc::new(SegmentConditionsCatalog::new(catalog.pool_clone())),
         lightning_catalog: Arc::new(LightningCatalog::new(catalog.pool_clone())),
+        nws_alert_catalog: Arc::new(storage::NwsAlertCatalog::new(catalog.pool_clone())),
         collections_snapshot: Arc::new(SnapshotCache::new(Duration::from_secs(60))),
         catalog,
         grid_data_service,

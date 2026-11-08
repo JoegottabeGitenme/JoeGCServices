@@ -81,7 +81,7 @@ graph TB
 |----------|--------|-------------|
 | `/edr` | GET | Landing page with API links |
 | `/edr/conformance` | GET | Supported conformance classes |
-| `/edr/api` | GET | OpenAPI specification (YAML) |
+| `/edr/api` | GET | OpenAPI specification (JSON; `?f=yaml` for the YAML source) |
 | `/edr/api.html` | GET | Interactive API documentation (ReDoc) |
 
 ### Collection Endpoints
@@ -193,6 +193,9 @@ EDR_CHUNK_CACHE_MB=256           # Grid processor chunk cache
 
 # Availability Cache
 EDR_AVAILABILITY_CACHE_TTL_SECS=300  # Data availability cache TTL (default: 300)
+
+# NWS alerts
+NWS_ALERTS_QUERY_TIMEOUT_MS=10000  # Database time limit per nws-alerts read; over it: 503 (default: 10000)
 
 # Logging
 RUST_LOG=info                    # Log level
