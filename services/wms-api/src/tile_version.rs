@@ -110,12 +110,16 @@ pub const UNRESOLVED_VERSION: &str = "unresolved";
 ///
 /// 1 (never written into a key) drew the low-zoom tiles of lat/lon layers (MRMS, GFS, ...) from
 /// pyramid levels described with the wrong extent, so their data was off by up to half a level
-/// cell: about 1.5 km at MRMS level 2. 2 draws it where it is. A tile cached by revision 1 has a
-/// key of its own that nothing reads, and ages out through the normal TTL.
+/// cell: about 1.5 km at MRMS level 2. 2 draws it where it is. 2 still drew the low-zoom tiles of
+/// projected layers (HRRR, NBM, ...) from their pyramid levels by scaling indices by the width
+/// ratio, which ignores that a level cell is centred on its block: up to 1.5 native cells (about
+/// 4.5 km) off at HRRR level 2. 3 places them by the level's factor and downsampling method. A
+/// tile cached by an older revision has a key of its own that nothing reads, and ages out through
+/// the normal TTL.
 ///
 /// Bump it with any change that moves where a tile draws its data. Like the other parts of the
 /// key it contains no `:` or glob characters.
-pub const TILE_GEOMETRY: &str = "g2";
+pub const TILE_GEOMETRY: &str = "g3";
 
 /// The parameter name of the composite wind barb layers.
 pub const WIND_BARBS_PARAMETER: &str = "WIND_BARBS";
@@ -203,7 +207,7 @@ pub fn version_token(entry: &CatalogEntry) -> String {
 ///
 /// Keys for explicit requests keep their original shape (`t6`, `obs1700000000`,
 /// `t6_2_m_above_ground`, an elevation alone, or none) here. The cache plan appends the
-/// geometry revision (`.g2`) afterwards, so tiles cached under the old level geometry are
+/// geometry revision (`.g3`) afterwards, so tiles cached under the old level geometry are
 /// never read. A latest request that
 /// resolved to a `version` gets `@<version>` appended, which is what makes new
 /// data a new key.
@@ -956,7 +960,7 @@ mod tests {
             let suffix_str = suffix.as_deref().unwrap();
             assert_eq!(
                 suffix_str,
-                format!("{}.g2", before.as_deref().unwrap()),
+                format!("{}.g3", before.as_deref().unwrap()),
                 "{request:?}"
             );
             assert!(!suffix_str.contains(':') && !suffix_str.contains('*'));

@@ -593,7 +593,8 @@ fn test_ndfd_lambert_grid_indices() {
 /// data to render in a tiny rectangle instead of full CONUS coverage.
 #[test]
 fn test_hrrr_lambert_pyramid_level_scaling() {
-    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+    use crate::rendering::resampling::resample_grid_for_bbox_at_level;
+    use grid_processor::LevelPlacement;
     use projection::LambertConformal;
 
     let proj = LambertConformal::hrrr();
@@ -623,7 +624,7 @@ fn test_hrrr_lambert_pyramid_level_scaling() {
     let output_width = 256;
     let output_height = 256;
 
-    let result = resample_grid_for_bbox_with_proj(
+    let result = resample_grid_for_bbox_at_level(
         &pyramid_data,
         pyramid_width,
         pyramid_height,
@@ -635,6 +636,7 @@ fn test_hrrr_lambert_pyramid_level_scaling() {
         "hrrr",
         None,  // goes_projection
         false, // grid_uses_360
+        LevelPlacement::new(4.0, false),
     );
 
     assert_eq!(result.len(), output_width * output_height);
@@ -668,7 +670,8 @@ fn test_hrrr_lambert_pyramid_level_scaling() {
 /// Test that Lambert resampling correctly handles pyramid level scaling for NDFD
 #[test]
 fn test_ndfd_lambert_pyramid_level_scaling() {
-    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+    use crate::rendering::resampling::resample_grid_for_bbox_at_level;
+    use grid_processor::LevelPlacement;
     use projection::LambertConformal;
 
     let proj = LambertConformal::ndfd();
@@ -696,7 +699,7 @@ fn test_ndfd_lambert_pyramid_level_scaling() {
     let output_width = 256;
     let output_height = 256;
 
-    let result = resample_grid_for_bbox_with_proj(
+    let result = resample_grid_for_bbox_at_level(
         &pyramid_data,
         pyramid_width,
         pyramid_height,
@@ -708,6 +711,7 @@ fn test_ndfd_lambert_pyramid_level_scaling() {
         "ndfd",
         None,  // goes_projection
         false, // grid_uses_360
+        LevelPlacement::new(4.0, false),
     );
 
     assert_eq!(result.len(), output_width * output_height);
@@ -738,7 +742,8 @@ fn test_ndfd_lambert_pyramid_level_scaling() {
 /// Test that Lambert Mercator resampling also handles pyramid level scaling
 #[test]
 fn test_hrrr_lambert_mercator_pyramid_level_scaling() {
-    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+    use crate::rendering::resampling::resample_grid_for_bbox_at_level;
+    use grid_processor::LevelPlacement;
 
     // Pyramid level 2 dimensions
     let pyramid_width = 449usize;
@@ -757,7 +762,7 @@ fn test_hrrr_lambert_mercator_pyramid_level_scaling() {
     let output_width = 256;
     let output_height = 256;
 
-    let result = resample_grid_for_bbox_with_proj(
+    let result = resample_grid_for_bbox_at_level(
         &pyramid_data,
         pyramid_width,
         pyramid_height,
@@ -769,6 +774,7 @@ fn test_hrrr_lambert_mercator_pyramid_level_scaling() {
         "hrrr",
         None,
         false,
+        LevelPlacement::new(4.0, false),
     );
 
     assert_eq!(result.len(), output_width * output_height);
@@ -859,7 +865,8 @@ fn test_hrrr_lambert_native_resolution() {
 /// Test pyramid scaling with various scale factors
 #[test]
 fn test_lambert_pyramid_various_scale_factors() {
-    use crate::rendering::resampling::resample_grid_for_bbox_with_proj;
+    use crate::rendering::resampling::resample_grid_for_bbox_at_level;
+    use grid_processor::LevelPlacement;
     use projection::LambertConformal;
 
     let proj = LambertConformal::hrrr();
@@ -887,7 +894,7 @@ fn test_lambert_pyramid_various_scale_factors() {
             }
         }
 
-        let result = resample_grid_for_bbox_with_proj(
+        let result = resample_grid_for_bbox_at_level(
             &pyramid_data,
             pyramid_width,
             pyramid_height,
@@ -899,6 +906,7 @@ fn test_lambert_pyramid_various_scale_factors() {
             "hrrr",
             None,
             false,
+            LevelPlacement::new(scale, false),
         );
 
         let valid_count = result.iter().filter(|v| !v.is_nan()).count();
