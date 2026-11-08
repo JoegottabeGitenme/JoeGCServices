@@ -473,20 +473,46 @@ async fn position_query(
 
     // Fetch available times and temporal extent from catalog
     let model_name = &model_config.model;
-    let available_time_strings: Vec<String> = state
+    let model_run_times = state
         .catalog
-        .get_model_valid_times(model_name)
+        .get_model_run_valid_times(model_name, &params_to_query)
         .await
         .ok()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-        .collect();
+        .unwrap_or_default();
 
-    let available_times: Vec<DateTime<Utc>> = available_time_strings
+    // Every instant any run holds: what an explicit instant is checked against and what
+    // interpolation brackets with.
+    let mut available_times: Vec<DateTime<Utc>> =
+        model_run_times.iter().map(|(_, valid)| *valid).collect();
+    available_times.sort_unstable();
+    available_times.dedup();
+
+    // The instants a datetime INTERVAL expands to. For forecast data not every instant any run
+    // holds, but one run's cadence at a time (`stitch_valid_times`): NBM's long runs step 3 h in
+    // the tail on different phases than the others, and the union of them alternates 1 h and 2 h,
+    // with the instants no run has this parameter at answered by a neighbour's value.
+    // A request that names one run keeps that run's own instants.
+    let instance_run = instance_id
+        .as_deref()
+        .and_then(|id| chrono::DateTime::parse_from_rfc3339(id).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+    let axis_times = if is_observation_model {
+        available_times.clone()
+    } else if let Some(run) = instance_run {
+        let mut times: Vec<DateTime<Utc>> = model_run_times
+            .iter()
+            .filter(|(r, _)| *r == run)
+            .map(|(_, valid)| *valid)
+            .collect();
+        times.sort_unstable();
+        times.dedup();
+        times
+    } else {
+        storage::stitch_valid_times(&model_run_times)
+    };
+    let available_time_strings: Vec<String> = axis_times
         .iter()
-        .filter_map(|s| DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&Utc))
+        .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
         .collect();
 
     // Get temporal extent from catalog for validation

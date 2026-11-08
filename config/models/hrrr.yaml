@@ -60,7 +60,10 @@ schedule:
     start: 0
     end: 48
     step: 1
-  poll_interval_secs: 3600 # Check every hour
+  # Every 5 minutes: with an hourly poll a cycle was picked up 0-60 min (30 on average) after it
+  # appeared. A poll of a finished cycle is free (downloaded files cost no request); only the cycle
+  # still being published costs HEADs, so this is ~12x the probes of the hourly poll, not 12x the data.
+  poll_interval_secs: 300
   delay_hours: 1 # Data typically available 1-2 hours after cycle
   # A cycle is published over time (f00 ~50 min after the cycle, f48 ~2 h 05 min). Re-examine the
   # newest cycle and the 3 before it on every poll, so the tail of a long run is fetched after it
