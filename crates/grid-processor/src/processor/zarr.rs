@@ -15,8 +15,9 @@ use crate::error::{GridProcessorError, Result};
 use crate::projection::NativeGrid;
 use crate::types::{
     BoundingBox, CacheStats, GridMetadata, GridRegion, MultiscaleMetadata, ProjectionType,
-    RowOrigin,
+    PyramidLevel, RowOrigin,
 };
+use crate::window::{cell_range, Footprint, NativeWindow};
 
 use super::GridProcessor;
 
@@ -717,6 +718,107 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
 
         Ok(chunk_data.get(idx).copied().unwrap_or(f32::NAN))
     }
+
+    /// The grid's own projection, if it is a projected grid this build can place points on.
+    pub fn native_grid(&self) -> Option<&NativeGrid> {
+        self.native.as_ref()
+    }
+
+    /// Read the cells `cols` x `rows` (indices into this array, row 0 first) and nothing else
+    /// than the chunks that hold them. Chunks come from, and go into, the shared chunk cache.
+    ///
+    /// Unlike [`GridProcessor::read_region`] this takes cell indices, not a longitude/latitude
+    /// box: on a projected grid a box is not a rectangle of cells (see [`crate::window`]).
+    /// Indices past the array are an error; callers clamp (see [`cell_range`]).
+    pub async fn read_cells(
+        &self,
+        cols: std::ops::Range<usize>,
+        rows: std::ops::Range<usize>,
+    ) -> Result<Vec<f32>> {
+        let (grid_w, grid_h) = self.metadata.shape;
+        if cols.start >= cols.end
+            || rows.start >= rows.end
+            || cols.end > grid_w
+            || rows.end > grid_h
+        {
+            return Err(GridProcessorError::read_failed(format!(
+                "cells {cols:?} x {rows:?} are not inside the {grid_w} x {grid_h} grid"
+            )));
+        }
+        let (chunk_w, chunk_h) = self.metadata.chunk_shape;
+        let chunks: Vec<(usize, usize)> = (rows.start / chunk_h..=(rows.end - 1) / chunk_h)
+            .flat_map(|cy| {
+                (cols.start / chunk_w..=(cols.end - 1) / chunk_w).map(move |cx| (cx, cy))
+            })
+            .collect();
+
+        let chunk_data =
+            futures::future::join_all(chunks.iter().map(|&(cx, cy)| self.read_chunk(cx, cy)))
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>>>()?;
+
+        let out_width = cols.end - cols.start;
+        let mut output = vec![self.metadata.fill_value; out_width * (rows.end - rows.start)];
+        for (&(cx, cy), chunk) in chunks.iter().zip(&chunk_data) {
+            let (chunk_col0, chunk_row0) = (cx * chunk_w, cy * chunk_h);
+            // an edge chunk is stored at its real, smaller size (see read_chunk_sync)
+            let chunk_actual_w = chunk_w.min(grid_w - chunk_col0);
+            let chunk_actual_h = chunk_h.min(grid_h - chunk_row0);
+            let col_from = cols.start.max(chunk_col0);
+            let col_to = cols.end.min(chunk_col0 + chunk_actual_w);
+            let row_from = rows.start.max(chunk_row0);
+            let row_to = rows.end.min(chunk_row0 + chunk_actual_h);
+            if col_from >= col_to {
+                continue;
+            }
+            for row in row_from..row_to {
+                let from = (row - chunk_row0) * chunk_actual_w + (col_from - chunk_col0);
+                let to = (row - rows.start) * out_width + (col_from - cols.start);
+                let run = col_to - col_from;
+                if let Some(src) = chunk.get(from..from + run) {
+                    output[to..to + run].copy_from_slice(src);
+                }
+            }
+        }
+        Ok(output)
+    }
+
+    /// Read the window of this grid that `footprint` needs. This grid may be any pyramid level of
+    /// a projected dataset; `scale` is how many level-0 cells make one cell of it (1 for level 0,
+    /// 2 for level 1, ...). `None` when the footprint misses the grid.
+    ///
+    /// The footprint is in level-0 cells, so one footprint serves every level, and the window
+    /// carries `scale` so that sampling it puts each pixel on the cell that holds it.
+    pub async fn read_native_window(
+        &self,
+        footprint: &Footprint,
+        scale: f64,
+    ) -> Result<Option<NativeWindow>> {
+        let native = self.native.clone().ok_or_else(|| {
+            GridProcessorError::invalid_metadata(format!(
+                "{} is not on a projection this build can place points on",
+                self.metadata.model
+            ))
+        })?;
+        let (level_width, level_height) = self.metadata.shape;
+        let Some((cols, rows)) = cell_range(footprint, scale, level_width, level_height) else {
+            return Ok(None);
+        };
+        let data = self.read_cells(cols.clone(), rows.clone()).await?;
+        Ok(Some(NativeWindow {
+            data,
+            width: cols.len(),
+            height: rows.len(),
+            col0: cols.start,
+            row0: rows.start,
+            level_width,
+            level_height,
+            scale,
+            native,
+            cells: footprint.cells,
+        }))
+    }
 }
 
 #[async_trait]
@@ -978,6 +1080,9 @@ pub struct MultiscaleGridProcessorFactory<S: ReadableStorageTraits + Clone> {
     chunk_cache: Arc<RwLock<ChunkCache>>,
     /// Configuration
     config: GridProcessorConfig,
+    /// The dataset's own metadata (native level), if the caller has it. A level's metadata is
+    /// built from this when present; see [`Self::metadata_for_level`].
+    dataset: Option<GridMetadata>,
 }
 
 impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridProcessorFactory<S> {
@@ -997,7 +1102,16 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
             multiscale,
             chunk_cache,
             config,
+            dataset: None,
         }
+    }
+
+    /// Give the factory the dataset's own metadata, so the processors it opens for a level carry
+    /// the dataset's model, parameter, units and fill value instead of values guessed from the
+    /// multiscale name (see `metadata_for_level`).
+    pub fn with_dataset_metadata(mut self, dataset: GridMetadata) -> Self {
+        self.dataset = Some(dataset);
+        self
     }
 
     /// Get the multiscale metadata.
@@ -1028,6 +1142,12 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
 
     /// Read a region from a specific pyramid level.
     pub async fn read_region_at_level(&self, level: u32, bbox: &BoundingBox) -> Result<GridRegion> {
+        let processor = self.processor_for_level(level)?;
+        processor.read_region(bbox).await
+    }
+
+    /// Open the processor for one pyramid level.
+    pub fn processor_for_level(&self, level: u32) -> Result<ZarrGridProcessor<S>> {
         let level_info = self.multiscale.get_level(level).ok_or_else(|| {
             GridProcessorError::invalid_metadata(format!("Pyramid level {} not found", level))
         })?;
@@ -1052,21 +1172,49 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
         );
 
         // Create processor for this level
-        let processor = ZarrGridProcessor::with_metadata(
+        ZarrGridProcessor::with_metadata(
             self.storage.clone(),
             &level_path,
             level_metadata,
             self.chunk_cache.clone(),
             self.config.clone(),
-        )?;
-
-        processor.read_region(bbox).await
+        )
     }
 
     /// Create GridMetadata for a specific pyramid level.
-    fn metadata_for_level(&self, level: &crate::types::PyramidLevel) -> GridMetadata {
+    ///
+    /// The multiscale metadata knows a level's geometry (shape, chunking, extent, row order,
+    /// projection) but not what the dataset is. With the dataset's own metadata (see
+    /// [`Self::with_dataset_metadata`]) everything else is that dataset's: its model, parameter,
+    /// units and fill value. Without it they are guessed: the model and parameter from the
+    /// multiscale name split on `_` (wrong for a parameter such as `PRECIP_FLAG`), the units
+    /// empty and the fill value NaN. Nothing a response reports comes from here -- units and the
+    /// value range come from the catalog entry -- but the model selects a projected grid's
+    /// projection, so a level of a projected dataset needs the right one.
+    ///
+    /// The `bbox` is the dataset's: the first-to-last point extent of level 0. A level has fewer
+    /// points over it, so its `resolution()` is the extent over one less than ITS point count
+    /// (MRMS level 2: 69.99 / 1749 degrees, not 0.04) and `read_region` draws each cell further
+    /// from its data the further it is from the first column or row (by about half a level cell
+    /// over the eastern US at MRMS level 2). A projected level is placed by index instead (see
+    /// [`crate::window::level_index`]), so only a lat/lon level is affected; `edr-api` reads none.
+    fn metadata_for_level(&self, level: &PyramidLevel) -> GridMetadata {
         // Note: level.resolution() returns the resolution at this pyramid level,
         // but GridMetadata calculates resolution from bbox/shape, so we don't need it here
+        let level_name = format!("pyramid_level_{}", level.level);
+
+        if let Some(dataset) = &self.dataset {
+            return GridMetadata {
+                level: level_name,
+                bbox: self.multiscale.bbox,
+                shape: level.shape,
+                chunk_shape: level.chunk_shape,
+                num_chunks: level.num_chunks(),
+                row_origin: self.multiscale.row_origin,
+                projection: self.multiscale.projection,
+                ..dataset.clone()
+            };
+        }
 
         GridMetadata {
             model: self
@@ -1083,7 +1231,7 @@ impl<S: ReadableStorageTraits + Clone + Send + Sync + 'static> MultiscaleGridPro
                 .nth(1)
                 .unwrap_or("unknown")
                 .to_string(),
-            level: format!("pyramid_level_{}", level.level),
+            level: level_name,
             units: String::new(),
             reference_time: chrono::Utc::now(), // Will be overwritten if available
             forecast_hour: 0,

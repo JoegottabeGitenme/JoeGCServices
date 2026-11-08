@@ -338,6 +338,138 @@ async fn the_newest_run_answers_for_an_instant_whatever_the_ingest_order() {
     );
 }
 
+/// A run's first forecast is its earliest hour and, within it, its earliest minute: not hour 0,
+/// which many runs do not have (every NBM run starts at hour 1).
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn a_runs_first_forecast_is_its_earliest_step_whether_or_not_that_is_hour_zero() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+    catalog.migrate().await.unwrap();
+
+    let run = now_micros().trunc_subsecs(0) - Duration::hours(6);
+    let other_run = run + Duration::hours(1);
+    let register = |model: &str, reference, hour, minute, level: &str| {
+        let mut e = test_entry(model, "TMP", hour);
+        e.reference_time = reference;
+        e.forecast_minute = minute;
+        e.level = level.to_string();
+        e.storage_path = format!(
+            "grids/{model}/{}_f{hour:03}m{minute:02}_{level}.zarr",
+            reference.timestamp()
+        );
+        let catalog = &catalog;
+        async move { catalog.register_dataset(&e).await.unwrap() }
+    };
+
+    // a run that starts at hour 1, registered later hours first, minutes out of order
+    for (hour, minute) in [(3, 0), (2, 0), (1, 30), (1, 15), (1, 45)] {
+        register("nbm", run, hour, minute, "2 m").await;
+    }
+    // and a run of the same model that starts at hour 0
+    register("nbm", other_run, 0, 0, "2 m").await;
+    register("nbm", other_run, 1, 0, "2 m").await;
+
+    let first = |reference, level| {
+        let catalog = &catalog;
+        async move {
+            catalog
+                .find_run_first_forecast("nbm", "TMP", reference, level)
+                .await
+                .unwrap()
+                .map(|e| (e.forecast_hour, e.forecast_minute))
+        }
+    };
+    assert_eq!(
+        first(run, None).await,
+        Some((1, 15)),
+        "no hour 0 in this run"
+    );
+    assert_eq!(first(other_run, None).await, Some((0, 0)));
+    assert_eq!(
+        first(run - Duration::hours(1), None).await,
+        None,
+        "a run the catalog does not hold"
+    );
+
+    // the level narrows it: this one only has later hours at 850 mb
+    register("nbm", run, 5, 0, "850 mb").await;
+    assert_eq!(first(run, Some("850 mb")).await, Some((5, 0)));
+    assert_eq!(first(run, Some("2 m")).await, Some((1, 15)));
+    assert_eq!(first(run, Some("500 mb")).await, None);
+
+    // another model's run at the same time is not this one's
+    assert_eq!(
+        catalog
+            .find_run_first_forecast("gfs", "TMP", run, None)
+            .await
+            .unwrap()
+            .map(|e| e.forecast_hour),
+        None
+    );
+}
+
+/// A run's valid times are its own: the model's earliest instant can belong to an older run.
+#[tokio::test]
+#[ignore] // Requires Docker
+async fn a_runs_valid_times_are_only_the_ones_that_run_holds() {
+    let infra = TestInfrastructure::start().await;
+    let catalog = Catalog::connect(&infra.postgres_url()).await.unwrap();
+    catalog.migrate().await.unwrap();
+
+    let older = now_micros().trunc_subsecs(0) - Duration::hours(6);
+    let newer = older + Duration::hours(1);
+    let register = |model: &str, parameter: &str, reference, hour, minute| {
+        let mut e = test_entry(model, parameter, hour);
+        e.reference_time = reference;
+        e.forecast_minute = minute;
+        e.storage_path = format!(
+            "grids/{model}/{parameter}/{}_f{hour:03}m{minute:02}.zarr",
+            reference.timestamp()
+        );
+        let catalog = &catalog;
+        async move { catalog.register_dataset(&e).await.unwrap() }
+    };
+
+    // The older run holds the model's earliest instant (its 1 h forecast), which the newer run
+    // starts after. Registered out of order, and one parameter holds a step that the other does not
+    for (parameter, hour, minute) in [("TMP", 2, 0), ("TMP", 1, 0), ("UGRD", 1, 30)] {
+        register("nbm", parameter, older, hour, minute).await;
+    }
+    for (hour, minute) in [(1, 0), (0, 15)] {
+        register("nbm", "TMP", newer, hour, minute).await;
+    }
+    register("gfs", "TMP", older, 9, 0).await;
+
+    // each time as minutes after the older run's start
+    let minutes = |times: Vec<DateTime<Utc>>| {
+        times
+            .into_iter()
+            .map(|t| (t - older).num_minutes())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        minutes(catalog.get_run_valid_times("nbm", older).await.unwrap()),
+        vec![60, 90, 120],
+        "each instant once, whatever parameter holds it"
+    );
+    assert_eq!(
+        minutes(catalog.get_run_valid_times("nbm", newer).await.unwrap()),
+        vec![75, 120],
+        "the newer run does not hold the instant the model starts at"
+    );
+    assert_eq!(
+        minutes(catalog.get_model_valid_times("nbm").await.unwrap()),
+        vec![60, 75, 90, 120],
+        "the model holds the union"
+    );
+    assert!(catalog
+        .get_run_valid_times("nbm", older - Duration::hours(1))
+        .await
+        .unwrap()
+        .is_empty());
+}
+
 #[tokio::test]
 #[ignore] // Requires Docker
 async fn a_fresh_database_ends_up_with_the_same_single_key() {

@@ -10,13 +10,17 @@ use edr_protocol::{
     coverage_json::CovJsonParameter, parameters::Unit, queries::DateTimeQuery,
     responses::ExceptionResponse, AreaQuery, CoverageJson, EdrFeatureCollection, ParsedPolygons,
 };
-use grid_processor::{BoundingBox, GridProcessorError, ProjectionType, RowOrigin};
+use grid_processor::service::MATCH_TOLERANCE;
+use grid_processor::{
+    AreaData, AreaReadOptions, BoundingBox, DatasetQuery, GridProcessorError, GridRegion,
+    ProjectionType, RowOrigin,
+};
 use renderer::data_png::{compute_data_range, DataPng8BitEncoder, DataPngEncoder};
 use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::availability::ModelAvailability;
-use crate::cache_policy::{impl_time_selectors, TimeSelectors};
+use crate::cache_policy::{confirm_match, impl_time_selectors, TimeSelection, TimeSelectors};
 use crate::config::build_level_string;
 use crate::content_negotiation::{negotiate_format, OutputFormat};
 use crate::handlers::forecast_params::{validate_not_observation_data, ForecastParams};
@@ -180,6 +184,15 @@ pub struct AreaQueryParams {
     /// Requested output height in pixels (PNG only, max 4096).
     /// If specified, width must also be specified.
     pub height: Option<u32>,
+
+    /// Cut a projected grid (HRRR) to the polygon's bounding box (PNG only; `true` or `false`).
+    ///
+    /// Without it a projected grid answers with the WHOLE model domain whatever polygon is sent,
+    /// and `X-EDR-BBox` says which. With `crop=true` the image covers exactly the polygon's
+    /// bounding box (all of a MULTIPOLYGON's polygons) at `width` x `height`, `X-EDR-BBox` is that
+    /// box, and pixels outside the model domain are no-data. A lat/lon grid is always cut to the
+    /// polygon, so it makes no difference.
+    pub crop: Option<String>,
 
     /// PNG encoding bit depth (PNG only).
     /// - `16` (default): 16-bit precision using RG channels (65536 values)
@@ -652,8 +665,35 @@ async fn area_query(
         (None, None) => None,
     };
 
+    // Parse crop (PNG only; the default is the whole domain for a projected grid)
+    let crop = match params.crop.as_deref().map(str::trim) {
+        None => false,
+        Some(v) if v.eq_ignore_ascii_case("false") => false,
+        Some(v) if v.eq_ignore_ascii_case("true") => {
+            if output_format != OutputFormat::Png {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request("crop is only supported for PNG output (f=png)"),
+                );
+            }
+            true
+        }
+        Some(v) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request(format!(
+                    "Invalid crop value: {}. Must be true or false.",
+                    v
+                )),
+            );
+        }
+    };
+
     // Get the bbox of the polygon for grid queries
     let bbox = area_query_struct.bbox();
+    // The box a cropped image covers: the request's, every polygon of a MULTIPOLYGON (the grid
+    // queries above have always been made for the first polygon's box)
+    let crop_box = crop.then(|| union_bbox(&all_area_queries));
 
     // Get the list of times to query
     // For interval queries (especially open-ended ones), expand against available times
@@ -748,6 +788,43 @@ async fn area_query(
         None
     };
 
+    // An instance is one run, and a `datetime` list or interval was expanded against the times of
+    // EVERY run of the model (above), so its first time may be one this run does not hold: the
+    // model's earliest instant is usually an older run's. Keep the times the run does hold; a span
+    // with none of them is a time the run does not hold, as for a single instant.
+    let time_strings = match (reference_time, datetime_query.as_ref()) {
+        (Some(run), Some(dq)) if dq.is_multi_time() => {
+            let run_times = match state
+                .catalog
+                .get_run_valid_times(&model_config.model, run)
+                .await
+            {
+                Ok(times) => times,
+                Err(e) => {
+                    tracing::error!("Failed to look up the times of instance {}: {}", run, e);
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ExceptionResponse::internal_error("Failed to look up the instance's times"),
+                    );
+                }
+            };
+            let held = times_the_run_holds(dq, &run_times);
+            if held.is_empty() {
+                return error_response(
+                    StatusCode::NOT_FOUND,
+                    ExceptionResponse::not_found(format!(
+                        "Instance {} of collection {} holds no data for datetime {}",
+                        run.format("%Y-%m-%dT%H:%M:%SZ"),
+                        collection_id,
+                        params.datetime.as_deref().unwrap_or_default()
+                    )),
+                );
+            }
+            held
+        }
+        _ => time_strings,
+    };
+
     // For multi-z queries, we include all z values in the domain
     // TODO: Full multi-z support would return a 3D grid (z, y, x) with data for each level
     let is_multi_z = z_values.as_ref().map(|v| v.len() > 1).unwrap_or(false);
@@ -774,43 +851,47 @@ async fn area_query(
         }
     };
 
-    // Find the parameter definition
-    let param_def = collection_def
-        .parameters
-        .iter()
-        .find(|p| p.name == *first_param);
+    // The dataset query for one parameter: its level, and the time and run the request names.
+    // An instance is one model run, so it is read at exactly that run (its first forecast when no
+    // time is named); a time alone is the nearest dataset of any run.
+    let query_for = |param_name: &str| {
+        let param_def = collection_def
+            .parameters
+            .iter()
+            .find(|p| p.name == param_name);
+        let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
 
-    // Build the level string
-    let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
+        // Build the DatasetQuery using the appropriate type (forecast vs observation)
+        let mut query = model_config.create_query(param_name);
 
-    // Build the DatasetQuery using the appropriate type (forecast vs observation)
-    let mut query = model_config.create_query(first_param);
+        if let Some(level) = &level_str {
+            query = query.at_level(level);
+        }
 
-    if let Some(level) = &level_str {
-        query = query.at_level(level);
-    }
-
-    if let Some(valid_time) = query_time {
-        query = query.at_valid_time(valid_time);
-    }
-
-    if let Some(ref_time) = reference_time {
-        query = query.at_run(ref_time);
-    }
+        match (reference_time, query_time) {
+            (Some(run), valid_time) => query.in_instance(run, valid_time),
+            (None, Some(valid_time)) => query.at_valid_time(valid_time),
+            (None, None) => query,
+        }
+    };
 
     // Read the region
     let grid_bbox = BoundingBox::new(bbox.west, bbox.south, bbox.east, bbox.north);
 
-    // Get metadata to determine projection type
-    let first_metadata = state.grid_data_service.get_metadata(&query).await.ok();
-    let projection_type = first_metadata
-        .as_ref()
-        .map(|m| m.projection)
-        .unwrap_or(ProjectionType::Geographic);
-
-    let region = match state
+    // Read the first parameter ONCE: the dataset's metadata (units, row order, projection), the
+    // time of the dataset the catalog matched and its cells come from one catalog lookup and one
+    // read. A PNG is made from this alone; a CoverageJSON body takes its grid axes and its first
+    // parameter from it and reads the rest.
+    let read = match state
         .grid_data_service
-        .read_region(&query, &grid_bbox, None)
+        .read_area(
+            &query_for(first_param),
+            &grid_bbox,
+            AreaReadOptions {
+                output_size: requested_dimensions,
+                crop: crop_box,
+            },
+        )
         .await
     {
         Ok(r) => r,
@@ -818,30 +899,155 @@ async fn area_query(
             return handle_grid_read_error(e, "read region");
         }
     };
+    let projection_type = read.metadata.projection;
 
-    // If the request crosses the prime meridian on a 0-360 grid (like GFS),
-    // extract just the requested region. The grid reader returns the full grid
-    // in this case, so we need to extract the appropriate columns.
-    let region = extract_prime_meridian_region(&region, &grid_bbox);
-
-    // If the request uses extended notation crossing the dateline (e.g., 140° to 235°),
-    // convert the output bbox to -180/180 format (e.g., 140° to -125°).
-    let region = extract_dateline_region(&region, &grid_bbox);
-
-    // If the grid uses a projected coordinate system (Lambert, Polar Stereographic, etc.),
-    // resample it to a regular geographic grid. This ensures EDR output coordinates
-    // are uniformly spaced in lat/lon, which is what clients expect.
-    let region = if projection_type.requires_projection_transform() {
-        tracing::debug!(
-            model = model_config.model.as_str(),
-            projection = %projection_type,
-            native_size = format!("{}x{}", region.width, region.height),
-            "Reprojecting grid data to geographic coordinates"
-        );
-        resample_to_geographic(&region, projection_type, &model_config.model, None)
-    } else {
-        region
+    // A datetime resolves to the NEAREST dataset, so the response is that instant's (and may be
+    // cached as such) only if the dataset matched is valid at it. A datetime that named no
+    // instant we could look up (an interval with nothing in it) was answered with the newest
+    // dataset.
+    let time_selection = match (time_selection, query_time) {
+        (TimeSelection::Explicit, None)
+            if params.datetime.is_some() && reference_time.is_none() =>
+        {
+            TimeSelection::Latest
+        }
+        _ => confirm_match(time_selection, query_time, read.valid_time),
     };
+
+    // A cropped image is the box around EVERY polygon of a MULTIPOLYGON; any other image is the
+    // first polygon's box (or the whole domain), which is all a rectangular first polygon clips to
+    let spans_every_polygon =
+        matches!(read.data, AreaData::Window(_)) && all_area_queries.len() > 1;
+
+    // The cells as a regular lat/lon grid.
+    let region = match read.data {
+        // A projected grid cut to the box: sampled onto the box itself, at the size asked for
+        // (the grid's own cell spacing when none was)
+        AreaData::Window(window) => {
+            let (width, height) = requested_dimensions.unwrap_or(window.cells);
+            tracing::debug!(
+                model = model_config.model.as_str(),
+                projection = %projection_type,
+                level = read.level,
+                native_size = format!("{}x{}", window.width, window.height),
+                "Reprojecting cropped grid window to geographic coordinates"
+            );
+            window.resample(
+                &crop_box.unwrap_or(grid_bbox),
+                width.clamp(1, MAX_PNG_DIMENSION),
+                height.clamp(1, MAX_PNG_DIMENSION),
+            )
+        }
+        AreaData::Region(region) => {
+            // Check if we got any data (region may be empty if polygon is outside data bounds)
+            if output_format == OutputFormat::Png && (region.width == 0 || region.height == 0) {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    ExceptionResponse::bad_request(format!(
+                        "No data available for the requested area. The polygon may be outside the collection's geographic bounds. \
+                         Requested bbox: [{:.2}, {:.2}, {:.2}, {:.2}]",
+                        grid_bbox.min_lon, grid_bbox.min_lat, grid_bbox.max_lon, grid_bbox.max_lat
+                    )),
+                );
+            }
+            into_geographic(region, projection_type, &model_config.model, &grid_bbox)
+        }
+    };
+
+    if output_format == OutputFormat::Png {
+        // PNG output - encode data as 16-bit PNG for GPU shaders
+        // We already validated that there's exactly one parameter
+        let param_name = &params_to_query[0];
+
+        // After reprojection, row_origin is always North (our resampling outputs north-up)
+        let row_origin = if projection_type.requires_projection_transform() {
+            RowOrigin::North
+        } else {
+            read.metadata.row_origin
+        };
+
+        let valid_range = collection_def
+            .parameters
+            .iter()
+            .find(|p| p.name == *param_name)
+            .and_then(|p| p.valid_range)
+            .map(|range| (range.min, range.max));
+
+        let png = match encode_area_png(
+            &region,
+            row_origin,
+            &polygon,
+            &all_area_queries,
+            spans_every_polygon,
+            valid_range,
+            requested_dimensions,
+            params.depth,
+            output_crs,
+            param_name,
+            &read.metadata.units,
+        ) {
+            Ok(png) => png,
+            Err(failure) => return failure.into_response(),
+        };
+
+        // Build response with metadata headers
+        // Use per-model cache policy for PNG responses (capped for the latest data)
+        let png_cache_max_age = model_config.settings.cache_policy.png_max_age;
+
+        // Record successful request metrics
+        state
+            .metrics
+            .record_request(
+                EndpointType::Area,
+                Some(&collection_id),
+                &params_to_query,
+                format_from_output(&output_format),
+                timer.elapsed_us(),
+                true,
+                client_ip.as_deref(),
+                user_agent.as_deref(),
+            )
+            .await;
+
+        // Record geographic extent for heatmap
+        let bbox = area_query_struct.bbox();
+        state
+            .metrics
+            .record_query_extent(
+                bbox.west,
+                bbox.south,
+                bbox.east,
+                bbox.north,
+                "area",
+                &collection_id,
+            )
+            .await;
+
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "image/png")
+            .header(
+                header::CACHE_CONTROL,
+                time_selection.cache_control(png_cache_max_age),
+            )
+            .header("X-EDR-Parameter", param_name.as_str())
+            .header("X-EDR-Units", &read.metadata.units)
+            .header("X-EDR-Min", format!("{}", png.min))
+            .header("X-EDR-Max", format!("{}", png.max))
+            .header("X-EDR-Encoding", png.encoding)
+            .header(
+                "X-EDR-BBox",
+                format!(
+                    "{},{},{},{}",
+                    png.bbox[0], png.bbox[1], png.bbox[2], png.bbox[3]
+                ),
+            )
+            .header("X-EDR-CRS", output_crs.code())
+            .header("X-EDR-Width", format!("{}", png.width))
+            .header("X-EDR-Height", format!("{}", png.height))
+            .body(png.bytes.into())
+            .unwrap();
+    }
 
     // Build x and y coordinate arrays from the (possibly reprojected) grid
     let x_values: Vec<f64> = (0..region.width)
@@ -880,61 +1086,25 @@ async fn area_query(
         ranges: Some(std::collections::HashMap::new()),
     };
 
-    // For each parameter, query the data and add to coverage
+    // For each parameter, query the data and add to coverage. The first parameter is the one
+    // already read above; the others are read here.
+    let mut first_read = Some((read.metadata.units.clone(), region));
     for param_name in &params_to_query {
-        // Find the parameter definition
-        let param_def = collection_def
-            .parameters
-            .iter()
-            .find(|p| p.name == *param_name);
+        let loaded = match first_read.take() {
+            Some(first) => Ok(first),
+            None => {
+                read_geographic(
+                    &state,
+                    &query_for(param_name),
+                    &grid_bbox,
+                    &model_config.model,
+                )
+                .await
+            }
+        };
 
-        // Build the level string
-        let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
-
-        // Build the DatasetQuery using the appropriate type (forecast vs observation)
-        let mut query = model_config.create_query(param_name);
-
-        if let Some(level) = &level_str {
-            query = query.at_level(level);
-        }
-
-        if let Some(valid_time) = query_time {
-            query = query.at_valid_time(valid_time);
-        }
-
-        if let Some(ref_time) = reference_time {
-            query = query.at_run(ref_time);
-        }
-
-        // Get metadata for units
-        let metadata = state.grid_data_service.get_metadata(&query).await.ok();
-        let units_str = metadata
-            .as_ref()
-            .map(|m| m.units.clone())
-            .unwrap_or_default();
-
-        // Read the region for this parameter
-        match state
-            .grid_data_service
-            .read_region(&query, &grid_bbox, None)
-            .await
-        {
-            Ok(param_region) => {
-                // Handle prime meridian crossing for 0-360 grids
-                let param_region = extract_prime_meridian_region(&param_region, &grid_bbox);
-
-                // If the grid uses a projected coordinate system, resample to geographic
-                let param_region = if projection_type.requires_projection_transform() {
-                    resample_to_geographic(
-                        &param_region,
-                        projection_type,
-                        &model_config.model,
-                        None,
-                    )
-                } else {
-                    param_region
-                };
-
+        match loaded {
+            Ok((units_str, param_region)) => {
                 // Check if the polygon is a simple rectangle (common case for bbox queries).
                 // For rectangles, we can skip the expensive polygon containment check entirely
                 // since read_region already returns only data within the requested bbox.
@@ -1021,399 +1191,56 @@ async fn area_query(
     }
 
     // Serialize response based on requested format
-    match output_format {
-        OutputFormat::Png => {
-            // PNG output - encode data as 16-bit PNG for GPU shaders
-            // We already validated that there's exactly one parameter
-            //
-            // Note: The query-building logic below mirrors the JSON path above (lines ~436-449).
-            // While this is duplication, extracting it adds complexity since:
-            // - JSON path iterates multiple parameters in a loop with different error handling
-            // - PNG path handles exactly one parameter with different response formatting
-            // The duplication is intentional to keep each code path self-contained and readable.
-            let param_name = &params_to_query[0];
-
-            // Find the parameter definition for units
-            let param_def = collection_def
-                .parameters
-                .iter()
-                .find(|p| p.name == *param_name);
-
-            // Build the level string
-            let level_str = build_level_string(&collection_def.level_filter, param_def, z_val);
-
-            // Build the DatasetQuery using the appropriate type (forecast vs observation)
-            let mut query = model_config.create_query(param_name);
-
-            if let Some(level) = &level_str {
-                query = query.at_level(level);
-            }
-
-            if let Some(valid_time) = query_time {
-                query = query.at_valid_time(valid_time);
-            }
-
-            if let Some(ref_time) = reference_time {
-                query = query.at_run(ref_time);
-            }
-
-            // Get metadata for units, row origin, and projection
-            let metadata = state.grid_data_service.get_metadata(&query).await.ok();
-            let units_str = metadata
-                .as_ref()
-                .map(|m| m.units.clone())
-                .unwrap_or_default();
-            let row_origin = metadata
-                .as_ref()
-                .map(|m| m.row_origin)
-                .unwrap_or(RowOrigin::North);
-            let png_projection_type = metadata
-                .as_ref()
-                .map(|m| m.projection)
-                .unwrap_or(ProjectionType::Geographic);
-
-            // Read the region for this parameter
-            let param_region = match state
-                .grid_data_service
-                .read_region(&query, &grid_bbox, None)
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    return handle_grid_read_error(e, "read region for PNG");
-                }
-            };
-
-            // Check if we got any data (region may be empty if polygon is outside data bounds)
-            if param_region.width == 0 || param_region.height == 0 {
-                return error_response(
-                    StatusCode::BAD_REQUEST,
-                    ExceptionResponse::bad_request(format!(
-                        "No data available for the requested area. The polygon may be outside the collection's geographic bounds. \
-                         Requested bbox: [{:.2}, {:.2}, {:.2}, {:.2}]",
-                        grid_bbox.min_lon, grid_bbox.min_lat, grid_bbox.max_lon, grid_bbox.max_lat
-                    )),
-                );
-            }
-
-            // Handle prime meridian crossing for 0-360 grids (like GFS)
-            let param_region = extract_prime_meridian_region(&param_region, &grid_bbox);
-
-            // Handle dateline crossing for extended notation (e.g., 140° to 235°)
-            let param_region = extract_dateline_region(&param_region, &grid_bbox);
-
-            // If the grid uses a projected coordinate system, resample to geographic.
-            // This ensures the PNG output has uniformly-spaced lat/lon pixels.
-            let param_region = if png_projection_type.requires_projection_transform() {
-                tracing::debug!(
-                    model = model_config.model.as_str(),
-                    projection = %png_projection_type,
-                    native_size = format!("{}x{}", param_region.width, param_region.height),
-                    "Reprojecting grid data to geographic coordinates for PNG"
-                );
-                resample_to_geographic(
-                    &param_region,
-                    png_projection_type,
-                    &model_config.model,
-                    None,
-                )
-            } else {
-                param_region
-            };
-
-            // After reprojection, row_origin is always North (our resampling outputs north-up)
-            let row_origin = if png_projection_type.requires_projection_transform() {
-                RowOrigin::North
-            } else {
-                row_origin
-            };
-
-            // Check if the polygon is a simple rectangle (common case for bbox queries).
-            // For rectangles, we can skip the expensive polygon containment check entirely
-            // since read_region already returns only data within the requested bbox.
-            let simple_rect = is_simple_rectangle(&polygon);
-
-            // Apply polygon mask - set values outside polygon to None
-            let masked_data: Vec<Option<f32>> = if simple_rect.is_some() {
-                // For simple rectangles, skip containment check - read_region already
-                // returned data clipped to the bbox. Just convert NaN to None.
-                param_region
-                    .data
-                    .iter()
-                    .map(|&value| if value.is_nan() { None } else { Some(value) })
-                    .collect()
-            } else {
-                // For complex polygons, we need to check each pixel against the polygon
-                let mut masked = Vec::with_capacity(param_region.data.len());
-
-                for (idx, &value) in param_region.data.iter().enumerate() {
-                    let row = idx / param_region.width;
-                    let col = idx % param_region.width;
-
-                    // Calculate lon/lat for this grid cell (uniformly spaced after reprojection)
-                    // Latitude calculation depends on row_origin:
-                    // - RowOrigin::North: row 0 is at max_lat (top), increases going south
-                    // - RowOrigin::South: row 0 is at min_lat (bottom), increases going north
-                    let lon =
-                        param_region.bbox.min_lon + (col as f64 + 0.5) * param_region.resolution.0;
-                    let lat = match row_origin {
-                        RowOrigin::North => {
-                            param_region.bbox.max_lat
-                                - (row as f64 + 0.5) * param_region.resolution.1
-                        }
-                        RowOrigin::South => {
-                            param_region.bbox.min_lat
-                                + (row as f64 + 0.5) * param_region.resolution.1
-                        }
-                    };
-
-                    // Normalize longitude to -180/180 range for polygon comparison
-                    // (grid may use 0-360 convention like GFS)
-                    let lon_normalized = if lon > 180.0 { lon - 360.0 } else { lon };
-
-                    // Check if point is inside the polygon using ray casting algorithm
-                    let inside = all_area_queries
-                        .iter()
-                        .any(|aq| aq.contains_point(lon_normalized, lat));
-
-                    if inside && !value.is_nan() {
-                        masked.push(Some(value));
-                    } else {
-                        masked.push(None);
-                    }
-                }
-                masked
-            };
-
-            // For PNG output, we need north at the top of the image.
-            // If row_origin is South (row 0 = south), flip the rows so north is at top.
-            let masked_data = if row_origin == RowOrigin::South {
-                flip_rows(&masked_data, param_region.width, param_region.height)
-            } else {
-                masked_data
-            };
-
-            // Determine value range for PNG encoding:
-            // - If valid_range is configured, use it for consistent colormap rendering
-            // - Otherwise, compute from the actual data (legacy behavior)
-            let (min_val, max_val) = if let Some(range) = param_def.and_then(|p| p.valid_range) {
-                (range.min, range.max)
-            } else {
-                compute_data_range(&masked_data)
-            };
-
-            // Apply resampling if requested dimensions differ from source
-            let (output_data, output_width, output_height) =
-                if let Some((req_width, req_height)) = requested_dimensions {
-                    if req_width != param_region.width || req_height != param_region.height {
-                        let resampled = resample_nearest(
-                            &masked_data,
-                            param_region.width,
-                            param_region.height,
-                            req_width,
-                            req_height,
-                        );
-                        (resampled, req_width, req_height)
-                    } else {
-                        (masked_data, param_region.width, param_region.height)
-                    }
-                } else {
-                    (masked_data, param_region.width, param_region.height)
-                };
-
-            // Determine encoding bit depth (default to 16-bit)
-            let use_8bit = params.depth == Some(8);
-            if let Some(depth) = params.depth {
-                if depth != 8 && depth != 16 {
-                    return error_response(
-                        StatusCode::BAD_REQUEST,
-                        ExceptionResponse::bad_request(format!(
-                            "Invalid depth value: {}. Must be 8 or 16.",
-                            depth
-                        )),
-                    );
-                }
-            }
-
-            // Transform bbox to the requested output CRS
-            let png_bbox = if output_crs.is_projected() {
-                // Transform WGS84 bbox corners to Web Mercator
-                let (min_x, min_y) = edr_protocol::crs::wgs84_to_mercator(
-                    param_region.bbox.min_lon,
-                    param_region.bbox.min_lat,
-                );
-                let (max_x, max_y) = edr_protocol::crs::wgs84_to_mercator(
-                    param_region.bbox.max_lon,
-                    param_region.bbox.max_lat,
-                );
-                [min_x, min_y, max_x, max_y]
-            } else {
-                // Keep in WGS84 degrees
-                [
-                    param_region.bbox.min_lon,
-                    param_region.bbox.min_lat,
-                    param_region.bbox.max_lon,
-                    param_region.bbox.max_lat,
-                ]
-            };
-
-            // Encode to PNG using appropriate encoder
-            let (png_bytes, encoding_name) = if use_8bit {
-                // 8-bit grayscale+alpha (~50% smaller, 256 values)
-                let encoder = DataPng8BitEncoder::new(min_val, max_val);
-                match encoder.encode_with_metadata(
-                    &output_data,
-                    output_width,
-                    output_height,
-                    param_name,
-                    &units_str,
-                    png_bbox,
-                ) {
-                    Ok(e) => (e.png_bytes, "uint8"),
-                    Err(e) => {
-                        tracing::error!("Failed to encode 8-bit PNG: {}", e);
-                        return error_response(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            ExceptionResponse::internal_error(format!(
-                                "Failed to encode PNG: {}",
-                                e
-                            )),
-                        );
-                    }
-                }
-            } else {
-                // 16-bit RGBA (default, 65536 values)
-                let encoder = DataPngEncoder::new(min_val, max_val);
-                match encoder.encode_with_metadata(
-                    &output_data,
-                    output_width,
-                    output_height,
-                    param_name,
-                    &units_str,
-                    png_bbox,
-                ) {
-                    Ok(e) => (e.png_bytes, "uint16"),
-                    Err(e) => {
-                        tracing::error!("Failed to encode 16-bit PNG: {}", e);
-                        return error_response(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            ExceptionResponse::internal_error(format!(
-                                "Failed to encode PNG: {}",
-                                e
-                            )),
-                        );
-                    }
-                }
-            };
-
-            // Build response with metadata headers
-            // Use per-model cache policy for PNG responses (capped for the latest data)
-            let png_cache_max_age = model_config.settings.cache_policy.png_max_age;
-
-            // Record successful request metrics
-            state
-                .metrics
-                .record_request(
-                    EndpointType::Area,
-                    Some(&collection_id),
-                    &params_to_query,
-                    format_from_output(&output_format),
-                    timer.elapsed_us(),
-                    true,
-                    client_ip.as_deref(),
-                    user_agent.as_deref(),
-                )
-                .await;
-
-            // Record geographic extent for heatmap
-            let bbox = area_query_struct.bbox();
-            state
-                .metrics
-                .record_query_extent(
-                    bbox.west,
-                    bbox.south,
-                    bbox.east,
-                    bbox.north,
-                    "area",
-                    &collection_id,
-                )
-                .await;
-
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "image/png")
-                .header(
-                    header::CACHE_CONTROL,
-                    time_selection.cache_control(png_cache_max_age),
-                )
-                .header("X-EDR-Parameter", param_name.as_str())
-                .header("X-EDR-Units", &units_str)
-                .header("X-EDR-Min", format!("{}", min_val))
-                .header("X-EDR-Max", format!("{}", max_val))
-                .header("X-EDR-Encoding", encoding_name)
-                .header(
-                    "X-EDR-BBox",
-                    format!(
-                        "{},{},{},{}",
-                        png_bbox[0], png_bbox[1], png_bbox[2], png_bbox[3]
-                    ),
-                )
-                .header("X-EDR-CRS", output_crs.code())
-                .header("X-EDR-Width", format!("{}", output_width))
-                .header("X-EDR-Height", format!("{}", output_height))
-                .body(png_bytes.into())
-                .unwrap()
-        }
-        OutputFormat::GeoJson => {
-            let geojson = EdrFeatureCollection::from(&coverage);
-            match serde_json::to_string_pretty(&geojson) {
-                Ok(json) => {
-                    // Record successful request metrics
-                    state
-                        .metrics
-                        .record_request(
-                            EndpointType::Area,
-                            Some(&collection_id),
-                            &params_to_query,
-                            format_from_output(&output_format),
-                            timer.elapsed_us(),
-                            true,
-                            client_ip.as_deref(),
-                            user_agent.as_deref(),
-                        )
-                        .await;
-
-                    // Record geographic extent for heatmap
-                    let bbox = area_query_struct.bbox();
-                    state
-                        .metrics
-                        .record_query_extent(
-                            bbox.west,
-                            bbox.south,
-                            bbox.east,
-                            bbox.north,
-                            "area",
-                            &collection_id,
-                        )
-                        .await;
-
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, output_format.content_type())
-                        .header(header::CACHE_CONTROL, time_selection.cache_control(300))
-                        .body(json.into())
-                        .unwrap()
-                }
-                Err(e) => {
-                    tracing::error!("Failed to serialize GeoJSON: {}", e);
-                    error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        ExceptionResponse::internal_error("Failed to serialize response"),
+    if output_format == OutputFormat::GeoJson {
+        let geojson = EdrFeatureCollection::from(&coverage);
+        match serde_json::to_string_pretty(&geojson) {
+            Ok(json) => {
+                // Record successful request metrics
+                state
+                    .metrics
+                    .record_request(
+                        EndpointType::Area,
+                        Some(&collection_id),
+                        &params_to_query,
+                        format_from_output(&output_format),
+                        timer.elapsed_us(),
+                        true,
+                        client_ip.as_deref(),
+                        user_agent.as_deref(),
                     )
-                }
+                    .await;
+
+                // Record geographic extent for heatmap
+                let bbox = area_query_struct.bbox();
+                state
+                    .metrics
+                    .record_query_extent(
+                        bbox.west,
+                        bbox.south,
+                        bbox.east,
+                        bbox.north,
+                        "area",
+                        &collection_id,
+                    )
+                    .await;
+
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, output_format.content_type())
+                    .header(header::CACHE_CONTROL, time_selection.cache_control(300))
+                    .body(json.into())
+                    .unwrap()
+            }
+            Err(e) => {
+                tracing::error!("Failed to serialize GeoJSON: {}", e);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ExceptionResponse::internal_error("Failed to serialize response"),
+                )
             }
         }
-        OutputFormat::CoverageJson => match serde_json::to_string_pretty(&coverage) {
+    } else {
+        match serde_json::to_string_pretty(&coverage) {
             Ok(json) => {
                 // Record successful request metrics
                 state
@@ -1458,7 +1285,345 @@ async fn area_query(
                     ExceptionResponse::internal_error("Failed to serialize response"),
                 )
             }
-        },
+        }
+    }
+}
+
+/// The cells of an area read as a regular lat/lon grid: a 0-360 grid cut at the prime meridian
+/// and the dateline, and a projected grid (Lambert, Polar Stereographic, ...) resampled so that
+/// EDR output coordinates are uniformly spaced in lat/lon, which is what clients expect.
+fn into_geographic(
+    region: GridRegion,
+    projection_type: ProjectionType,
+    model: &str,
+    grid_bbox: &BoundingBox,
+) -> GridRegion {
+    // If the request crosses the prime meridian on a 0-360 grid (like GFS),
+    // extract just the requested region. The grid reader returns the full grid
+    // in this case, so we need to extract the appropriate columns.
+    let region = extract_prime_meridian_region(&region, grid_bbox);
+
+    // If the request uses extended notation crossing the dateline (e.g., 140° to 235°),
+    // convert the output bbox to -180/180 format (e.g., 140° to -125°).
+    let region = extract_dateline_region(&region, grid_bbox);
+
+    if projection_type.requires_projection_transform() {
+        tracing::debug!(
+            model = model,
+            projection = %projection_type,
+            native_size = format!("{}x{}", region.width, region.height),
+            "Reprojecting grid data to geographic coordinates"
+        );
+        resample_to_geographic(&region, projection_type, model, None)
+    } else {
+        region
+    }
+}
+
+/// The smallest box that holds the bounding box of every polygon of a request.
+fn union_bbox(polygons: &[AreaQuery]) -> BoundingBox {
+    let boxes: Vec<_> = polygons.iter().map(AreaQuery::bbox).collect();
+    BoundingBox::new(
+        boxes.iter().map(|b| b.west).fold(f64::INFINITY, f64::min),
+        boxes.iter().map(|b| b.south).fold(f64::INFINITY, f64::min),
+        boxes
+            .iter()
+            .map(|b| b.east)
+            .fold(f64::NEG_INFINITY, f64::max),
+        boxes
+            .iter()
+            .map(|b| b.north)
+            .fold(f64::NEG_INFINITY, f64::max),
+    )
+}
+
+/// The times of a `datetime` list or interval that a model run holds (`run_times`, which includes
+/// every parameter's), in the order the request gave them (an interval: ascending). A time of a
+/// list is held if the run has an instant within [`MATCH_TOLERANCE`] of it.
+fn times_the_run_holds(datetime: &DateTimeQuery, run_times: &[DateTime<Utc>]) -> Vec<String> {
+    if datetime.is_interval() {
+        let held: Vec<String> = run_times
+            .iter()
+            .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .collect();
+        return datetime.expand_against_available_times(&held);
+    }
+    datetime
+        .to_vec()
+        .into_iter()
+        .filter(|time| {
+            DateTime::parse_from_rfc3339(time).is_ok_and(|asked| {
+                let asked = asked.with_timezone(&Utc);
+                run_times
+                    .iter()
+                    .any(|t| (*t - asked).abs() <= MATCH_TOLERANCE)
+            })
+        })
+        .collect()
+}
+
+/// Read one more parameter of a CoverageJSON body: its units and its cells as a regular lat/lon
+/// grid. Always the whole read; only a PNG is cropped or sized.
+async fn read_geographic(
+    state: &AppState,
+    query: &DatasetQuery,
+    grid_bbox: &BoundingBox,
+    model: &str,
+) -> Result<(String, GridRegion), GridProcessorError> {
+    let read = state
+        .grid_data_service
+        .read_area(query, grid_bbox, AreaReadOptions::default())
+        .await?;
+    match read.data {
+        AreaData::Region(region) => Ok((
+            read.metadata.units,
+            into_geographic(region, read.metadata.projection, model, grid_bbox),
+        )),
+        AreaData::Window(_) => Err(GridProcessorError::read_failed(
+            "a window came back from a read that did not ask for one",
+        )),
+    }
+}
+
+/// Why an area PNG could not be made.
+enum PngFailure {
+    /// `depth` was neither 8 nor 16
+    BadDepth(u8),
+    /// The encoder refused the image
+    Encode(String),
+}
+
+impl PngFailure {
+    fn into_response(self) -> Response {
+        match self {
+            PngFailure::BadDepth(depth) => error_response(
+                StatusCode::BAD_REQUEST,
+                ExceptionResponse::bad_request(format!(
+                    "Invalid depth value: {}. Must be 8 or 16.",
+                    depth
+                )),
+            ),
+            PngFailure::Encode(e) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ExceptionResponse::internal_error(format!("Failed to encode PNG: {}", e)),
+            ),
+        }
+    }
+}
+
+/// A PNG made from an area, and the numbers its headers report.
+struct AreaPng {
+    bytes: Vec<u8>,
+    /// `uint16` or `uint8`
+    encoding: &'static str,
+    /// The value range the PNG's pixel values are scaled over
+    min: f32,
+    max: f32,
+    /// Extent of the image in the output CRS: west, south, east, north
+    bbox: [f64; 4],
+    width: usize,
+    height: usize,
+}
+
+/// Mask `region` to the polygon, size it, and encode it as a data PNG.
+///
+/// `region` is a regular lat/lon grid (see [`into_geographic`]) whose row order is `row_origin`.
+/// `spans_every_polygon` is whether it is the box around all of a MULTIPOLYGON's polygons, see
+/// [`mask_to_polygons`].
+#[allow(clippy::too_many_arguments)]
+fn encode_area_png(
+    region: &GridRegion,
+    row_origin: RowOrigin,
+    polygon: &[(f64, f64)],
+    all_area_queries: &[AreaQuery],
+    spans_every_polygon: bool,
+    valid_range: Option<(f32, f32)>,
+    requested_dimensions: Option<(usize, usize)>,
+    depth: Option<u8>,
+    output_crs: edr_protocol::OutputCrs,
+    param_name: &str,
+    units: &str,
+) -> Result<AreaPng, PngFailure> {
+    let masked_data = mask_to_polygons(
+        region,
+        row_origin,
+        polygon,
+        all_area_queries,
+        spans_every_polygon,
+    );
+
+    // For PNG output, we need north at the top of the image.
+    // If row_origin is South (row 0 = south), flip the rows so north is at top.
+    let masked_data = if row_origin == RowOrigin::South {
+        flip_rows(&masked_data, region.width, region.height)
+    } else {
+        masked_data
+    };
+
+    // Determine value range for PNG encoding:
+    // - If valid_range is configured, use it for consistent colormap rendering
+    // - Otherwise, compute from the actual data (legacy behavior)
+    let (min_val, max_val) = if let Some(range) = valid_range {
+        range
+    } else {
+        compute_data_range(&masked_data)
+    };
+
+    // Apply resampling if requested dimensions differ from source
+    let (output_data, output_width, output_height) =
+        if let Some((req_width, req_height)) = requested_dimensions {
+            if req_width != region.width || req_height != region.height {
+                let resampled = resample_nearest(
+                    &masked_data,
+                    region.width,
+                    region.height,
+                    req_width,
+                    req_height,
+                );
+                (resampled, req_width, req_height)
+            } else {
+                (masked_data, region.width, region.height)
+            }
+        } else {
+            (masked_data, region.width, region.height)
+        };
+
+    // Determine encoding bit depth (default to 16-bit)
+    let use_8bit = depth == Some(8);
+    if let Some(depth) = depth {
+        if depth != 8 && depth != 16 {
+            return Err(PngFailure::BadDepth(depth));
+        }
+    }
+
+    // Transform bbox to the requested output CRS
+    let png_bbox = if output_crs.is_projected() {
+        // Transform WGS84 bbox corners to Web Mercator
+        let (min_x, min_y) =
+            edr_protocol::crs::wgs84_to_mercator(region.bbox.min_lon, region.bbox.min_lat);
+        let (max_x, max_y) =
+            edr_protocol::crs::wgs84_to_mercator(region.bbox.max_lon, region.bbox.max_lat);
+        [min_x, min_y, max_x, max_y]
+    } else {
+        // Keep in WGS84 degrees
+        [
+            region.bbox.min_lon,
+            region.bbox.min_lat,
+            region.bbox.max_lon,
+            region.bbox.max_lat,
+        ]
+    };
+
+    // Encode to PNG using appropriate encoder
+    let (png_bytes, encoding_name) = if use_8bit {
+        // 8-bit grayscale+alpha (~50% smaller, 256 values)
+        let encoder = DataPng8BitEncoder::new(min_val, max_val);
+        match encoder.encode_with_metadata(
+            &output_data,
+            output_width,
+            output_height,
+            param_name,
+            units,
+            png_bbox,
+        ) {
+            Ok(e) => (e.png_bytes, "uint8"),
+            Err(e) => {
+                tracing::error!("Failed to encode 8-bit PNG: {}", e);
+                return Err(PngFailure::Encode(e));
+            }
+        }
+    } else {
+        // 16-bit RGBA (default, 65536 values)
+        let encoder = DataPngEncoder::new(min_val, max_val);
+        match encoder.encode_with_metadata(
+            &output_data,
+            output_width,
+            output_height,
+            param_name,
+            units,
+            png_bbox,
+        ) {
+            Ok(e) => (e.png_bytes, "uint16"),
+            Err(e) => {
+                tracing::error!("Failed to encode 16-bit PNG: {}", e);
+                return Err(PngFailure::Encode(e));
+            }
+        }
+    };
+
+    Ok(AreaPng {
+        bytes: png_bytes,
+        encoding: encoding_name,
+        min: min_val,
+        max: max_val,
+        bbox: png_bbox,
+        width: output_width,
+        height: output_height,
+    })
+}
+
+/// The cells of `region` inside the request's polygons, `None` elsewhere (and where there is no
+/// data), in the row order of `region`.
+///
+/// A rectangular `polygon` (the first of the request) is not checked cell by cell when `region` is
+/// the box that was read for it: it holds only cells inside. A region that is the box around ALL of
+/// a MULTIPOLYGON's polygons (`spans_every_polygon`, a cropped image) also holds cells outside
+/// every polygon, even when the first polygon is a rectangle, so it is always checked.
+fn mask_to_polygons(
+    region: &GridRegion,
+    row_origin: RowOrigin,
+    polygon: &[(f64, f64)],
+    all_area_queries: &[AreaQuery],
+    spans_every_polygon: bool,
+) -> Vec<Option<f32>> {
+    // Check if the polygon is a simple rectangle (common case for bbox queries).
+    // For rectangles, we can skip the expensive polygon containment check entirely
+    // since read_region already returns only data within the requested bbox.
+    let simple_rect = is_simple_rectangle(polygon).filter(|_| !spans_every_polygon);
+
+    // Apply polygon mask - set values outside polygon to None
+    if simple_rect.is_some() {
+        // For simple rectangles, skip containment check - read_region already
+        // returned data clipped to the bbox. Just convert NaN to None.
+        region
+            .data
+            .iter()
+            .map(|&value| if value.is_nan() { None } else { Some(value) })
+            .collect()
+    } else {
+        // For complex polygons, we need to check each pixel against the polygon
+        let mut masked = Vec::with_capacity(region.data.len());
+
+        for (idx, &value) in region.data.iter().enumerate() {
+            let row = idx / region.width;
+            let col = idx % region.width;
+
+            // Calculate lon/lat for this grid cell (uniformly spaced after reprojection)
+            // Latitude calculation depends on row_origin:
+            // - RowOrigin::North: row 0 is at max_lat (top), increases going south
+            // - RowOrigin::South: row 0 is at min_lat (bottom), increases going north
+            let lon = region.bbox.min_lon + (col as f64 + 0.5) * region.resolution.0;
+            let lat = match row_origin {
+                RowOrigin::North => region.bbox.max_lat - (row as f64 + 0.5) * region.resolution.1,
+                RowOrigin::South => region.bbox.min_lat + (row as f64 + 0.5) * region.resolution.1,
+            };
+
+            // Normalize longitude to -180/180 range for polygon comparison
+            // (grid may use 0-360 convention like GFS)
+            let lon_normalized = if lon > 180.0 { lon - 360.0 } else { lon };
+
+            // Check if point is inside the polygon using ray casting algorithm
+            let inside = all_area_queries
+                .iter()
+                .any(|aq| aq.contains_point(lon_normalized, lat));
+
+            if inside && !value.is_nan() {
+                masked.push(Some(value));
+            } else {
+                masked.push(None);
+            }
+        }
+        masked
     }
 }
 
@@ -1543,6 +1708,145 @@ mod tests {
         assert_eq!(t.conditions.as_deref(), Some("latest"));
         assert_eq!(t.coords.as_deref(), Some("-105.3,39.9,-105.2,40.0"));
         assert_eq!(t.f.as_deref(), Some("geojson"));
+    }
+
+    #[test]
+    fn crop_is_read_from_the_query_string_and_off_by_default() {
+        let on = parse_area("coords=-106,38.5,-104.5,40.9&f=png&crop=true");
+        assert_eq!(on.crop.as_deref(), Some("true"));
+        assert_eq!(parse_area("coords=-106,38.5,-104.5,40.9&f=png").crop, None);
+        // `crop` is a PNG option, not a pin on the time: the cache policy ignores it
+        assert_eq!(on.requested_time(None).cache_control(900), "max-age=60");
+    }
+
+    /// The polygons of a request, as the handler holds them
+    fn polygons_of(wkt: &str) -> Vec<AreaQuery> {
+        match AreaQuery::parse_polygon_multi(wkt).unwrap() {
+            ParsedPolygons::Single(p) => vec![p],
+            ParsedPolygons::Multi(p) => p,
+        }
+        .into_iter()
+        .map(|polygon| AreaQuery {
+            polygon,
+            z: None,
+            datetime: None,
+            parameter_names: None,
+            crs: None,
+        })
+        .collect()
+    }
+
+    #[test]
+    fn a_cropped_image_covers_every_polygon_of_a_multipolygon() {
+        let boxes = polygons_of;
+
+        let one = union_bbox(&boxes("POLYGON((-106 39,-104 39,-104 40,-106 40,-106 39))"));
+        assert_eq!(
+            (one.min_lon, one.min_lat, one.max_lon, one.max_lat),
+            (-106.0, 39.0, -104.0, 40.0)
+        );
+
+        let two = union_bbox(&boxes(
+            "MULTIPOLYGON(((-106 39,-104 39,-104 40,-106 40,-106 39)),\
+             ((-90 35,-88 35,-88 36,-90 36,-90 35)))",
+        ));
+        assert_eq!(
+            (two.min_lon, two.min_lat, two.max_lon, two.max_lat),
+            (-106.0, 35.0, -88.0, 40.0)
+        );
+    }
+
+    #[test]
+    fn a_cropped_multipolygon_is_masked_outside_every_polygon_whatever_its_first_polygon() {
+        // Two rectangles 2 x 1.2 and 2 x 1 degrees, far apart, in a 154 x 72 image of the box
+        // around both (0.1 degree pixels, rows from the north)
+        let polygons = polygons_of(
+            "MULTIPOLYGON(((-113.4 44,-111.4 44,-111.4 45.2,-113.4 45.2,-113.4 44)),\
+             ((-100 38,-98 38,-98 39,-100 39,-100 38)))",
+        );
+        let (width, height) = (154, 72);
+        let union = union_bbox(&polygons);
+        let image = GridRegion::new(
+            vec![1.0; width * height],
+            width,
+            height,
+            union,
+            (union.width() / width as f64, union.height() / height as f64),
+        );
+        let first = &polygons[0].polygon;
+        let kept = |masked: &[Option<f32>]| masked.iter().flatten().count();
+
+        // the image is bigger than the first polygon: only the pixels in a polygon are data
+        let masked = mask_to_polygons(&image, RowOrigin::North, first, &polygons, true);
+        assert_eq!(kept(&masked), 20 * 12 + 20 * 10);
+        assert!(masked[5 * width + 10].is_some(), "in the first polygon");
+        assert!(masked[65 * width + 144].is_some(), "in the second polygon");
+        assert!(masked[5 * width + 144].is_none(), "in neither");
+        assert!(masked[40 * width + 77].is_none(), "in neither");
+
+        // a read of the first polygon's box (a lat/lon grid, or crop off) is that rectangle:
+        // nothing in it to mask, so nothing is checked, as ever
+        let own_box =
+            polygons_of("POLYGON((-113.4 44,-111.4 44,-111.4 45.2,-113.4 45.2,-113.4 44))");
+        let own = GridRegion::new(vec![1.0; 20 * 12], 20, 12, union_bbox(&own_box), (0.1, 0.1));
+        let masked = mask_to_polygons(&own, RowOrigin::North, first, &polygons, false);
+        assert_eq!(kept(&masked), 20 * 12);
+        // ...and so is the whole domain for a rectangle, whatever else is in the request
+        let masked = mask_to_polygons(&image, RowOrigin::North, first, &polygons, false);
+        assert_eq!(kept(&masked), width * height);
+
+        // a first polygon that is not a rectangle is always checked
+        let triangles = polygons_of(
+            "MULTIPOLYGON(((-113.4 44,-111.4 44,-112.4 45.2,-113.4 44)),\
+             ((-100 38,-98 38,-98 39,-100 39,-100 38)))",
+        );
+        let masked = mask_to_polygons(
+            &image,
+            RowOrigin::North,
+            &triangles[0].polygon,
+            &triangles,
+            false,
+        );
+        assert!(kept(&masked) < 20 * 12 + 20 * 10);
+        assert!(masked[5 * width + 144].is_none(), "in neither");
+    }
+
+    #[test]
+    fn an_instances_datetime_span_is_cut_to_the_times_the_run_holds() {
+        use chrono::TimeZone;
+        // A run that starts at 18:15; the model's earliest instant (17:45) is an older run's
+        let at = |h, m| Utc.with_ymd_and_hms(2026, 10, 11, h, m, 0).unwrap();
+        let run = [at(18, 15), at(18, 30), at(19, 0)];
+        let held =
+            |datetime: &str| times_the_run_holds(&DateTimeQuery::parse(datetime).unwrap(), &run);
+
+        // an interval: the run's own times inside it, ascending, whatever the model holds
+        assert_eq!(
+            held("2026-10-11T17:30:00Z/2026-10-11T18:30:00Z"),
+            ["2026-10-11T18:15:00Z", "2026-10-11T18:30:00Z"]
+        );
+        assert_eq!(held("../2026-10-11T18:20:00Z"), ["2026-10-11T18:15:00Z"]);
+        assert_eq!(
+            held("2026-10-11T18:20:00Z/.."),
+            ["2026-10-11T18:30:00Z", "2026-10-11T19:00:00Z"]
+        );
+        // a list: the entries the run holds, in the order given
+        assert_eq!(
+            held("2026-10-11T19:00:00Z,2026-10-11T17:45:00Z,2026-10-11T18:15:00Z"),
+            ["2026-10-11T19:00:00Z", "2026-10-11T18:15:00Z"]
+        );
+        // within the catalog's one second, not beyond it
+        assert_eq!(
+            held("2026-10-11T18:30:01Z,2026-10-11T18:30:02Z"),
+            ["2026-10-11T18:30:01Z"]
+        );
+        // nothing the run holds: nothing (the handler answers 404)
+        assert!(held("2030-01-01T00:00:00Z/2030-01-02T00:00:00Z").is_empty());
+        assert!(held("2026-10-11T17:00:00Z,2026-10-11T17:45:00Z").is_empty());
+        assert_eq!(
+            held("2026-10-11T18:15:00Z/2026-10-11T18:20:00Z"),
+            ["2026-10-11T18:15:00Z"]
+        );
     }
 
     #[test]
