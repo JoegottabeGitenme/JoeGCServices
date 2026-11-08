@@ -382,16 +382,10 @@ async fn trajectory_query(
     // Get the list of times to query
     let time_strings: Vec<String> = if let Some(ref dq) = datetime_query {
         if dq.is_interval() {
-            let model_name = &model_config.model;
-            let available_times: Vec<String> = state
-                .catalog
-                .get_model_valid_times(model_name)
-                .await
-                .ok()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-                .collect();
+            // This collection's parameters' instants, not the model's
+            let available_times =
+                super::interval_time_strings(&state.catalog, &model_config.model, &params_to_query)
+                    .await;
 
             dq.expand_against_available_times(&available_times)
         } else {
