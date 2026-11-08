@@ -403,7 +403,7 @@ impl DataQueries {
 
     /// Advertise GeoJSON as the only output format of every query added so far, for a collection
     /// that never answers in CoverageJSON: link type `application/geo+json` and the output formats
-    /// `application/geo+json` and the `GeoJSON` short form (see [`default_output_formats`]).
+    /// `application/geo+json` and the `GeoJSON` short form (see `default_output_formats`).
     pub fn geojson_only(mut self) -> Self {
         let queries = [
             &mut self.position,

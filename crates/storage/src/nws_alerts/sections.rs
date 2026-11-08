@@ -406,7 +406,7 @@ impl ForecastClock {
     /// side of a change to or from daylight time.
     ///
     /// `TODAY` and `TONIGHT` are the day of `sent` until the periods say otherwise (see
-    /// [`ForecastClock::dated_by`]).
+    /// `ForecastClock::dated_by`).
     pub fn new(sent: DateTime<Utc>, now: DateTime<Utc>, formal_headline: &str) -> Option<Self> {
         let zone = Zone::named(formal_headline, sent)?;
         let sent = sent.with_timezone(&zone.offset_at(sent));

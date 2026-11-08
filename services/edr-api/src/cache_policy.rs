@@ -90,7 +90,7 @@ impl RequestedTime<'_> {
 
     /// [`Self::selection`] with the clock spelled out: a closed `datetime`
     /// interval ending after `now` is not pinned yet (see
-    /// [`datetime_is_pinned`]).
+    /// `datetime_is_pinned`).
     pub fn selection_at(&self, now: DateTime<Utc>) -> TimeSelection {
         TimeSelection::from_explicit(
             given(self.run)
@@ -134,7 +134,7 @@ pub fn confirm_match(
 
 /// Query-parameter structs of the data endpoints, so a handler asks
 /// `params.requested_time(instance)` instead of repeating which fields pin the
-/// time. Implement it with [`impl_time_selectors!`].
+/// time. Implement it with `impl_time_selectors!`.
 pub trait TimeSelectors {
     fn datetime(&self) -> Option<&str>;
 

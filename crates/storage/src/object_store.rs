@@ -243,7 +243,7 @@ impl ObjectStorage {
     ///
     /// The prefix is listed once and the keys are removed with the bulk API
     /// ([`ObjectStore::delete_stream`], which on S3 sends `DeleteObjects`
-    /// requests), [`DELETE_BATCH_KEYS`] keys per request. A zarr directory
+    /// requests), `DELETE_BATCH_KEYS` keys per request. A zarr directory
     /// (7-11 objects for HRRR/GOES) is therefore one LIST plus one DELETE
     /// request instead of one DELETE per object.
     ///

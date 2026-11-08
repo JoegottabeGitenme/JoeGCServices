@@ -501,7 +501,7 @@ pub fn parse_point(coords: &str) -> Result<(f64, f64), String> {
 /// `POLYGON((lon lat, ...))` (one ring, either winding), returned as validated WKT.
 ///
 /// The ring is closed for you and must be simple: at least 3 vertices (not all on one line), at
-/// most [`MAX_POLYGON_VERTICES`], no edge spanning more than 180 degrees of longitude (so no
+/// most `MAX_POLYGON_VERTICES`, no edge spanning more than 180 degrees of longitude (so no
 /// crossing the antimeridian), no inner rings, and no two edges crossing, touching or
 /// overlapping. Anything else PostGIS would have to repair, at a cost the request should not get
 /// to choose.
@@ -771,7 +771,7 @@ pub fn filter_list(name: &str, s: Option<&str>) -> Result<Vec<String>, String> {
     Ok(items)
 }
 
-/// `limit=`: 1 up to [`MAX_ITEMS_LIMIT`] (more is cut to it, as documented), default `default`.
+/// `limit=`: 1 up to `MAX_ITEMS_LIMIT` (more is cut to it, as documented), default `default`.
 /// Zero or less is a mistake, not a request for one alert.
 pub fn parse_limit(limit: Option<i64>, default: i64) -> Result<i64, String> {
     match limit {
