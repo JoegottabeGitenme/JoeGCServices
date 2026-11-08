@@ -7,8 +7,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.css" integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.js" integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
+    <!-- MapLibre loads off the critical path: the stylesheet swaps in on load and the script is deferred -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.css" integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous" media="print" onload="this.media='all'" />
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.css" integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous" /></noscript>
+    <script id="maplibre-js" defer src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.js" integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
     <style>
         /* FolkWeather "paper + manilla folder" theme (design project: styles/paper.css). */
         * {
@@ -22,6 +24,8 @@
             --paper-bg: #f3ecd9;
             --paper-card: #fbf6e8;
             --paper-card-edge: #e8dcc0;
+            --paper-band: #eee5cc;
+            --paper-band-edge: #d9ca9f;
             --paper-shadow-soft: 0 1px 0 rgba(61, 53, 40, 0.04), 0 8px 24px -10px rgba(61, 53, 40, 0.18);
             --paper-shadow-flat: 0 1px 2px rgba(61, 53, 40, 0.08);
 
@@ -32,16 +36,17 @@
             /* Ink */
             --ink: #2e2818;
             --ink-2: #5b4f37;
-            --ink-3: #8b7e62;
+            --ink-3: #6a5e43;
             --ink-4: #b6a888;
 
             /* Status + accents */
             --go: #6b8a3d;
             --go-soft: #cdd9a8;
             --window-soft: #ecd9a8;
-            --skip: #a85a2e;
+            --skip: #8c4a22;
             --ochre: #c8932e;
             --ochre-deep: #a37320;
+            --ochre-ink: #76520f;
             --rain: #5b7a8c;
 
             --serif: 'Source Serif 4', 'Source Serif Pro', 'Iowan Old Style', Georgia, serif;
@@ -64,7 +69,7 @@
         }
 
         a {
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
         }
 
         a:hover {
@@ -139,7 +144,7 @@
 
         /* Hero */
         .hero {
-            padding: 4.5rem 1.5rem 3.5rem;
+            padding: 3.25rem 1.5rem 2.75rem;
             text-align: center;
             position: relative;
             overflow: hidden;
@@ -177,7 +182,7 @@
         }
 
         .hero h1 span {
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
             font-style: italic;
         }
 
@@ -190,56 +195,51 @@
             margin-right: auto;
         }
 
-        /* Construction banner: a quiet ochre note */
-        .construction-banner {
+        .hero-actions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.75rem;
+            margin-bottom: 1.1rem;
+        }
+
+        .hero-btn {
             display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
-            background: var(--window-soft);
-            border: 1px solid var(--ochre);
-            padding: 0.5rem 1.1rem;
-            border-radius: 999px;
-            margin-bottom: 1.75rem;
-            font-size: 0.85rem;
-        }
-
-        .construction-banner .icon {
-            font-size: 1.05rem;
-        }
-
-        .construction-banner .text {
-            color: var(--ochre-deep);
+            justify-content: center;
+            min-height: 46px;
+            padding: 0.6rem 1.5rem;
+            border: 1px solid var(--ink);
+            border-radius: 10px;
+            background: var(--ink);
+            color: var(--paper-card);
             font-weight: 600;
+            text-decoration: none;
+            box-shadow: var(--paper-shadow-flat);
+            transition: background 0.2s, border-color 0.2s;
         }
 
-        /* Status pill (go) */
-        .status-live {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            color: var(--go);
-            background: var(--go-soft);
-            border: 1px solid var(--go);
-            padding: 0.35rem 0.9rem;
-            border-radius: 999px;
-            font-size: 0.72rem;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin-top: 0.5rem;
+        .hero-btn:hover {
+            background: var(--ink-2);
+            border-color: var(--ink-2);
+            color: var(--paper-card);
         }
 
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            background: var(--go);
-            border-radius: 50%;
-            animation: pulse 2.4s infinite;
+        .hero-btn-alt {
+            background: var(--paper-card);
+            color: var(--ink);
+            box-shadow: none;
         }
 
-        @keyframes pulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(107, 138, 61, 0.45); }
-            50% { box-shadow: 0 0 0 7px rgba(107, 138, 61, 0); }
+        .hero-btn-alt:hover {
+            background: var(--paper-card);
+            border-color: var(--ochre-deep);
+            color: var(--ink);
+        }
+
+        .hero-mcp {
+            color: var(--ink-2);
+            font-size: 0.95rem;
         }
 
         /* Main */
@@ -247,6 +247,32 @@
             max-width: 1200px;
             margin: 0 auto;
             padding: 2.5rem 1.5rem 4rem;
+        }
+
+        .main-lead {
+            padding-bottom: 3.5rem;
+        }
+
+        .main-lead .section {
+            margin-bottom: 0;
+        }
+
+        .main-rest {
+            padding-top: 3rem;
+        }
+
+        /* The MCP section is its own full-width band */
+        .band {
+            background: var(--paper-band);
+            border-top: 1px solid var(--paper-band-edge);
+            border-bottom: 1px solid var(--paper-band-edge);
+            scroll-margin-top: 3.5rem;
+        }
+
+        .band-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2.75rem 1.5rem 3rem;
         }
 
         .section {
@@ -330,7 +356,7 @@
             display: inline-flex;
             align-items: center;
             gap: 0.4rem;
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
             text-decoration: none;
             font-weight: 600;
             font-size: 0.88rem;
@@ -373,18 +399,18 @@
         .edr-example-header .location-id {
             margin-left: auto;
             color: var(--ink-3);
-            font-size: 0.72rem;
+            font-size: 0.75rem;
             font-family: var(--mono);
             white-space: nowrap;
         }
 
         .edr-example-title {
             font-weight: 700;
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             letter-spacing: 0.08em;
             text-transform: uppercase;
             margin-bottom: 0.25rem;
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
         }
 
         /* API endpoints */
@@ -415,7 +441,7 @@
         .endpoint-method {
             background: var(--ink);
             color: var(--paper-card);
-            font-size: 0.68rem;
+            font-size: 0.75rem;
             font-weight: 700;
             letter-spacing: 0.06em;
             padding: 0.2rem 0.5rem;
@@ -465,7 +491,7 @@
         }
 
         .mcp-lede em {
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
         }
 
         .mcp-text {
@@ -572,7 +598,7 @@
         }
 
         .mcp-more a {
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
         }
 
         .mcp-steps {
@@ -699,7 +725,7 @@
         }
 
         .mcp-stamp {
-            font-size: 0.66rem;
+            font-size: 0.75rem;
             font-weight: 700;
             letter-spacing: 0.08em;
             text-transform: uppercase;
@@ -727,7 +753,7 @@
         }
 
         .mcp-chip {
-            font-size: 0.74rem;
+            font-size: 0.75rem;
             font-weight: 600;
             color: var(--ink);
             background: var(--window-soft);
@@ -742,11 +768,11 @@
         }
 
         .mcp-fields dt {
-            font-size: 0.68rem;
+            font-size: 0.75rem;
             font-weight: 700;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
         }
 
         .mcp-fields dd {
@@ -811,7 +837,7 @@
             background: var(--window-soft);
             border: 1px solid var(--ochre);
             border-radius: 12px;
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
             font-size: 0.85rem;
             font-weight: 600;
         }
@@ -894,17 +920,64 @@
         }
 
         .footer-link:hover {
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
         }
 
         /* Mobile */
         @media (max-width: 640px) {
+            .header {
+                padding: 0.45rem 1rem;
+            }
+
+            .header-content {
+                gap: 0.5rem;
+            }
+
+            .logo {
+                flex: none;
+            }
+
+            .logo-text {
+                font-size: 1.25rem;
+            }
+
+            /* No room for a full link row: it scrolls sideways, with a fade where there is more */
             .nav-links {
+                flex: 0 1 auto;
+                min-width: 0;
+                gap: 0.1rem;
+                overflow-x: auto;
+                scrollbar-width: none;
+            }
+
+            .nav-links::-webkit-scrollbar {
                 display: none;
             }
 
+            .nav-link {
+                flex: none;
+                padding: 0.55rem 0.55rem;
+                letter-spacing: 0.05em;
+            }
+
+            @media (max-width: 360px) {
+                .header { padding-left: 0.6rem; padding-right: 0.6rem; }
+                .logo-icon { display: none; }
+                .logo-text { font-size: 0.95rem; }
+                .nav-links { gap: 0; }
+                .nav-link { padding: 0.55rem 0.2rem; letter-spacing: 0; font-size: 0.75rem; }
+            }
+
             .hero {
-                padding: 3rem 1rem 2.5rem;
+                padding: 2.5rem 1rem 2.25rem;
+            }
+
+            .band-inner {
+                padding: 2rem 1rem 2.25rem;
+            }
+
+            .main-lead {
+                padding-bottom: 2.5rem;
             }
 
             .hero-tagline {
@@ -976,7 +1049,7 @@
 
         .sc-tab small {
             font-weight: 600;
-            font-size: 0.68rem;
+            font-size: 0.75rem;
             letter-spacing: 0.06em;
             color: var(--ink-3);
             margin-left: 0.3rem;
@@ -984,12 +1057,12 @@
 
         .sc-tab[aria-selected="true"] {
             background: var(--ochre);
-            color: #fff;
+            color: var(--ink);
             box-shadow: var(--paper-shadow-flat);
         }
 
         .sc-tab[aria-selected="true"] small {
-            color: rgba(255, 255, 255, 0.85);
+            color: var(--ink);
         }
 
         .sc-chips {
@@ -1077,6 +1150,7 @@
             font-weight: 600;
             color: var(--ink);
             margin-bottom: 0.3rem;
+            scroll-margin-top: 5rem;
         }
 
         .sc-readout p {
@@ -1108,6 +1182,57 @@
             font-weight: 600;
         }
 
+        .sc-valid {
+            color: var(--ink);
+            font-weight: 600;
+        }
+
+        .sc-valid-run {
+            display: block;
+            font-weight: 400;
+            font-size: 0.8rem;
+        }
+
+        .sc-legend {
+            margin: 0.6rem 0 0.7rem;
+        }
+
+        .sc-lgtitle {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--ink);
+            margin-bottom: 0.3rem;
+        }
+
+        .sc-lgbar {
+            height: 12px;
+            border-radius: 4px;
+            border: 1px solid rgba(46, 40, 24, 0.35);
+        }
+
+        .sc-lgticks {
+            position: relative;
+            height: 1.1rem;
+            font-size: 0.75rem;
+            color: var(--ink-2);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .sc-lgticks span {
+            position: absolute;
+            top: 0.15rem;
+            transform: translateX(-50%);
+            white-space: nowrap;
+        }
+
+        .sc-lgticks .sc-lg-l {
+            transform: none;
+        }
+
+        .sc-lgticks .sc-lg-r {
+            transform: translateX(-100%);
+        }
+
         .sc-hint {
             font-size: 0.78rem;
             color: var(--ink-3);
@@ -1116,7 +1241,7 @@
         .sc-hint button {
             font: inherit;
             font-size: 0.78rem;
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
             background: none;
             border: 0;
             padding: 0;
@@ -1128,7 +1253,7 @@
             display: flex;
             align-items: center;
             gap: 0.4rem;
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             color: var(--ink-3);
             margin-top: 0.5rem;
         }
@@ -1140,6 +1265,162 @@
             border: 1px solid var(--paper-card-edge);
         }
 
+        .sc-aev {
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-weight: 600;
+            color: var(--ink);
+        }
+
+        .sc-sw {
+            flex: none;
+            width: 0.8rem;
+            height: 0.8rem;
+            border-radius: 3px;
+            border: 1px solid rgba(46, 40, 24, 0.35);
+        }
+
+        /* Long summaries stop at three lines; Full alert has the rest */
+        .sc-alert .sc-dl dd {
+            font-weight: 400;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+            overflow: hidden;
+        }
+
+        .sc-afull,
+        .sc-alist button {
+            font: inherit;
+            color: var(--ochre-ink);
+            background: none;
+            border: 0;
+            padding: 0;
+            cursor: pointer;
+            text-align: left;
+        }
+
+        .sc-afull {
+            margin-top: 0.3rem;
+            padding: 0.3rem 0;
+            text-decoration: underline;
+        }
+
+        .sc-afull[aria-disabled="true"] {
+            color: var(--ink-3);
+            cursor: default;
+            text-decoration: none;
+        }
+
+        .sc-atext {
+            margin-top: 0.4rem;
+            padding: 0.5rem 0.65rem;
+            font-size: 0.8rem;
+            color: var(--ink-2);
+            background: var(--paper-card);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 8px;
+        }
+
+        .sc-abody {
+            white-space: pre-line;
+        }
+
+        .sc-readout .sc-anote {
+            font-size: 0.75rem;
+            margin: 0.35rem 0 0;
+        }
+
+        .sc-readout .sc-atext .sc-anote {
+            margin: 0 0 0.4rem;
+        }
+
+        /* The alert's name stays in view while its full text runs on below it */
+        .sc-alert .sc-aev {
+            position: sticky;
+            top: var(--sc-stick, 0px);
+            z-index: 2;
+            margin: 0 -1rem;
+            padding: 0.4rem 1rem;
+            background: var(--paper-bg);
+            /* the upward shadow covers the readout's top padding, so no text peeks out above the name */
+            box-shadow: 0 -0.9rem 0 var(--paper-bg), 0 1px 0 var(--paper-card-edge);
+        }
+
+        .sc-key {
+            background: var(--paper-bg);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 10px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.75rem;
+            color: var(--ink-2);
+        }
+
+        .sc-keyhead {
+            display: block;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ochre-ink);
+            margin-bottom: 0.2rem;
+        }
+
+        .sc-key ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.15rem 0.85rem;
+        }
+
+        .sc-key li {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .sc-keymore {
+            color: var(--ink-3);
+        }
+
+        .sc-atext b {
+            color: var(--ink);
+        }
+
+        .sc-alist {
+            list-style: none;
+            margin-top: 0.7rem;
+            padding-top: 0.6rem;
+            border-top: 1px solid var(--paper-card-edge);
+            display: grid;
+            gap: 0.1rem;
+        }
+
+        .sc-alist button {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.45rem;
+            padding: 0.25rem 0;
+        }
+
+        .sc-alist .sc-sw {
+            margin-top: 0.25rem;
+        }
+
+        .sc-adet {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+            font-size: 0.75rem;
+            color: var(--ink-3);
+        }
+
+        .sc-afoot {
+            margin-top: 0.6rem;
+            font-size: 0.75rem;
+        }
+
         .sc-request {
             margin-top: 0.9rem;
             min-width: 0;
@@ -1148,16 +1429,17 @@
         .sc-reqbar {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            flex-wrap: wrap;
+            gap: 0.35rem 0.5rem;
             margin-bottom: 0.35rem;
         }
 
         .sc-reqlabel {
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             font-weight: 700;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            color: var(--ochre-deep);
+            color: var(--ochre-ink);
         }
 
         .sc-kind {
@@ -1173,7 +1455,7 @@
 
         .sc-mini {
             font: inherit;
-            font-size: 0.72rem;
+            font-size: 0.75rem;
             font-weight: 700;
             color: var(--ink-2);
             background: var(--paper-bg);
@@ -1197,7 +1479,7 @@
         .sc-url {
             display: block;
             font-family: var(--mono);
-            font-size: 0.72rem;
+            font-size: 0.75rem;
             color: var(--ink-2);
             background: var(--paper-bg);
             border: 1px solid var(--paper-card-edge);
@@ -1221,7 +1503,7 @@
         .sc-resp pre {
             margin-top: 0.4rem;
             font-family: var(--mono);
-            font-size: 0.72rem;
+            font-size: 0.75rem;
             line-height: 1.5;
             color: var(--ink-2);
             background: var(--paper-bg);
@@ -1242,7 +1524,26 @@
         }
 
         .sc .maplibregl-ctrl-attrib {
-            font-size: 10px;
+            font-size: 0.75rem;
+        }
+
+        /* Beside the map, a long readout scrolls instead of stretching the row */
+        @media (min-width: 761px) {
+            .sc-side {
+                contain: size;
+            }
+
+            /* shadows at the edges show there is more to scroll to */
+            .sc-readout {
+                min-height: 0;
+                overflow-y: auto;
+                background:
+                    linear-gradient(var(--paper-bg) 30%, rgba(243, 236, 217, 0)) 0 0 / 100% 1.4rem no-repeat local,
+                    linear-gradient(rgba(243, 236, 217, 0), var(--paper-bg) 70%) 0 100% / 100% 1.4rem no-repeat local,
+                    radial-gradient(farthest-side at 50% 0, rgba(61, 53, 40, 0.22), rgba(61, 53, 40, 0)) 0 0 / 100% 0.5rem no-repeat,
+                    radial-gradient(farthest-side at 50% 100%, rgba(61, 53, 40, 0.22), rgba(61, 53, 40, 0)) 0 100% / 100% 0.5rem no-repeat;
+                background-color: var(--paper-bg);
+            }
         }
 
         @media (max-width: 760px) {
@@ -1252,6 +1553,24 @@
 
             .sc-map {
                 height: 320px;
+            }
+
+            /* The page scrolls, not the readout: the alert's name sticks just under the header */
+            .sc-alert .sc-aev {
+                top: var(--hdr, 3.5rem);
+            }
+        }
+
+        @media (max-width: 400px) {
+            .sc-tab {
+                flex-direction: column;
+                padding: 0.4rem 0.8rem;
+                line-height: 1.25;
+            }
+
+            .sc-tab small {
+                display: block;
+                margin-left: 0;
             }
         }
 
@@ -1273,8 +1592,88 @@
             }
         }
 
+        /* A row that scrolls sideways fades out where there is more to reach (classes set from script) */
+        .fade-r {
+            -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 2rem), transparent);
+            mask-image: linear-gradient(90deg, #000 calc(100% - 2rem), transparent);
+        }
+
+        .fade-l {
+            -webkit-mask-image: linear-gradient(270deg, #000 calc(100% - 2rem), transparent);
+            mask-image: linear-gradient(270deg, #000 calc(100% - 2rem), transparent);
+        }
+
+        .fade-l.fade-r {
+            -webkit-mask-image: linear-gradient(90deg, transparent, #000 2rem, #000 calc(100% - 2rem), transparent);
+            mask-image: linear-gradient(90deg, transparent, #000 2rem, #000 calc(100% - 2rem), transparent);
+        }
+
+        /* Touch: every control is at least 44px tall */
+        @media (pointer: coarse) {
+            .sc-chip,
+            .sc-mini,
+            .endpoint-btn,
+            .sc-tab,
+            .footer-link,
+            .nav-link,
+            .hero-btn,
+            .mcp-add,
+            .card-link,
+            .sc-hint button,
+            .sc-afull,
+            .sc-alist button,
+            .sc-resp summary,
+            .hero-mcp a,
+            .mcp-more a {
+                display: inline-flex;
+                align-items: center;
+                min-height: 44px;
+            }
+
+            .sc-chip,
+            .sc-mini,
+            .endpoint-btn,
+            .sc-tab,
+            .hero-btn,
+            .mcp-add {
+                justify-content: center;
+            }
+
+            .sc-alist button {
+                display: flex;
+            }
+
+            /* Its own line, so the 44px target doesn't stretch the sentence before it */
+            .sc-hint button {
+                display: flex;
+                margin-top: 0.15rem;
+            }
+
+            .sc-resp summary {
+                display: flex;
+            }
+
+            .mcp-cmd .endpoint-btn {
+                padding: 0.4rem 0.9rem;
+                font-size: 0.8rem;
+            }
+
+            .footer-links {
+                gap: 0.25rem 1.25rem;
+            }
+
+            .maplibregl-ctrl-group button {
+                width: 44px;
+                height: 44px;
+            }
+        }
+
         /* Accessibility */
         @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
+
             * {
                 animation: none !important;
                 transition: none !important;
@@ -1282,8 +1681,10 @@
         }
 
         a:focus-visible,
-        button:focus-visible {
-            outline: 2px solid var(--ochre);
+        button:focus-visible,
+        summary:focus-visible,
+        .sc-aev:focus-visible {
+            outline: 2px solid var(--ochre-ink);
             outline-offset: 2px;
             border-radius: 4px;
         }
@@ -1295,7 +1696,7 @@
             padding: 0.1rem 0.35rem;
             border-radius: 4px;
             font-family: var(--mono);
-            font-size: 0.85em;
+            font-size: max(0.85em, 0.75rem);
             color: var(--ink);
         }
     </style>
@@ -1307,10 +1708,10 @@
                 <svg class="logo-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18.5h10.5a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7.6 9.2 4.65 4.65 0 0 0 7 18.5Z"/></svg>
                 <span class="logo-text">FolkWeather</span>
             </a>
-            <nav class="nav-links">
+            <nav class="nav-links" id="nav-links" aria-label="Sections">
+                <a href="#showcase" class="nav-link">Showcase</a>
                 <a href="#mcp" class="nav-link">MCP</a>
                 <a href="#services" class="nav-link">Services</a>
-                <a href="#showcase" class="nav-link">Showcase</a>
                 <a href="#api" class="nav-link">API</a>
             </nav>
         </div>
@@ -1318,271 +1719,24 @@
 
     <section class="hero">
         <div class="hero-content">
-            <div class="construction-banner">
-                <span class="icon">&#128679;</span>
-                <span class="text">Under Construction - More features coming soon!</span>
-            </div>
             <h1>Weather for <span>Everyone</span></h1>
             <p class="hero-tagline">
                 Free, open weather data services powered by OGC standards. 
                 Access NOAA and NASA weather data through WMS, WMTS, and EDR APIs.
             </p>
-            <div class="status-live">
-                <span class="status-dot"></span>
-                <span>Services Online</span>
+            <div class="hero-actions">
+                <a href="#showcase" class="hero-btn">Try it live</a>
+                <a href="/edr/api.html" class="hero-btn hero-btn-alt" target="_blank" rel="noopener">API docs</a>
             </div>
+            <p class="hero-mcp">Rather just ask? <a href="#mcp">Give your AI assistant our MCP server <span aria-hidden="true">&rarr;</span></a></p>
         </div>
     </section>
 
-    <main class="main">
-        <!-- MCP Server Section -->
-        <section class="section" id="mcp">
-            <h2 class="section-title">
-                <span class="icon">&#128172;</span>
-                Weather for your AI assistant
-            </h2>
-
-            <div class="examples-section">
-                <p class="mcp-lede">
-                    Ask your AI assistant <em>&ldquo;what&rsquo;s it like out there today?&rdquo;</em>
-                    and get a short, grounded read built on NOAA and NASA data &mdash; with an old weather
-                    saying when one genuinely fits, and the science behind why.
-                </p>
-                <p class="mcp-text">
-                    FolkWeather&rsquo;s MCP server lets an assistant like Claude or ChatGPT fetch the real forecast,
-                    observations and alerts for your town, plus any weather saying that fits the day. The assistant
-                    writes the words; the numbers and the sources come from us.
-                </p>
-                <p class="mcp-text">
-                    Built on HRRR, NBM and GFS model data, airport METAR observations, MRMS radar rainfall,
-                    official NWS alerts, and sun and moon tables. If the best model is late, the next one answers
-                    and says so.
-                </p>
-
-                <div class="mcp-endpoint">
-                    <div class="edr-example-title">Server URL</div>
-                    <code class="mcp-url" id="mcp-url">https://folkweather.com/mcp</code>
-                    <button type="button" class="endpoint-btn mcp-copy" data-copy="https://folkweather.com/mcp" aria-live="polite" hidden>Copy</button>
-                    <div class="mcp-endpoint-note">Remote MCP over streamable HTTP &middot; no sign-in &middot; free</div>
-                </div>
-
-                <ul class="mcp-asks" aria-label="Things you might ask">
-                    <li>&ldquo;What&rsquo;s the weather like today in Fort Collins?&rdquo;</li>
-                    <li>&ldquo;Will there be frost tonight?&rdquo;</li>
-                    <li>&ldquo;Where does &lsquo;red sky at night&rsquo; come from?&rdquo;</li>
-                </ul>
-            </div>
-
-            <h3 class="mcp-sub">Connect it</h3>
-            <div class="mcp-connect">
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon">&#128172;</span>
-                        <span class="card-title">Claude</span>
-                    </div>
-                    <a class="mcp-add" href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=FolkWeather&amp;connectorUrl=https%3A%2F%2Ffolkweather.com%2Fmcp" rel="noopener">Add to Claude</a>
-                    <p class="card-description">Opens Claude with FolkWeather filled in; check the details and choose Add. Or by hand:</p>
-                    <ol class="mcp-steps">
-                        <li>Open Settings, then Connectors.</li>
-                        <li>Choose Add custom connector.</li>
-                        <li>Paste <code>https://folkweather.com/mcp</code> and save.</li>
-                    </ol>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon">&#128187;</span>
-                        <span class="card-title">Claude Code</span>
-                    </div>
-                    <p class="card-description">Run this once in your terminal:</p>
-                    <div class="mcp-cmd">
-                        <code id="mcp-cmd">claude mcp add --transport http folkweather https://folkweather.com/mcp</code>
-                        <button type="button" class="endpoint-btn mcp-copy" data-copy="claude mcp add --transport http folkweather https://folkweather.com/mcp" aria-live="polite" hidden>Copy</button>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon">&#129513;</span>
-                        <span class="card-title">ChatGPT</span>
-                    </div>
-                    <p class="card-description" style="margin-bottom: 0;">
-                        Custom connectors need a paid plan and are added in ChatGPT on the web, not the phone
-                        app: turn on developer mode in Settings, then add a connector (some versions call it an
-                        app) with the URL above. No sign-in is needed. Menu names change between releases.
-                    </p>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon">&#128279;</span>
-                        <span class="card-title">Any MCP client</span>
-                    </div>
-                    <p class="card-description" style="margin-bottom: 0;">
-                        Add <code>https://folkweather.com/mcp</code> as a remote server over
-                        <strong>streamable HTTP</strong>. There is no authentication and no API key.
-                    </p>
-                </div>
-            </div>
-            <p class="mcp-more">
-                On your phone, or sending it to a friend? <a href="/connect?src=splash">folkweather.com/connect</a>
-                has one-tap setup and steps for each assistant.
-                <a href="/mcp/docs">Documentation</a> &middot; <a href="/mcp/privacy">Privacy</a>
-            </p>
-
-            <h3 class="mcp-sub">What it can do</h3>
-            <div class="mcp-tools-grid">
-                <div class="mcp-group">
-                    <div class="edr-example-header">
-                        <span class="location-icon">&#127774;</span>
-                        <span class="location-name">Daily read</span>
-                        <span class="location-id">weather + lore</span>
-                    </div>
-                    <ul class="mcp-tool-list">
-                        <li>
-                            <span class="mcp-tool-name">morning_almanac</span>
-                            <span class="mcp-tool-desc">The day ahead: high and low, sky, rain or snow and when, wind, pressure trend, yesterday&rsquo;s actuals, sun and moon, NWS alerts, and up to three sayings that fit.</span>
-                        </li>
-                        <li>
-                            <span class="mcp-tool-name">evening_outlook</span>
-                            <span class="mcp-tool-desc">Tonight and tomorrow, plus the evening signs: red sky, a ring around the moon, dew and frost.</span>
-                        </li>
-                        <li>
-                            <span class="mcp-tool-name">lore_lookup</span>
-                            <span class="mcp-tool-desc">Where a saying comes from: the mechanism, the printed source, and its provenance.</span>
-                        </li>
-                    </ul>
-                </div>
-
-                <div class="mcp-group">
-                    <div class="edr-example-header">
-                        <span class="location-icon">&#128202;</span>
-                        <span class="location-name">Data</span>
-                        <span class="location-id">numbers only</span>
-                    </div>
-                    <ul class="mcp-tool-list">
-                        <li>
-                            <span class="mcp-tool-name">hourly_forecast</span>
-                            <span class="mcp-tool-desc">Hour-by-hour numbers for up to 48 hours.</span>
-                        </li>
-                        <li>
-                            <span class="mcp-tool-name">current_conditions</span>
-                            <span class="mcp-tool-desc">The nearest airport observation (with the raw METAR), the current model hour, and any alerts.</span>
-                        </li>
-                        <li>
-                            <span class="mcp-tool-name">point_query</span>
-                            <span class="mcp-tool-desc">Advanced: any model collection and parameter at a point.</span>
-                        </li>
-                    </ul>
-                </div>
-            </div>
-            <p class="mcp-also">
-                Also included: reference pages your assistant can read (about, the writing style guide, the lore index,
-                the dataset catalog) and a <code>daily_read</code> prompt that writes the morning brief.
-            </p>
-
-            <div class="mcp-split">
-                <div>
-                    <h3 class="mcp-sub">What a saying looks like</h3>
-                    <article class="mcp-lorecard" aria-label="Example lore entry (illustration)">
-                        <div class="mcp-lorecard-head">
-                            <div class="edr-example-title">Lore entry &middot; evening_outlook</div>
-                            <span class="mcp-stamp">Illustration, not today&rsquo;s weather</span>
-                        </div>
-                        <p class="mcp-saying">Clear moon, frost soon.</p>
-                        <div class="mcp-chips">
-                            <span class="mcp-chip">Attested</span>
-                            <span class="mcp-chip">Merit: strong</span>
-                            <span class="mcp-chip go">Holds today: yes</span>
-                        </div>
-                        <dl class="mcp-fields">
-                            <dt>Why today</dt>
-                            <dd>Clear skies, 1.2 m/s winds overnight, dewpoint &minus;3&nbsp;&deg;C at dusk (HRRR); moon 78% lit.</dd>
-                            <dt>The physics</dt>
-                            <dd>On a clear, calm night the ground radiates heat straight to space with no cloud to trap it. If the air is dry, the surface cools below the dewpoint and frost forms before dawn.</dd>
-                            <dt>Printed source</dt>
-                            <dd><q>Clear moon, / Frost soon.</q> &mdash; Abercromby &amp; Marriott, 1882, via Dunwoody, <cite>Weather Proverbs</cite> (U.S. Signal Service, 1883).</dd>
-                            <dt>It predicts</dt>
-                            <dd>Frost by dawn: a low at or below 0&nbsp;&deg;C within the next 12 hours.</dd>
-                        </dl>
-                    </article>
-                </div>
-
-                <div>
-                    <h3 class="mcp-sub">How the lore stays honest</h3>
-                    <ul class="mcp-principles">
-                        <li><strong>Tied to measurements.</strong> Every saying has a measurable precondition, checked against today&rsquo;s data before it is offered.</li>
-                        <li><strong>Printed word for word.</strong> 14 of the 15 sayings are attested, with the exact printed wording, from public-domain collections: Dunwoody&rsquo;s <cite>Weather Proverbs</cite> (1883), FitzRoy (1859), Wright (1913), and Abercromby &amp; Marriott (1882).</li>
-                        <li><strong>Ours are labeled ours.</strong> House sayings are marked as FolkWeather&rsquo;s own and never passed off as old wisdom.</li>
-                        <li><strong>Color, never authority.</strong> A saying can&rsquo;t change a number or hide an alert.</li>
-                        <li><strong>Quiet days stay quiet.</strong> If nothing fits, it says nothing rather than inventing a saying.</li>
-                        <li><strong>It tells you when they disagree.</strong> Each saying reports whether it agrees with today&rsquo;s forecast.</li>
-                    </ul>
-                </div>
-            </div>
-
-            <p class="mcp-beta">Private beta &mdash; sayings are self-reviewed; detailed models cover the continental US.</p>
-            <p class="mcp-fine">
-                Alaska, Hawaii, Puerto Rico and Guam get a coarser read; anywhere else uses the global model only,
-                and the answer says so. Name a US city or ZIP code, or give latitude and longitude.
-            </p>
-        </section>
-
-        <!-- Services Section -->
-        <section class="section" id="services">
-            <h2 class="section-title">
-                <span class="icon">&#128268;</span>
-                Available Services
-            </h2>
-            <div class="cards-grid">
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon">&#127758;</span>
-                        <span class="card-title">WMS - Web Map Service</span>
-                    </div>
-                    <p class="card-description">
-                        OGC-compliant Web Map Service for rendering weather data as map images.
-                        Supports GetCapabilities, GetMap, and GetFeatureInfo operations.
-                    </p>
-                    <a href="/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0" class="card-link" target="_blank">
-                        View Capabilities <span>&#8594;</span>
-                    </a>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon">&#129518;</span>
-                        <span class="card-title">WMTS - Tiled Map Service</span>
-                    </div>
-                    <p class="card-description">
-                        High-performance tiled map service for efficient weather visualization.
-                        Pre-rendered tiles for fast loading in web mapping applications.
-                    </p>
-                    <a href="/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0" class="card-link" target="_blank">
-                        View Capabilities <span>&#8594;</span>
-                    </a>
-                </div>
-
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon">&#128200;</span>
-                        <span class="card-title">EDR - Environmental Data</span>
-                    </div>
-                    <p class="card-description">
-                        OGC API - Environmental Data Retrieval for point, area, and trajectory queries.
-                        Get weather data in GeoJSON or CoverageJSON formats.
-                    </p>
-                    <a href="/edr" class="card-link" target="_blank">
-                        Explore API <span>&#8594;</span>
-                    </a>
-                </div>
-            </div>
-        </section>
-
+    <main class="main main-lead">
         <!-- Showcase: one interactive map for the WMS/WMTS layers and EDR queries -->
         <section class="section" id="showcase">
             <h2 class="section-title">
-                <span class="icon">&#128506;</span>
+                <span class="icon" aria-hidden="true">&#128506;&#65039;</span>
                 See it working
             </h2>
             <div class="sc">
@@ -1594,10 +1748,11 @@
                 <div class="sc-chips" id="sc-chips" role="group" aria-label="Layers"></div>
                 <div class="sc-body" id="sc-panel" role="tabpanel" aria-labelledby="sc-tab-maps">
                     <div class="sc-mapwrap">
-                        <div id="sc-map" class="sc-map"><div class="sc-maploading">Map loads as you scroll&hellip;</div></div>
+                        <div id="sc-map" class="sc-map"><div class="sc-maploading">Map loading&hellip;</div></div>
                     </div>
                     <div class="sc-side">
                         <div class="sc-readout" id="sc-readout" aria-live="polite"></div>
+                        <div class="sc-key" id="sc-key" role="group" aria-label="Alert colours in this view" hidden></div>
                         <p class="sc-hint" id="sc-hint"></p>
                     </div>
                 </div>
@@ -1621,11 +1776,259 @@
                 </div>
             </div>
         </section>
+    </main>
+
+        <!-- MCP Server Section -->
+        <section class="band" id="mcp">
+            <div class="band-inner">
+                <h2 class="section-title">
+                    <span class="icon" aria-hidden="true">&#128172;</span>
+                    Weather for your AI assistant
+                </h2>
+
+                <div class="examples-section">
+                    <p class="mcp-lede">
+                        Ask your AI assistant <em>&ldquo;what&rsquo;s it like out there today?&rdquo;</em>
+                        and get a short, grounded read built on NOAA and NASA data &mdash; with an old weather
+                        saying when one genuinely fits, and the science behind why.
+                    </p>
+                    <p class="mcp-text">
+                        FolkWeather&rsquo;s MCP server lets an assistant like Claude or ChatGPT fetch the real forecast,
+                        observations and alerts for your town, plus any weather saying that fits the day. The assistant
+                        writes the words; the numbers and the sources come from us.
+                    </p>
+                    <p class="mcp-text">
+                        Built on HRRR, NBM and GFS model data, airport METAR observations, MRMS radar rainfall,
+                        official NWS alerts, and sun and moon tables. If the best model is late, the next one answers
+                        and says so.
+                    </p>
+
+                    <div class="mcp-endpoint">
+                        <div class="edr-example-title">Server URL</div>
+                        <code class="mcp-url" id="mcp-url">https://folkweather.com/mcp</code>
+                        <button type="button" class="endpoint-btn mcp-copy" data-copy="https://folkweather.com/mcp" aria-live="polite" hidden>Copy</button>
+                        <div class="mcp-endpoint-note">Remote MCP over streamable HTTP &middot; no sign-in &middot; free</div>
+                    </div>
+
+                    <ul class="mcp-asks" aria-label="Things you might ask">
+                        <li>&ldquo;What&rsquo;s the weather like today in Fort Collins?&rdquo;</li>
+                        <li>&ldquo;Will there be frost tonight?&rdquo;</li>
+                        <li>&ldquo;Where does &lsquo;red sky at night&rsquo; come from?&rdquo;</li>
+                    </ul>
+                </div>
+
+                <h3 class="mcp-sub">Connect it</h3>
+                <div class="mcp-connect">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-icon" aria-hidden="true">&#128172;</span>
+                            <span class="card-title">Claude</span>
+                        </div>
+                        <a class="mcp-add" href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=FolkWeather&amp;connectorUrl=https%3A%2F%2Ffolkweather.com%2Fmcp" rel="noopener">Add to Claude</a>
+                        <p class="card-description">Opens Claude with FolkWeather filled in; check the details and choose Add. Or by hand:</p>
+                        <ol class="mcp-steps">
+                            <li>Open Settings, then Connectors.</li>
+                            <li>Choose Add custom connector.</li>
+                            <li>Paste <code>https://folkweather.com/mcp</code> and save.</li>
+                        </ol>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-icon" aria-hidden="true">&#128187;</span>
+                            <span class="card-title">Claude Code</span>
+                        </div>
+                        <p class="card-description">Run this once in your terminal:</p>
+                        <div class="mcp-cmd">
+                            <code id="mcp-cmd">claude mcp add --transport http folkweather https://folkweather.com/mcp</code>
+                            <button type="button" class="endpoint-btn mcp-copy" data-copy="claude mcp add --transport http folkweather https://folkweather.com/mcp" aria-live="polite" hidden>Copy</button>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-icon" aria-hidden="true">&#129513;</span>
+                            <span class="card-title">ChatGPT</span>
+                        </div>
+                        <p class="card-description" style="margin-bottom: 0;">
+                            Custom connectors need a paid plan and are added in ChatGPT on the web, not the phone
+                            app: turn on developer mode in Settings, then add a connector (some versions call it an
+                            app) with the URL above. No sign-in is needed. Menu names change between releases.
+                        </p>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-icon" aria-hidden="true">&#128279;</span>
+                            <span class="card-title">Any MCP client</span>
+                        </div>
+                        <p class="card-description" style="margin-bottom: 0;">
+                            Add <code>https://folkweather.com/mcp</code> as a remote server over
+                            <strong>streamable HTTP</strong>. There is no authentication and no API key.
+                        </p>
+                    </div>
+                </div>
+                <p class="mcp-more">
+                    On your phone, or sending it to a friend? <a href="/connect?src=splash">folkweather.com/connect</a>
+                    has one-tap setup and steps for each assistant.
+                    <a href="/mcp/docs">Documentation</a> &middot; <a href="/mcp/privacy">Privacy</a>
+                </p>
+
+                <h3 class="mcp-sub">What it can do</h3>
+                <div class="mcp-tools-grid">
+                    <div class="mcp-group">
+                        <div class="edr-example-header">
+                            <span class="location-icon" aria-hidden="true">&#127774;</span>
+                            <span class="location-name">Daily read</span>
+                            <span class="location-id">weather + lore</span>
+                        </div>
+                        <ul class="mcp-tool-list">
+                            <li>
+                                <span class="mcp-tool-name">morning_almanac</span>
+                                <span class="mcp-tool-desc">The day ahead: high and low, sky, rain or snow and when, wind, pressure trend, yesterday&rsquo;s actuals, sun and moon, NWS alerts, and up to three sayings that fit.</span>
+                            </li>
+                            <li>
+                                <span class="mcp-tool-name">evening_outlook</span>
+                                <span class="mcp-tool-desc">Tonight and tomorrow, plus the evening signs: red sky, a ring around the moon, dew and frost.</span>
+                            </li>
+                            <li>
+                                <span class="mcp-tool-name">lore_lookup</span>
+                                <span class="mcp-tool-desc">Where a saying comes from: the mechanism, the printed source, and its provenance.</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="mcp-group">
+                        <div class="edr-example-header">
+                            <span class="location-icon" aria-hidden="true">&#128202;</span>
+                            <span class="location-name">Data</span>
+                            <span class="location-id">numbers only</span>
+                        </div>
+                        <ul class="mcp-tool-list">
+                            <li>
+                                <span class="mcp-tool-name">hourly_forecast</span>
+                                <span class="mcp-tool-desc">Hour-by-hour numbers for up to 48 hours.</span>
+                            </li>
+                            <li>
+                                <span class="mcp-tool-name">current_conditions</span>
+                                <span class="mcp-tool-desc">The nearest airport observation (with the raw METAR), the current model hour, and any alerts.</span>
+                            </li>
+                            <li>
+                                <span class="mcp-tool-name">point_query</span>
+                                <span class="mcp-tool-desc">Advanced: any model collection and parameter at a point.</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <p class="mcp-also">
+                    Also included: reference pages your assistant can read (about, the writing style guide, the lore index,
+                    the dataset catalog) and a <code>daily_read</code> prompt that writes the morning brief.
+                </p>
+
+                <div class="mcp-split">
+                    <div>
+                        <h3 class="mcp-sub">What a saying looks like</h3>
+                        <article class="mcp-lorecard" aria-label="Example lore entry (illustration)">
+                            <div class="mcp-lorecard-head">
+                                <div class="edr-example-title">Lore entry &middot; evening_outlook</div>
+                                <span class="mcp-stamp">Illustration, not today&rsquo;s weather</span>
+                            </div>
+                            <p class="mcp-saying">Clear moon, frost soon.</p>
+                            <div class="mcp-chips">
+                                <span class="mcp-chip">Attested</span>
+                                <span class="mcp-chip">Merit: strong</span>
+                                <span class="mcp-chip go">Holds today: yes</span>
+                            </div>
+                            <dl class="mcp-fields">
+                                <dt>Why today</dt>
+                                <dd>Clear skies, 1.2 m/s winds overnight, dewpoint &minus;3&nbsp;&deg;C at dusk (HRRR); moon 78% lit.</dd>
+                                <dt>The physics</dt>
+                                <dd>On a clear, calm night the ground radiates heat straight to space with no cloud to trap it. If the air is dry, the surface cools below the dewpoint and frost forms before dawn.</dd>
+                                <dt>Printed source</dt>
+                                <dd><q>Clear moon, / Frost soon.</q> &mdash; Abercromby &amp; Marriott, 1882, via Dunwoody, <cite>Weather Proverbs</cite> (U.S. Signal Service, 1883).</dd>
+                                <dt>It predicts</dt>
+                                <dd>Frost by dawn: a low at or below 0&nbsp;&deg;C within the next 12 hours.</dd>
+                            </dl>
+                        </article>
+                    </div>
+
+                    <div>
+                        <h3 class="mcp-sub">How the lore stays honest</h3>
+                        <ul class="mcp-principles">
+                            <li><strong>Tied to measurements.</strong> Every saying has a measurable precondition, checked against today&rsquo;s data before it is offered.</li>
+                            <li><strong>Printed word for word.</strong> 14 of the 15 sayings are attested, with the exact printed wording, from public-domain collections: Dunwoody&rsquo;s <cite>Weather Proverbs</cite> (1883), FitzRoy (1859), Wright (1913), and Abercromby &amp; Marriott (1882).</li>
+                            <li><strong>Ours are labeled ours.</strong> House sayings are marked as FolkWeather&rsquo;s own and never passed off as old wisdom.</li>
+                            <li><strong>Color, never authority.</strong> A saying can&rsquo;t change a number or hide an alert.</li>
+                            <li><strong>Quiet days stay quiet.</strong> If nothing fits, it says nothing rather than inventing a saying.</li>
+                            <li><strong>It tells you when they disagree.</strong> Each saying reports whether it agrees with today&rsquo;s forecast.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <p class="mcp-beta">Private beta &mdash; sayings are self-reviewed; detailed models cover the continental US.</p>
+                <p class="mcp-fine">
+                    Alaska, Hawaii, Puerto Rico and Guam get a coarser read; anywhere else uses the global model only,
+                    and the answer says so. Name a US city or ZIP code, or give latitude and longitude.
+                </p>
+            </div>
+        </section>
+
+    <main class="main main-rest">
+        <!-- Services Section -->
+        <section class="section" id="services">
+            <h2 class="section-title">
+                <span class="icon" aria-hidden="true">&#128268;</span>
+                Available Services
+            </h2>
+            <div class="cards-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#127758;</span>
+                        <span class="card-title">WMS - Web Map Service</span>
+                    </div>
+                    <p class="card-description">
+                        OGC-compliant Web Map Service for rendering weather data as map images.
+                        Supports GetCapabilities, GetMap, and GetFeatureInfo operations.
+                    </p>
+                    <a href="/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0" class="card-link" target="_blank">
+                        View Capabilities <span>&#8594;</span>
+                    </a>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#129518;</span>
+                        <span class="card-title">WMTS - Tiled Map Service</span>
+                    </div>
+                    <p class="card-description">
+                        High-performance tiled map service for efficient weather visualization.
+                        Pre-rendered tiles for fast loading in web mapping applications.
+                    </p>
+                    <a href="/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0" class="card-link" target="_blank">
+                        View Capabilities <span>&#8594;</span>
+                    </a>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#128200;</span>
+                        <span class="card-title">EDR - Environmental Data</span>
+                    </div>
+                    <p class="card-description">
+                        OGC API - Environmental Data Retrieval for point, area, and trajectory queries.
+                        Get weather data in GeoJSON or CoverageJSON formats.
+                    </p>
+                    <a href="/edr" class="card-link" target="_blank">
+                        Explore API <span>&#8594;</span>
+                    </a>
+                </div>
+            </div>
+        </section>
 
         <!-- API Endpoints Section -->
         <section class="section" id="api">
             <h2 class="section-title">
-                <span class="icon">&#128187;</span>
+                <span class="icon" aria-hidden="true">&#128187;</span>
                 API Endpoints
             </h2>
             <div class="endpoint-list">
@@ -1658,19 +2061,30 @@
                         <a href="/edr/api.html" class="endpoint-btn" target="_blank">API Docs</a>
                     </div>
                 </div>
+                <div class="endpoint-item">
+                    <div class="endpoint-info">
+                        <span class="endpoint-method">GET</span>
+                        <span class="endpoint-path">/edr/collections/nws-alerts</span>
+                    </div>
+                    <div class="endpoint-actions">
+                        <a href="/edr/collections/nws-alerts" class="endpoint-btn" target="_blank">Collection</a>
+                        <a href="/edr/collections/nws-alerts/position?coords=POINT(-105%2039.7)" class="endpoint-btn" target="_blank">Alerts at a point</a>
+                        <a href="/edr/collections/nws-alerts/items?bbox=-125,24,-66,50&amp;geometry=false" class="endpoint-btn" target="_blank">Alerts in a box</a>
+                    </div>
+                </div>
             </div>
         </section>
 
         <!-- Data Sources Section -->
         <section class="section">
             <h2 class="section-title">
-                <span class="icon">&#128202;</span>
+                <span class="icon" aria-hidden="true">&#128202;</span>
                 Available Data Sources
             </h2>
             <div class="cards-grid">
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127758;</span>
+                        <span class="card-icon" aria-hidden="true">&#127758;</span>
                         <span class="card-title">GFS - Global Forecast</span>
                     </div>
                     <p class="card-description">
@@ -1679,16 +2093,16 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127782;</span>
+                        <span class="card-icon" aria-hidden="true">&#127782;&#65039;</span>
                         <span class="card-title">HRRR - High Resolution</span>
                     </div>
                     <p class="card-description">
-                        High-Resolution Rapid Refresh with 3km resolution and hourly updates. Best for short-term forecasts over CONUS.
+                        High-Resolution Rapid Refresh with 3km resolution and hourly updates. Best for short-term forecasts over CONUS. Reflectivity and precipitation type also come every 15 minutes.
                     </p>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#128752;</span>
+                        <span class="card-icon" aria-hidden="true">&#128752;&#65039;</span>
                         <span class="card-title">MRMS Radar</span>
                     </div>
                     <p class="card-description">
@@ -1697,7 +2111,7 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#128225;</span>
+                        <span class="card-icon" aria-hidden="true">&#128225;</span>
                         <span class="card-title">GOES-18 Satellite</span>
                     </div>
                     <p class="card-description">
@@ -1706,7 +2120,7 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127774;</span>
+                        <span class="card-icon" aria-hidden="true">&#127774;</span>
                         <span class="card-title">GOES-19 Satellite</span>
                     </div>
                     <p class="card-description">
@@ -1715,7 +2129,7 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127777;</span>
+                        <span class="card-icon" aria-hidden="true">&#127777;&#65039;</span>
                         <span class="card-title">NBM - National Blend</span>
                     </div>
                     <p class="card-description">
@@ -1724,16 +2138,25 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127754;</span>
-                        <span class="card-title">GFS-Wave (WAVEWATCH III)</span>
+                        <span class="card-icon" aria-hidden="true">&#128197;</span>
+                        <span class="card-title">NDFD - National Digital Forecast</span>
                     </div>
                     <p class="card-description">
-                        Global wave forecasts at 0.25&deg; resolution. Significant wave height, period, direction, wind waves, and surface wind. Updated every 6 hours with forecasts to 120 hours.
+                        The National Weather Service&rsquo;s own forecast grids for the contiguous US. Temperature, dew point, humidity, wind, sky cover, and chance of precipitation.
                     </p>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127757;</span>
+                        <span class="card-icon" aria-hidden="true">&#127754;</span>
+                        <span class="card-title">GFS-Wave (WAVEWATCH III)</span>
+                    </div>
+                    <p class="card-description">
+                        Global wave forecasts at 0.25&deg; resolution. Significant wave height, period, direction, wind waves, and surface wind. Updated every 6 hours with 3-hourly forecasts out to 384 hours (16 days).
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#127757;</span>
                         <span class="card-title">SST &amp; Sea Ice</span>
                     </div>
                     <p class="card-description">
@@ -1742,38 +2165,83 @@
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127793;</span>
-                        <span class="card-title">NLDAS-2 Noah Land Surface</span>
+                        <span class="card-icon" aria-hidden="true">&#127793;</span>
+                        <span class="card-title">GLDAS-2.1 Noah Land Surface</span>
                     </div>
                     <p class="card-description">
-                        NASA NLDAS-2 Noah land surface model at 0.125&deg; hourly resolution. 37 variables including soil moisture, soil temperature, snow, radiation, and evapotranspiration over CONUS.
+                        NASA GLDAS-2.1 Noah land surface model, global at 0.25&deg; and 3-hourly. Soil moisture and temperature, snow, evapotranspiration, surface fluxes, and forcing. Runs about a month behind real time.
                     </p>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#9729;</span>
-                        <span class="card-title">NLDAS-2 Forcing</span>
-                    </div>
-                    <p class="card-description">
-                        NASA NLDAS-2 atmospheric forcing data at 0.125&deg; hourly resolution. Air temperature, precipitation, humidity, pressure, wind, and radiation over CONUS.
-                    </p>
-                </div>
-                <div class="card">
-                    <div class="card-header">
-                        <span class="card-icon">&#9875;</span>
+                        <span class="card-icon" aria-hidden="true">&#9875;</span>
                         <span class="card-title">NDBC Buoys</span>
                     </div>
                     <p class="card-description">
-                        Real-time surface observations from ~749 NDBC buoys and coastal stations. Wind, pressure, air/water temperature, wave height, wave period, and tide levels.
+                        Real-time surface observations from ~860 NDBC buoys and coastal stations. Wind, pressure, air/water temperature, wave height, wave period, and tide levels.
                     </p>
                 </div>
                 <div class="card">
                     <div class="card-header">
-                        <span class="card-icon">&#127759;</span>
+                        <span class="card-icon" aria-hidden="true">&#127759;</span>
                         <span class="card-title">DART Tsunami Buoys</span>
                     </div>
                     <p class="card-description">
-                        Deep-ocean water column height from ~54 DART tsunami detection buoys. Standard 15-minute reporting with 1-minute and 15-second event modes during seismic activity.
+                        Deep-ocean water column height from ~40 DART tsunami detection buoys. Standard 15-minute reporting with 1-minute and 15-second event modes during seismic activity.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#9992;&#65039;</span>
+                        <span class="card-title">METAR &amp; TAF</span>
+                    </div>
+                    <p class="card-description">
+                        Airport weather reports and forecasts. METAR observations of temperature, wind, visibility, pressure, and flight category, and 24-30 hour TAF forecasts.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#9889;</span>
+                        <span class="card-title">GLM Lightning</span>
+                    </div>
+                    <p class="card-description">
+                        Lightning flashes seen by the GOES Geostationary Lightning Mapper over CONUS for the last 24 hours, one point per flash with its time and energy, about a minute behind real time.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#127786;&#65039;</span>
+                        <span class="card-title">Storm Reports</span>
+                    </div>
+                    <p class="card-description">
+                        NOAA Storm Events since 1995: hail size, thunderstorm wind speed, and tornado tracks with their EF rating.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#129406;</span>
+                        <span class="card-title">Trails</span>
+                    </div>
+                    <p class="card-description">
+                        OpenStreetMap trails, tracks, and bridleways across Colorado, with soil saturation for the Front Range foothills.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#127769;</span>
+                        <span class="card-title">Astronomy</span>
+                    </div>
+                    <p class="card-description">
+                        Sunrise, sunset, moonrise, moonset, moon phase, and the sun&rsquo;s position for any place and time, computed on request.
+                    </p>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-icon" aria-hidden="true">&#9888;&#65039;</span>
+                        <span class="card-title">NWS Alerts</span>
+                    </div>
+                    <p class="card-description">
+                        Every watch, warning and advisory the National Weather Service has in force, checked every minute and kept for 7 days. Each comes with its outline, the NWS map colour and, where NWS labels its text, a short what/where/when summary.
                     </p>
                 </div>
             </div>
@@ -1782,26 +2250,17 @@
         <!-- Coming Soon Section -->
         <section class="section">
             <h2 class="section-title">
-                <span class="icon">&#128640;</span>
+                <span class="icon" aria-hidden="true">&#128640;</span>
                 Coming Soon
             </h2>
             <div class="cards-grid">
-                <div class="card" style="opacity: 0.7;">
+                <div class="card" style="opacity: 0.9;">
                     <div class="card-header">
-                        <span class="card-icon">&#127754;</span>
+                        <span class="card-icon" aria-hidden="true">&#127754;</span>
                         <span class="card-title">NAM Model</span>
                     </div>
                     <p class="card-description">
                         North American Mesoscale model for regional forecasts with 12km resolution.
-                    </p>
-                </div>
-                <div class="card" style="opacity: 0.7;">
-                    <div class="card-header">
-                        <span class="card-icon">&#9968;</span>
-                        <span class="card-title">NWS Alerts</span>
-                    </div>
-                    <p class="card-description">
-                        Real-time severe weather alerts, watches, and warnings from the National Weather Service.
                     </p>
                 </div>
             </div>
@@ -1815,7 +2274,7 @@
                 Built with Rust. Data from NOAA/NWS and NASA GES DISC.
             </p>
             <div class="footer-links">
-                <a href="https://github.com" class="footer-link">GitHub</a>
+                <a href="https://github.com/JoegottabeGitenme/JoeGCServices" class="footer-link">GitHub</a>
                 <a href="https://www.ogc.org/standards/wms" class="footer-link">OGC WMS Spec</a>
                 <a href="https://www.ogc.org/standards/wmts" class="footer-link">OGC WMTS Spec</a>
                 <a href="https://ogcapi.ogc.org/edr/" class="footer-link">OGC EDR Spec</a>
@@ -1844,6 +2303,26 @@
         });
 
 
+        // Rows that scroll sideways fade where there is more to reach; returns the function that refreshes the fade
+        function bindFade(row) {
+            const upd = () => {
+                const max = row.scrollWidth - row.clientWidth;
+                row.classList.toggle('fade-r', max > 2 && row.scrollLeft < max - 2);
+                row.classList.toggle('fade-l', max > 2 && row.scrollLeft > 2);
+            };
+            row.addEventListener('scroll', upd, { passive: true });
+            window.addEventListener('resize', upd);
+            upd();
+            return upd;
+        }
+        const hdr = document.querySelector('.header');
+        if (hdr) {
+            const setHdr = () => document.documentElement.style.setProperty('--hdr', hdr.offsetHeight + 'px');
+            setHdr(); window.addEventListener('resize', setHdr);
+        }
+        const navRow = document.getElementById('nav-links');
+        if (navRow) bindFade(navRow);
+
         // Showcase: one MapLibre map for WMS/WMTS layers (Maps) and EDR queries (Data)
         (function () {
             const root = document.getElementById('showcase');
@@ -1852,7 +2331,7 @@
             const el = {
                 map: $('#sc-map'), chips: $('#sc-chips'), readout: $('#sc-readout'), hint: $('#sc-hint'),
                 url: $('#sc-url'), copy: $('#sc-copy'), open: $('#sc-open'), kind: $('#sc-kind'),
-                resp: $('#sc-resp'), respPre: $('#sc-resp-pre'), panel: $('#sc-panel')
+                resp: $('#sc-resp'), respPre: $('#sc-resp-pre'), panel: $('#sc-panel'), key: $('#sc-key')
             };
             const tabs = Array.from(root.querySelectorAll('.sc-tab'));
             const abs = (p) => new URL(p, location.href).href;
@@ -1865,6 +2344,10 @@
             const compass = (deg) => ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'][Math.round(deg / 22.5) % 16];
             const temp = (k) => `${fmt(kToF(k))} &deg;F <span class="sc-muted">(${fmt(kToC(k))} &deg;C)</span>`;
             const dl = (rows) => '<dl class="sc-dl">' + rows.filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('') + '</dl>';
+            const COARSE = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+            const Tap = COARSE ? 'Tap' : 'Click';
+            // MapLibre animates in script, so the CSS reduced-motion rule doesn't reach it
+            const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
             const utc = (iso) => iso ? new Date(iso).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
 
             // ---- Layers for Maps mode (WMTS REST tiles; WMS GetMap shown for the current view) ----
@@ -1896,7 +2379,7 @@
                 let res;
                 try { res = await fetch(url, { signal: ctl.signal }); }
                 catch (e) { if (e.name === 'AbortError') throw e; throw new Error("Couldn't reach the server: network error"); }
-                if (!res.ok) throw new Error("Couldn't reach the server: " + res.status);
+                if (!res.ok) throw new Error('The server answered ' + res.status);
                 return res;
             }
             async function getJson(slot, url) { return (await getRes(slot, url)).json(); }
@@ -1907,6 +2390,8 @@
                 el.open.href = curUrl;
                 el.kind.hidden = !(opts && opts.kinds);
             }
+            // Only the answer to the request the Request bar shows may fill the Response box: a slower, older one must not
+            function setResponseFor(url, obj) { if (curUrl === abs(url)) setResponse(obj); }
             function setReadout(html) { el.readout.innerHTML = html; }
             function setError(e) { if (e && e.name === 'AbortError') return; setReadout(`<p class="sc-err">${esc(e.message || e)}</p>`); }
             function setHint(html) { el.hint.innerHTML = html; }
@@ -1949,19 +2434,40 @@
                 ids.forEach((i) => { if (map.getLayer(i)) map.removeLayer(i); });
                 ids.forEach((i) => { if (map.getSource(i)) map.removeSource(i); });
             }
+            let mapLibFailed = false, mapLibWait = false;
             function initMap() {
                 if (map) return;
+                if (!window.maplibregl && !mapLibFailed && document.readyState !== 'complete') {
+                    // The deferred script has not arrived yet: wait for it rather than report a CDN failure
+                    el.map.innerHTML = '<div class="sc-maploading">Map loading&hellip;</div>';
+                    if (!mapLibWait) {
+                        mapLibWait = true;
+                        const sc = document.getElementById('maplibre-js');
+                        const again = () => { mapLibWait = false; initMap(); activate(); };
+                        if (sc) {
+                            sc.addEventListener('load', again, { once: true });
+                            sc.addEventListener('error', () => { mapLibFailed = true; again(); }, { once: true });
+                        }
+                    }
+                    return;
+                }
                 if (!window.maplibregl) { el.map.innerHTML = '<div class="sc-maploading">The map library could not be loaded.</div>'; setReadout('<p class="sc-err">Map library unavailable (CDN blocked?)</p>'); return; }
                 el.map.innerHTML = '';
                 map = new maplibregl.Map({
                     container: el.map,
                     style: 'https://tiles.openfreemap.org/styles/positron',
                     center: [-98, 38], zoom: 3, minZoom: 1, maxZoom: 16,
-                    attributionControl: false, dragRotate: false, cooperativeGestures: false
+                    attributionControl: false, dragRotate: false, cooperativeGestures: COARSE
                 });
                 map.touchZoomRotate.disableRotation();
                 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
                 map.addControl(new maplibregl.AttributionControl({ compact: true }));
+                // Starts as the small (i) button; the credit opens on tap
+                const attr = el.map.querySelector('.maplibregl-ctrl-attrib');
+                let attrTouched = false;
+                const fold = () => { if (attr && !attrTouched) { attr.removeAttribute('open'); attr.classList.remove('maplibregl-compact-show'); } };
+                if (attr) attr.querySelector('summary').addEventListener('click', () => { attrTouched = true; });
+                map.on('load', fold); map.once('idle', fold); map.on('resize', fold);
                 map.on('load', () => { mapReady = true; activate(); });
                 map.on('click', (e) => { const p = currentPreset(); if (mode === 'data' && p && p.click) p.click(e); });
                 let t = null;
@@ -2001,16 +2507,93 @@
                 const w = Math.round(Math.min(c.width, 1000)), h = Math.round(Math.min(c.height, 1000));
                 setRequest(`/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${l.id}&STYLES=${l.style}&CRS=EPSG:3857&BBOX=${[sw[0], sw[1], ne[0], ne[1]].map(Math.round).join(',')}&WIDTH=${w}&HEIGHT=${h}&FORMAT=image/png`, { kinds: true });
             }
+            // ---- Maps readout: what the tiles show and when, plus a colour scale ----
+            // WMS GetLegendGraphic answers 400 "Unknown request" on this server, so the scales are drawn here from the same stops the tiles are
+            // rendered with (config/styles/*.json, linear between stops). Values are in the unit shown on the scale.
+            const SCALES = {
+                mrms_REFL: { title: 'Reflectivity', unit: 'dBZ', min: 5, max: 75, ticks: [[5, '5'], [20, '20'], [35, '35'], [50, '50'], [65, '65'], [75, '75+']],
+                    stops: [[5, '#9C9C9C'], [10, '#767676'], [15, '#00FFFF'], [20, '#00BFFF'], [25, '#0080FF'], [30, '#00FF00'], [35, '#00C000'], [40, '#008000'], [45, '#FFFF00'], [50, '#E6C000'], [55, '#FF8000'], [60, '#FF0000'], [65, '#C00000'], [70, '#800000'], [75, '#FF00FF']] },
+                temp: { title: '2 m temperature', unit: '\u00b0C', min: -40, max: 40, ticks: [[-40, '\u221240'], [-20, '\u221220'], [0, '0'], [20, '20'], [40, '40']],
+                    stops: [[-40, '#1E0082'], [-30, '#0032C8'], [-20, '#0096FF'], [-10, '#32C8FF'], [0, '#96FFC8'], [10, '#FFFF32'], [20, '#FF9600'], [30, '#FF3200'], [40, '#960000']] },
+                goes19_CMI_C13: { title: 'Brightness temperature', unit: '\u00b0C', min: 180 - 273.15, max: 330 - 273.15,
+                    ticks: [[-80, '\u221280'], [-60, '\u221260'], [-40, '\u221240'], [-20, '\u221220'], [0, '0'], [20, '20'], [40, '40']],
+                    stops: [[180, '#000000'], [195, '#500050'], [205, '#8000FF'], [213, '#0000FF'], [220, '#0080FF'], [228, '#00FFFF'], [235, '#00FF80'], [243, '#00FF00'], [250, '#FFFF00'], [258, '#FFC800'], [265, '#FF9600'], [273, '#FF6400'], [283, '#FF3200'], [293, '#FF0000'], [303, '#C80000'], [313, '#960000'], [323, '#643232'], [330, '#505050']].map(([k, c]) => [k - 273.15, c]) },
+                gfswave_HTSGW: { title: 'Wave height', unit: 'm', min: 0.25, max: 15, ticks: [[1, '1'], [3, '3'], [6, '6'], [9, '9'], [12, '12'], [15, '15+']],
+                    stops: [[0.25, '#E0F0FF'], [0.5, '#B0D8FF'], [1, '#60B0FF'], [1.5, '#2090FF'], [2, '#0070E0'], [3, '#00A060'], [4, '#40C040'], [5, '#C0D800'], [6, '#FFD000'], [8, '#FF8000'], [10, '#FF3000'], [12, '#D00000'], [15, '#800040']] },
+                gfs_ICEC: { title: 'Ice concentration', unit: '% of each cell', min: 10, max: 100, ticks: [[10, '10'], [30, '30'], [50, '50'], [70, '70'], [100, '100']],
+                    stops: [[10, '#E0F0FF'], [20, '#B0DCFF'], [30, '#80C8FF'], [40, '#50B4FF'], [50, '#30A0F0'], [60, '#2088D0'], [70, '#1070B0'], [80, '#005890'], [90, '#003870'], [100, '#E8E8F0']] }
+            };
+            SCALES.hrrr_TMP = SCALES.gfs_TMP = SCALES.temp;
+            function scaleHtml(id) {
+                const d = SCALES[id];
+                if (!d) return '';
+                const pos = (v) => ((v - d.min) / (d.max - d.min) * 100);
+                const grad = d.stops.map(([v, c]) => `${c} ${pos(v).toFixed(1)}%`).join(',');
+                const ticks = d.ticks.map(([v, t]) => { const x = pos(v); return `<span class="${x < 6 ? 'sc-lg-l' : x > 94 ? 'sc-lg-r' : ''}" style="left:${x.toFixed(1)}%">${t}</span>`; }).join('');
+                const first = d.ticks[0][1], last = d.ticks[d.ticks.length - 1][1];
+                return `<div class="sc-legend" role="group" aria-label="Colour scale: ${esc(d.title)}, ${first} to ${last} ${esc(d.unit)}">` +
+                    `<div class="sc-lgtitle">${esc(d.title)} <span class="sc-muted">${esc(d.unit)}</span></div>` +
+                    `<div class="sc-lgbar" style="background:linear-gradient(90deg,${grad})" aria-hidden="true"></div><div class="sc-lgticks">${ticks}</div></div>`;
+            }
+            // Valid times come from one GetCapabilities (the default TIME, or the model run plus its forecast hour), fetched once and kept
+            let capsP = null;
+            const validCache = {};
+            function loadValid() {
+                if (!capsP) {
+                    capsP = fetch('/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0').then((r) => { if (!r.ok) throw new Error('capabilities ' + r.status); return r.text(); }).then((xml) => {
+                        const doc = new DOMParser().parseFromString(xml, 'text/xml');
+                        const want = new Set(LAYERS.map((l) => l.id));
+                        Array.from(doc.getElementsByTagName('Layer')).forEach((n) => {
+                            const nm = Array.from(n.children).find((c) => c.localName === 'Name');
+                            if (!nm || !want.has(nm.textContent.trim())) return;
+                            const dim = {};
+                            Array.from(n.children).filter((c) => c.localName === 'Dimension').forEach((c) => { dim[c.getAttribute('name')] = c.getAttribute('default'); });
+                            const time = dim.TIME && new Date(dim.TIME), run = dim.RUN && new Date(dim.RUN), fh = dim.FORECAST == null ? 0 : parseInt(dim.FORECAST, 10) || 0;
+                            if (time && !isNaN(time)) validCache[nm.textContent.trim()] = { valid: time };
+                            else if (run && !isNaN(run)) validCache[nm.textContent.trim()] = { valid: new Date(run.getTime() + fh * 3600e3), run, fh };
+                        });
+                    }).catch((e) => { capsP = null; throw e; });
+                }
+                return capsP;
+            }
+            const ago = (d) => {
+                const sec = (Date.now() - d.getTime()) / 1000, a = Math.abs(sec);
+                const t = a < 90 ? fmt(a) + ' s' : a < 5400 ? fmt(a / 60) + ' min' : a < 172800 ? fmt(a / 3600) + ' h' : fmt(a / 86400) + ' d';
+                return sec >= 0 ? t + ' ago' : 'in ' + t;
+            };
+            // 19:40 UTC when it's today (UTC), else with the day: Nov 1, 18:00 UTC
+            const utcShort = (d) => {
+                const hm = d.toISOString().slice(11, 16) + ' UTC';
+                return d.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10) ? hm : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) + ', ' + hm;
+            };
+            function validHtml(v) {
+                return `Valid <time datetime="${v.valid.toISOString()}">${utcShort(v.valid)}</time> &middot; <span data-ago="${v.valid.getTime()}">${ago(v.valid)}</span>` +
+                    (v.run ? `<span class="sc-muted sc-valid-run">Model run ${utcShort(v.run)}, forecast hour ${v.fh}</span>` : '');
+            }
+            async function fillValid(id) {
+                const box = () => el.readout.querySelector('[data-valid="' + id + '"]');
+                if (!validCache[id]) {
+                    try { await loadValid(); } catch (e) { const b = box(); if (b) b.innerHTML = '<span class="sc-muted">Valid time unavailable right now.</span>'; return; }
+                }
+                const b = box(), v = validCache[id];
+                if (b) b.innerHTML = v ? validHtml(v) : '<span class="sc-muted">Valid time not published for this layer.</span>';
+            }
+            // "6 min ago" keeps counting while the layer stays on screen
+            setInterval(() => { el.readout.querySelectorAll('[data-ago]').forEach((n) => { n.textContent = ago(new Date(Number(n.dataset.ago))); }); }, 30000);
+
             const narrow = () => (el.map.clientWidth < 500 ? 0.8 : 0);
             function showLayer(animate) {
                 const l = LAYERS[layerIdx];
                 map._wxErr = false;
                 removeMapStuff(['wx']);
                 map.addSource('wx', { type: 'raster', tiles: [abs(wmtsTemplate(l)).replace(/%7B/g, '{').replace(/%7D/g, '}')], tileSize: 256, minzoom: 0, maxzoom: 8 });
-                map.addLayer({ id: 'wx', type: 'raster', source: 'wx', paint: { 'raster-opacity': 0.8, 'raster-fade-duration': 250 } }, firstSymbol());
-                setReadout(`<h3>${esc(l.title)}</h3><p>${esc(l.note)}</p><p class="sc-tilenote sc-muted">Latest available data, drawn from WMTS tiles.</p>`);
-                setHint('Drag and zoom: the tiles and the request below follow the view.');
-                const opts = { duration: animate ? 1100 : 0, padding: 20 };
+                map.addLayer({ id: 'wx', type: 'raster', source: 'wx', paint: { 'raster-opacity': 0.8, 'raster-fade-duration': REDUCED ? 0 : 250 } }, firstSymbol());
+                setReadout(`<h3>${esc(l.title)}</h3><p>${esc(l.note)}</p>` +
+                    `<p class="sc-valid" data-valid="${l.id}">${validCache[l.id] ? validHtml(validCache[l.id]) : '<span class="sc-muted">Checking the valid time&hellip;</span>'}</p>` +
+                    scaleHtml(l.id) + `<p class="sc-tilenote sc-muted">Latest available data, drawn from WMTS tiles.</p>`);
+                if (!validCache[l.id]) fillValid(l.id);
+                setHint((COARSE ? 'Move and zoom with two fingers' : 'Drag and zoom') + ': the tiles and the request below follow the view.');
+                const opts = { duration: animate && !REDUCED ? 1100 : 0, padding: 20 };
                 if (l.bounds) map.fitBounds(l.bounds, opts);
                 else map.easeTo({ center: l.center, zoom: l.zoom - narrow(), duration: opts.duration });
                 updateMapsRequest();
@@ -2045,10 +2628,116 @@
                 };
             }
             const where = (lng, lat) => `${fmt(Math.abs(lat), 2)}&deg;${lat >= 0 ? 'N' : 'S'}, ${fmt(Math.abs(lng), 2)}&deg;${lng >= 0 ? 'E' : 'W'}`;
+
+            // ---- Alert helpers ----
+            const SEVERITY_RANK = { Extreme: 4, Severe: 3, Moderate: 2, Minor: 1 };
+            const URGENCY_RANK = { Immediate: 3, Expected: 2, Future: 1 };
+            const alertColor = (c) => (/^#[0-9a-f]{6}$/i.test(c || '') ? c : '#8a8a8a');
+            // The outline: the fill colour pulled 40% towards ink, so pale hazard colours still show an edge
+            function shade(c) {
+                const n = parseInt(c.slice(1), 16), ink = [0x2e, 0x28, 0x18];
+                return '#' + [n >> 16, (n >> 8) & 255, n & 255].map((v, i) => Math.round(v * 0.6 + ink[i] * 0.4).toString(16).padStart(2, '0')).join('');
+            }
+            // ---- NWS text: older products arrive in ALL CAPS. Paragraphs that are mostly capitals become sentence case; mixed-case text is left alone ----
+            const STATE_NAMES = ['alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut', 'delaware', 'florida', 'georgia', 'hawaii', 'idaho', 'illinois', 'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota', 'mississippi', 'missouri', 'montana', 'nebraska', 'nevada', 'new hampshire', 'new jersey', 'new mexico', 'new york', 'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon', 'pennsylvania', 'rhode island', 'south carolina', 'south dakota', 'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington', 'west virginia', 'wisconsin', 'wyoming', 'puerto rico', 'guam', 'american samoa', 'district of columbia'];
+            const STATE_RE = new RegExp('\\b(' + STATE_NAMES.sort((a, b) => b.length - a.length).join('|') + ')\\b', 'g');
+            const STATE_CODES = new Set('al ak az ar ca co ct de fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok or pa ri sc sd tn tx ut vt va wa wv wi wy dc pr gu as vi mp'.split(' '));
+            const CODE_WORDS = new Set(['in', 'or', 'me', 'hi', 'oh', 'ok', 'as', 'id']);
+            const KEEP_UPPER = /\b(nws|noaa|fema|utc|gmt|[aecmp]st|[aecmp]dt|akst|akdt|hst|nne|nnw|sse|ssw|ene|ese|wnw|wsw|ne|nw|se|sw|ef[0-5])\b/g;
+            const DAYS_MONTHS = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|april|june|july|august|september|october|november|december)\b/g;
+            const FUNC = new Set(['the', 'is', 'are', 'was', 'were', 'will', 'has', 'have', 'been', 'be', 'for', 'with', 'from', 'until', 'this', 'that', 'these', 'those', 'includes', 'in', 'on', 'at', 'to', 'by', 'a', 'an', 'it', 'its', 'not', 'may', 'can', 'near', 'expected', 'issued']);
+            const SMALL = new Set(['and', 'of', 'the', 'in', 'on', 'at', 'to', 'or', 'for']);
+            const cap1 = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+            // Place names: every word capitalised (McPherson, St. John, Winston-Salem), small joining words left down
+            function titleCase(str) {
+                return str.replace(/[a-z][a-z'’]*\.?/g, (w, off) => {
+                    const bare = w.replace(/\.$/, '');
+                    if (off > 0 && SMALL.has(bare)) return w;
+                    if (/^mc[a-z]{3,}/.test(bare)) return 'Mc' + cap1(w.slice(2));
+                    if (/^o['’][a-z]/.test(bare)) return 'O' + w.charAt(1) + cap1(w.slice(2));
+                    return cap1(w);
+                });
+            }
+            const noFunc = (str) => str.split(/[\s,.]+/).filter(Boolean).every((w) => !FUNC.has(w));
+            function caseParagraph(p, first, event) {
+                const letters = p.replace(/[^A-Za-z]/g, '');
+                if (letters.length < 3 || letters.replace(/[^A-Z]/g, '').length / letters.length < 0.8) return p;
+                // A lone short token that opens the text is a product code (SVROUN), not shouting
+                if (first && !/\s/.test(p.trim()) && letters.length <= 8) return p;
+                let x = p.toLowerCase();
+                const body = x.trim();
+                if (/^[a-z][a-z\s.,'’-]*$/.test(body) && !/(\.{3}|:)$/.test(body) && !/\binclude/.test(body) && body.split(/\s+/).length <= 40 && noFunc(body)) {
+                    // A bare run of place names or a short heading
+                    x = x.replace(body, titleCase(body));
+                } else {
+                    const lead = body.match(/^(in|for|across|over)\s+([a-z][a-z\s'’-]*)$/);
+                    if (lead && lead[2].split(/\s+/).length <= 6 && noFunc(lead[2])) x = x.replace(body, cap1(lead[1]) + ' ' + titleCase(lead[2]));
+                    // "the cities of A, B, and C" and "locations impacted include... A, B": the list is places
+                    x = x.replace(/\b((?:cities|counties|communities|towns|parishes|boroughs|municipalities)\s+(?:of|in)\s+)([^\n]*)/g, (m, a, b) => a + titleCase(b));
+                    x = x.replace(/\b((?:locations impacted include|including|includes|include)(?:\.{3}|:)?\s+(?:the following (?:counties|cities|communities|towns|locations)\s*,?\s*)?)([^\n]*)/g, (m, a, b) => (/^the (?:cities|counties|communities|towns|parishes)\b|\b(?:between|from|through|along|near|to)\b/.test(b) ? m : a + titleCase(b)));
+                    x = x.replace(STATE_RE, (m) => titleCase(m));
+                }
+                if (event && x.includes(event.toLowerCase())) x = x.split(event.toLowerCase()).join(event);
+                x = x.replace(/\bnational weather service\b/g, 'National Weather Service')
+                    .replace(/\bmc([a-z]{3,})/g, (m, a) => 'Mc' + cap1(a))
+                    .replace(/(?<!\d\s?)\b(st|mt|ft)\.(?=\s+[a-z])/g, cap1)
+                    .replace(DAYS_MONTHS, cap1)
+                    .replace(/\b(may|march)(\s+\d)/g, (m, a, b) => cap1(a) + b)
+                    .replace(KEEP_UPPER, (m) => m.toUpperCase())
+                    .replace(/(\d\s?)(am|pm)\b/g, (m, a, b) => a + b.toUpperCase())
+                    .replace(/\b(us|sr|cr|fm|rm)([- ]?\d+)\b/g, (m, a, b) => a.toUpperCase() + b)
+                    .replace(/\bi(-\d+)\b/g, (m, a) => 'I' + a)
+                    .replace(/\bu\.s\./g, 'U.S.')
+                    .replace(/(,\s*)([A-Za-z]{2})\b(?=\s*(?:[,;)]|\.?$))/gm, (m, a, c) => (STATE_CODES.has(c.toLowerCase()) ? a + c.toUpperCase() : m))
+                    .replace(/(,\s*)([A-Za-z]{2})\b(?=\s+(?:and|or)\b)/g, (m, a, c) => (STATE_CODES.has(c.toLowerCase()) && !CODE_WORDS.has(c.toLowerCase()) ? a + c.toUpperCase() : m));
+                // Sentence starts: the paragraph, after . ! ? or an ellipsis, and at a * bullet
+                return x.replace(/(^[\s*•-]*|[.!?]\s+|\.{3}\s*|\n\s*\*\s*)([a-z])/g, (m, a, c) => a + c.toUpperCase());
+            }
+            const nwsCase = (text, event) => String(text == null ? '' : text).split(/(\n\s*\n)/).map((part, i) => (i % 2 ? part : caseParagraph(part, i === 0, event))).join('');
+            // Times are the viewer's own: "Mon 4:00 PM (your time)". NWS's own wording keeps the alert area's zone, and the readout says so
+            const localTime = (iso) => (iso ? esc(new Date(iso).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })) + ' (your time)' : '');
+            // Plain words for CAP's severity and urgency: "Extreme · expected later". Certainty only when it says something (Likely is the usual case)
+            const URGENCY_WORDS = { Immediate: 'now', Expected: 'expected soon', Future: 'expected later', Past: 'past' };
+            const CERTAINTY_WORDS = { Observed: 'already happening', Possible: 'possible', Unlikely: 'unlikely' };
+            const severityText = (p) => [SEVERITY_RANK[p.severity] ? p.severity : '', URGENCY_WORDS[p.urgency], CERTAINTY_WORDS[p.certainty]].filter(Boolean).join(' \u00b7 ') || 'Unknown';
+            // The view as an EDR bbox; west > east when it crosses the antimeridian
+            function viewBbox() {
+                const b = map.getBounds();
+                let w = b.getWest(), e = b.getEast();
+                if (e - w >= 360) { w = -180; e = 180; }
+                else { w = wrapLng(w); e = wrapLng(e); if (e === -180) e = 180; }
+                return [w, Math.max(-90, b.getSouth()), e, Math.min(90, b.getNorth())].map(r4).join(',');
+            }
+            // A point inside a (Multi)Polygon: the middle of the widest inside run across the largest part,
+            // at its middle latitude (rings and holes both count as crossings, so holes are skipped)
+            function pointInside(g) {
+                const parts = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+                const box = (ring) => ring.reduce((m, c) => [Math.min(m[0], c[0]), Math.min(m[1], c[1]), Math.max(m[2], c[0]), Math.max(m[3], c[1])], [Infinity, Infinity, -Infinity, -Infinity]);
+                let best = null, bestBox = null, bestA = -1;
+                parts.forEach((rings) => {
+                    const bb = box(rings[0]), a = (bb[2] - bb[0]) * (bb[3] - bb[1]);
+                    if (a > bestA) { bestA = a; best = rings; bestBox = bb; }
+                });
+                if (!best) return null;
+                const s = bestBox[1], n = bestBox[3];
+                const y = (s + n) / 2 + (n - s) * 1e-3;
+                const cross = [];
+                best.forEach((ring) => {
+                    for (let i = 1; i < ring.length; i++) {
+                        const [x1, y1] = ring[i - 1], [x2, y2] = ring[i];
+                        if ((y1 > y) !== (y2 > y)) cross.push(x1 + (y - y1) * (x2 - x1) / (y2 - y1));
+                    }
+                });
+                cross.sort((a, b) => a - b);
+                let x = null, width = 0;
+                for (let i = 0; i + 1 < cross.length; i += 2) if (cross[i + 1] - cross[i] > width) { width = cross[i + 1] - cross[i]; x = (cross[i] + cross[i + 1]) / 2; }
+                return x == null ? null : [x, y];
+            }
+
             const PRESETS = [
                 pointPreset({
                     id: 'point', label: 'Forecast at a point', coll: 'hrrr-height-agl', params: 'TMP,UGRD,VGRD',
-                    hint: 'Click the map (contiguous US) to query a point.',
+                    hint: `${Tap} the map (contiguous US) to query a point.`,
                     view: { center: [-98, 38.5], zoom: 3.6 }, start: [-105, 39.7],
                     render(v, d, lng, lat) {
                         const t = v('TMP'), u = v('UGRD'), w = v('VGRD');
@@ -2062,9 +2751,187 @@
                         ]);
                     }
                 }),
+                {
+                    id: 'alerts', label: 'Weather alerts', delay: 450, cursor: 'pointer',
+                    hint: `Every NWS watch, warning and advisory in force, in the NWS map colours. ${Tap} anywhere for the alerts at that spot.`,
+                    view: { center: [-98, 38.5], zoom: 3.4 },
+                    picked: false, last: null,
+                    enter() {
+                        this.picked = false; this.last = null;
+                        // The centre button is made once, so a redrawn hint keeps keyboard focus on it
+                        setHint('<span id="sc-hint-text"></span> <button type="button" id="sc-centre">Or query the map centre</button>');
+                        el.hint.querySelector('#sc-centre').addEventListener('click', () => { this.picked = 'user'; this.pick(map.getCenter().toArray()); });
+                        this.note(this.hint);
+                        setReadout('<p class="sc-muted">Loading alerts…</p>');
+                        removeMapStuff(['sc-alert-sel', 'sc-alert-line', 'sc-alert-fill', 'sc-alerts']);
+                        map.addSource('sc-alerts', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        const before = firstSymbol();
+                        map.addLayer({ id: 'sc-alert-fill', type: 'fill', source: 'sc-alerts', layout: { 'fill-sort-key': ['get', 'rank'] },
+                            paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.35 } }, before);
+                        map.addLayer({ id: 'sc-alert-line', type: 'line', source: 'sc-alerts', layout: { 'line-sort-key': ['get', 'rank'], 'line-join': 'round' },
+                            paint: { 'line-color': ['get', 'edge'], 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 0.5, 8, 1.4] } }, before);
+                        map.addLayer({ id: 'sc-alert-sel', type: 'line', source: 'sc-alerts', filter: ['in', ['get', 'aid'], ['literal', []]], layout: { 'line-join': 'round' },
+                            paint: { 'line-color': '#2e2818', 'line-width': 2.5 } }, before);
+                    },
+                    // A key to the colours on the map: the event types in view, worst first, the top few with a count of the rest
+                    key(fs) {
+                        const m = new Map();
+                        fs.filter((f) => f.geometry).forEach((f) => {
+                            const p = f.properties || {}, name = p.event || 'Alert', r = SEVERITY_RANK[p.severity] || 0, e = m.get(name) || { n: 0, r: 0, c: alertColor(p.color) };
+                            e.n++; e.r = Math.max(e.r, r); m.set(name, e);
+                        });
+                        const rows = Array.from(m.entries()).sort((a, b) => b[1].r - a[1].r || b[1].n - a[1].n || a[0].localeCompare(b[0]));
+                        const top = rows.slice(0, 6), more = rows.length - top.length;
+                        // Swatches are drawn like the map: the colour at 35% inside its darker outline
+                        el.key.innerHTML = '<span class="sc-keyhead">On the map</span><ul>' + top.map(([name, e]) => `<li><i class="sc-sw" style="background:${e.c}59;border-color:${shade(e.c)}"></i>${esc(name)}</li>`).join('') +
+                            (more > 0 ? `<li class="sc-keymore">+${more} more</li>` : '') + '</ul>';
+                        el.key.hidden = !rows.length;
+                    },
+                    // The hint line's text, in front of the button that queries the map centre for anyone who can't click the map
+                    note(html) { const t = el.hint.querySelector('#sc-hint-text'); if (t) t.innerHTML = html; },
+                    async moveend() {
+                        const url = `/edr/collections/nws-alerts/items?bbox=${viewBbox()}&limit=1000`;
+                        setRequest(url);
+                        this.note('<span class="sc-muted">Loading the alerts in this view…</span>');
+                        try {
+                            const d = await getJson('q', url);
+                            if (!live('alerts')) return;
+                            setResponseFor(url, d);
+                            const fs = d.features || [];
+                            map.getSource('sc-alerts').setData({ type: 'FeatureCollection', features: fs.filter((f) => f.geometry).map((f) => {
+                                const p = f.properties || {}, c = alertColor(p.color);
+                                return { type: 'Feature', geometry: f.geometry, properties: { aid: f.id, color: c, edge: shade(c), rank: SEVERITY_RANK[p.severity] || 0 } };
+                            }) });
+                            this.key(fs);
+                            this.note(`${fs.length}${d.truncated ? '+' : ''} alert${fs.length === 1 ? '' : 's'} in this view. ${Tap} anywhere for the alerts at that spot.`);
+                            // The first answer opens on an example, unless the user has already clicked
+                            if (!this.picked) {
+                                const cands = this.start(fs);
+                                if (cands.length) { this.picked = 'auto'; this.open(cands); }
+                                else setReadout('<h3>No alerts in view</h3><p>NWS has nothing in force here right now. Zoom out or pan to find some.</p>');
+                            }
+                        } catch (err) {
+                            if (err.name === 'AbortError' || !live('alerts')) return;
+                            this.note(`<span class="sc-err">${esc(err.message)}.</span> The alerts in this view didn't load. Pan or zoom to try again.`);
+                            if (!this.picked) setError(err);
+                        }
+                    },
+                    // Opening example: spots inside the most severe alerts in view (most urgent first, then those with a summary to show)
+                    start(fs) {
+                        const b = map.getBounds(), out = [];
+                        const score = (p) => 100 * (SEVERITY_RANK[p.severity] || 0) + 10 * (URGENCY_RANK[p.urgency] || 0) + (p.summary && Object.keys(p.summary).length ? 2 : 0) + (p.geometry_source === 'polygon' ? 1 : 0);
+                        const cands = fs.filter((f) => f.geometry && f.properties.status === 'active' && !['EXP', 'CAN'].includes(f.properties.action))
+                            .sort((a, z) => score(z.properties) - score(a.properties));
+                        for (const f of cands) {
+                            const pt = pointInside(f.geometry);
+                            if (pt && b.contains(pt)) { out.push({ pt, id: f.id }); if (out.length === 4) break; }
+                        }
+                        return out;
+                    },
+                    // The outlines are simplified, so a spot can fall outside its alert: try each spot until /position finds the alert there
+                    async open(cands) {
+                        for (let i = 0; i < cands.length && this.picked === 'auto'; i++) if (await this.pick(cands[i].pt, cands[i].id, i < cands.length - 1)) return;
+                    },
+                    click(e) { this.picked = 'user'; this.pick([e.lngLat.lng, e.lngLat.lat]); },
+                    // false when the spot was passed over: its alert (want) isn't there and `more` spots are left to try
+                    async pick(ll, want, more) {
+                        const lng = wrapLng(ll[0]), lat = ll[1];
+                        setPin([lng, lat]);
+                        const url = `/edr/collections/nws-alerts/position?coords=POINT(${r4(lng)}%20${r4(lat)})`;
+                        setRequest(url);
+                        setReadout('<p class="sc-muted">Querying…</p>');
+                        try {
+                            const d = await getJson('obs', url);
+                            if (!live('alerts')) return true;
+                            const fs = d.features || [];
+                            if (more && !fs.some((f) => f.id === want)) return false;
+                            setResponseFor(url, d);
+                            if (map.getLayer('sc-alert-sel')) map.setFilter('sc-alert-sel', ['in', ['get', 'aid'], ['literal', fs.map((f) => f.id)]]);
+                            // How long the answer sat in a cache before it got here. The API lets caches keep it 60 s, so more than that is a wrong clock (here or there), not cache time
+                            const sat = (Date.now() - Date.parse(d.timeStamp)) / 1000;
+                            this.last = { fs, meta: d.meta || {}, lng, lat, url, d, lag: sat > 0 && sat <= 65 ? sat : 0, at: performance.now() };
+                            // Open on the alert the spot was chosen in, else on the first one in force among the worst (the answer lists worst first, not in-force first)
+                            const rank = (f) => SEVERITY_RANK[f.properties.severity] || 0;
+                            const iw = fs.findIndex((f) => f.id === want), ia = fs.findIndex((f) => f.properties.status === 'active' && rank(f) === rank(fs[0]));
+                            this.show(iw >= 0 ? iw : Math.max(ia, 0));
+                        } catch (err) { setError(err); }
+                        return true;
+                    },
+                    // The alert at index i in full, the others at the spot as a list to switch to (user: picked from that list)
+                    show(i, user) {
+                        const { fs, meta, lng, lat, lag, at } = this.last;
+                        // data_age_seconds is the age when the API answered: add the time the answer sat in a cache and the time it has been on screen (the page's own timer, so a wrong clock can't move it).
+                        // The stale flag is about the feed, so it leaves out the time on screen
+                        const base = meta.data_age_seconds == null ? null : meta.data_age_seconds + lag;
+                        const age = base == null ? null : base + (performance.now() - at) / 1000, stale = !!meta.stale || (base != null && base > 300);
+                        const foot = `<p class="sc-muted sc-afoot">From api.weather.gov${age != null ? `, checked ${age < 90 ? fmt(age) + ' s' : fmt(age / 60) + ' min'} ago` : ''}${stale ? ' <span class="sc-err">(feed is stale)</span>' : ''}.</p>`;
+                        if (!fs.length) { setReadout(`<h3>No alerts here</h3><p>NWS has nothing in force at ${where(lng, lat)}.</p>` + foot); return; }
+                        // Switching alerts drops a Full alert still loading and puts the Request and Response boxes back on this spot's query
+                        if (user) { if (slots.obs) slots.obs.abort(); if (curUrl !== abs(this.last.url)) { setRequest(this.last.url); setResponse(this.last.d); } }
+                        const a = fs[i], p = a.properties, s = p.summary || {};
+                        // A null `ends` means NWS gave none: the alert is over at `expires` at the latest
+                        const end = p.ends ? ['Until', localTime(p.ends)] : p.expires ? ['Expires', localTime(p.expires)] : ['Until', 'further notice'];
+                        const rows = [['What', s.what || s.hazard], ['Where', s.where], ['When', s.when], ['Impacts', s.impacts || s.impact]].filter((r) => r[1]).map(([k, v]) => [k, esc(nwsCase(v, p.event))]);
+                        const span = (q) => (q.status === 'upcoming' ? 'starts ' + localTime(q.onset || q.effective) : q.ends ? 'until ' + localTime(q.ends) : q.expires ? 'expires ' + localTime(q.expires) : '');
+                        const others = fs.map((f, j) => [f, j]).filter(([, j]) => j !== i);
+                        setReadout(`<h3>${fs.length} alert${fs.length === 1 ? '' : 's'} at ${where(lng, lat)}</h3>` +
+                            `<div class="sc-alert"><p class="sc-aev" tabindex="-1"><i class="sc-sw" style="background:${alertColor(p.color)}"></i>${esc(p.event || 'Alert')}</p>` +
+                            (rows.length ? '' : `<p>${esc(nwsCase(p.formal_headline || p.headline || p.area || '', p.event))}</p>`) +
+                            dl([...rows,
+                                p.status === 'upcoming' ? ['Starts', localTime(p.onset || p.effective)] : null,
+                                end,
+                                ['Severity', esc(severityText(p))],
+                                ['From', esc(p.sender || '')]]) +
+                            `<p class="sc-muted sc-anote">Times marked (your time) are in your time zone. NWS's own wording keeps the alert area's.</p>` +
+                            `<button type="button" class="sc-afull" aria-expanded="false" data-id="${esc(a.id)}">Full alert</button>` +
+                            '<div class="sc-atext" role="region" aria-label="Full text of this alert" hidden></div></div>' +
+                            (others.length ? '<ul class="sc-alist" aria-label="Other alerts here">' + others.map(([f, j]) => {
+                                const q = f.properties, area = q.area || '';
+                                return `<li><button type="button" data-ai="${j}" title="${esc(area)}"><i class="sc-sw" style="background:${alertColor(q.color)}"></i>` +
+                                    `<span>${esc(q.event || 'Alert')}<span class="sc-adet">${[span(q), esc(area)].filter(Boolean).join(' &middot; ')}</span></span></button></li>`;
+                            }).join('') + '</ul>' : '') + foot);
+                        el.readout.scrollTop = 0;
+                        el.readout.querySelectorAll('[data-ai]').forEach((b) => b.addEventListener('click', () => this.show(Number(b.dataset.ai), true)));
+                        const full = el.readout.querySelector('.sc-afull');
+                        full.addEventListener('click', () => this.full(full));
+                        // The new alert's name takes focus and goes in view, clear of the sticky header (the list was below it). Full alert can sit below the fold of the desktop readout, so it only
+                        // gets focus on Tab, which scrolls it into view
+                        if (user) { el.readout.querySelector('.sc-aev').focus({ preventScroll: true }); el.readout.querySelector('h3').scrollIntoView({ block: 'nearest' }); }
+                    },
+                    // One alert's text as NWS wrote it, from /items/{id} (the map already has the outline, so no geometry)
+                    async full(btn) {
+                        const url = `/edr/collections/nws-alerts/items/${encodeURIComponent(btn.dataset.id)}?geometry=false`, box = btn.nextElementSibling;
+                        // aria-disabled, not disabled, so a focused button keeps the focus while it loads and after a failure
+                        if (btn.getAttribute('aria-disabled') === 'true') return;
+                        // Opened once: the button then just shows and hides the text, inside the readout, with the alert's name still above it
+                        if (box.dataset.loaded) {
+                            const open = box.hidden;
+                            box.hidden = !open; btn.setAttribute('aria-expanded', String(open)); btn.textContent = open ? 'Hide full alert' : 'Full alert';
+                            if (open) setRequest(url);
+                            return;
+                        }
+                        setRequest(url);
+                        btn.setAttribute('aria-disabled', 'true'); btn.textContent = 'Loading…';
+                        try {
+                            const d = await getJson('obs', url);
+                            if (!live('alerts') || !btn.isConnected) return;
+                            setResponseFor(url, d);
+                            const q = d.properties || {}, text = String(q.description || '').trim() || String(q.formal_headline || q.headline || '').trim(), inst = String(q.instruction || '').trim();
+                            box.innerHTML = '<p class="sc-muted sc-anote">As NWS wrote it: times here are in the alert area\'s time zone.</p><div class="sc-abody">' + esc(nwsCase(text || 'NWS sent no further text for this alert.', q.event)) +
+                                (inst ? '\n\n<b>Instructions</b>\n' + esc(nwsCase(inst, q.event)) : '') + '</div>';
+                            box.dataset.loaded = '1'; box.hidden = false;
+                            btn.removeAttribute('aria-disabled'); btn.setAttribute('aria-expanded', 'true'); btn.textContent = 'Hide full alert';
+                            box.scrollIntoView({ block: 'nearest' });
+                        } catch (err) {
+                            if (err.name === 'AbortError' || !live('alerts') || !btn.isConnected) return;
+                            btn.removeAttribute('aria-disabled'); btn.textContent = err.message + '. Try again';
+                        }
+                    },
+                    leave() { clearPin(); removeMapStuff(['sc-alert-sel', 'sc-alert-line', 'sc-alert-fill', 'sc-alerts']); el.key.hidden = true; }
+                },
                 pointPreset({
                     id: 'waves', label: 'Waves', coll: 'gfswave-surface-latest', params: 'HTSGW,PERPW,DIRPW',
-                    hint: 'Click open ocean to query the wave model.',
+                    hint: `${Tap} open ocean to query the wave model.`,
                     view: { center: [-135, 30], zoom: 2.6 }, start: [-140, 30],
                     render(v, d, lng, lat) {
                         const h = v('HTSGW'), p = v('PERPW'), dr = v('DIRPW');
@@ -2078,7 +2945,7 @@
                     }
                 }),
                 {
-                    id: 'buoys', label: 'Buoys', hint: 'Click a buoy for its latest observation.', delay: 0,
+                    id: 'buoys', label: 'Buoys', hint: `${Tap} a buoy for its latest observation.`, delay: 0,
                     view: { center: [-125, 36], zoom: 3.4 }, cursor: 'pointer',
                     async enter() {
                         setHint(this.hint);
@@ -2170,7 +3037,7 @@
                             map.getSource('sc-trails').setData(d);
                             const withC = d.features.filter((f) => f.properties.sat != null).length;
                             const capped = d.features.length >= 200;
-                            setReadout(`<h3>${d.features.length}${capped ? '+' : ''} trail segments</h3><p>Click a trail for its name and conditions.</p>` +
+                            setReadout(`<h3>${d.features.length}${capped ? '+' : ''} trail segments</h3><p>${Tap} a trail for its name and conditions.</p>` +
                                 (withC ? '<div class="sc-ramp"><span>dry</span><i style="background:linear-gradient(90deg,#6b8a3d,#c8932e,#a85a2e)"></i><span>wet</span></div>' : '<p class="sc-muted">No soil conditions in this view (outside the Front Range foothills).</p>') +
                                 (capped ? '<p class="sc-muted">Showing the first 200 in view.</p>' : ''));
                         } catch (err) { setError(err); }
@@ -2300,6 +3167,7 @@
                     p.enter();
                 }
             }
+            const fadeChips = bindFade(el.chips);
             function renderChips() {
                 el.chips.setAttribute('aria-label', mode === 'maps' ? 'Layers' : 'Queries');
                 el.chips.innerHTML = '';
@@ -2316,6 +3184,7 @@
                     });
                     el.chips.appendChild(b);
                 });
+                fadeChips();
             }
             function setMode(m, focus) {
                 if (m === mode && el.chips.children.length) return;
@@ -2358,7 +3227,13 @@
 
             setMode('maps');
             setRequest(wmtsTemplate(LAYERS[0]).replace('{z}', '3').replace('{x}', '2').replace('{y}', '3'), { kinds: true });
-            const start = () => { initMap(); };
+            // The map is near the top, so it starts as soon as the page has painted and loaded; it never competes with first paint
+            const start = () => {
+                // window load waits for the deferred script, so by then maplibregl exists (or the CDN failed and initMap says so)
+                const go = initMap;
+                const idle = () => (window.requestIdleCallback ? requestIdleCallback(go, { timeout: 2000 }) : setTimeout(go, 300));
+                if (document.readyState === 'complete') idle(); else window.addEventListener('load', idle, { once: true });
+            };
             if ('IntersectionObserver' in window) {
                 const io = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting)) { io.disconnect(); start(); } }, { rootMargin: '300px' });
                 io.observe(el.map);
