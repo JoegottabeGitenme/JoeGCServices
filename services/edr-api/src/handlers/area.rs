@@ -1019,13 +1019,21 @@ async fn area_query(
             )
             .await;
 
-        return Response::builder()
+        // Which dataset this is: the catalog's match for the request, which is not always the time
+        // that was asked for (nearest scan or step, or the newest when none was). An observation's
+        // run time is its own valid time, so only a forecast says which run it came from.
+        let mut response = Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "image/png")
             .header(
                 header::CACHE_CONTROL,
                 time_selection.cache_control(png_cache_max_age),
             )
+            .header("X-EDR-Valid-Time", rfc3339_utc(read.valid_time));
+        if !model_config.data_type.is_observation() {
+            response = response.header("X-EDR-Reference-Time", rfc3339_utc(read.reference_time));
+        }
+        return response
             .header("X-EDR-Parameter", param_name.as_str())
             .header("X-EDR-Units", &read.metadata.units)
             .header("X-EDR-Min", format!("{}", png.min))
@@ -1283,6 +1291,11 @@ async fn area_query(
             }
         }
     }
+}
+
+/// `time` as RFC 3339 in UTC with a `Z`, to the second (MRMS scans have seconds).
+fn rfc3339_utc(time: DateTime<Utc>) -> String {
+    time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 /// The cells of an area read as a regular lat/lon grid: a 0-360 grid cut at the prime meridian
@@ -1662,6 +1675,14 @@ fn handle_grid_read_error(e: GridProcessorError, context: &str) -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn times_are_rfc3339_utc_with_z() {
+        let t: super::DateTime<super::Utc> = "2026-11-01T15:02:00+00:00".parse().unwrap();
+        assert_eq!(super::rfc3339_utc(t), "2026-11-01T15:02:00Z");
+        let t: super::DateTime<super::Utc> = "2026-10-09T23:00:41.250Z".parse().unwrap();
+        assert_eq!(super::rfc3339_utc(t), "2026-10-09T23:00:41Z");
+    }
+
     #[test]
     fn lightning_translation_threads_every_field() {
         let p = parse_area("coords=-106,39,-105,40&datetime=2026-10-07T20:00:00Z/..&limit=9&window=PT30M&after=7&satellite=goes-west");
