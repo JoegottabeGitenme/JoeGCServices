@@ -4,10 +4,9 @@ description: |
   Tests available GOES-18 (West) satellite layers.
   
   Currently available layers (check GetCapabilities for updates):
-  - goes18_CMI_C01 (Visible Blue)
   - goes18_CMI_C02 (Visible Red)
-  - goes18_CMI_C08 (Water Vapor)
   - goes18_CMI_C13 (IR)
+  (Data diet 2026-10-29: only bands 2 and 13 are ingested.)
 
 base_url: http://localhost:8080
 duration_secs: 60
@@ -16,18 +15,12 @@ warmup_secs: 5
 seed: 55555
 
 layers:
-  # GOES-18 (West) visible bands
-  - name: goes18_CMI_C01
-    style: default
-    weight: 0.8
+  # GOES-18 (West) visible band
   - name: goes18_CMI_C02
     style: default
     weight: 2.0
 
-  # GOES-18 (West) IR bands
-  - name: goes18_CMI_C08
-    style: default
-    weight: 1.0
+  # GOES-18 (West) IR band
   - name: goes18_CMI_C13
     style: default
     weight: 1.5

@@ -2,18 +2,18 @@
   "version": "1.0",
   "metadata": {
     "name": "Geopotential Height Styles",
-    "description": "Styles for geopotential height in decameters (dkm). Standard meteorological unit for upper-air charts. 500mb typically ~540-580 dkm."
+    "description": "Styles for geopotential height in decameters (dkm). Standard meteorological unit for upper-air charts. Data is stored in geopotential meters, so the transform is x 0.1 (5500 gpm = 550 dkm). Colour range and contours are tuned for the 500 mb surface (typically ~540-580 dkm); other pressure levels sit outside it (1000 mb is about 0 dkm, 100 mb about 1650 dkm) and draw in the end colours or without contours."
   },
   "styles": {
     "gradient": {
       "default": true,
       "name": "Geopotential Height",
-      "description": "Geopotential height colored by elevation in decameters (optimized for 500mb: 480-600 dkm range)",
+      "description": "Geopotential height colored by elevation in decameters (tuned for the 500 mb surface: 480-600 dkm range)",
       "type": "gradient",
       "units": "dkm",
       "transform": {
         "type": "linear",
-        "scale": 0.0167,
+        "scale": 0.1,
         "offset": 0
       },
       "range": {
@@ -46,7 +46,7 @@
       "units": "dkm",
       "transform": {
         "type": "linear",
-        "scale": 0.0167,
+        "scale": 0.1,
         "offset": 0
       },
       "contour": {

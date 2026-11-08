@@ -5,7 +5,7 @@ model:
   id: goes18-fulldisk
   name: "GOES-18 Full Disk - GOES West"
   description: "GOES-18 (GOES West) satellite imagery, ABI Full Disk product"
-  enabled: true
+  enabled: false # Disabled 2026-10-29 (data diet): no full disk; retention purges leftovers
 
 # WMS/WMTS dimension configuration
 dimensions:
@@ -43,6 +43,7 @@ schedule:
 retention:
   hours: 3 # Keep 3 hours of imagery for animation loops
   keep_latest_observations: 18 # ~3 hours of observations (updates every ~10 min)
+  purge_when_disabled: true # model is disabled: expire all leftovers (ignored again once enabled: true)
 
 # Precaching configuration - disabled for full disk (large files)
 precaching:

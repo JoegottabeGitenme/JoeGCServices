@@ -6,6 +6,16 @@
 # Mid troposphere: 800, 750, 700, 650, 600, 550, 500, 450, 400, 350 mb
 # Upper troposphere: 300, 250, 200, 150 mb
 # Stratosphere: 100, 70, 50, 30, 20, 10 mb
+#
+# Isobaric (level_code 100) values are written in PASCALS, one `value:` per level, exactly as
+# hrrr.yaml does (850 mb = 85000), with display_template "{value_mb} mb":
+#   - the ingester compares the number with the GRIB2 level value, which is in Pa;
+#   - the downloader turns it into the .idx level string ("85000" -> "850 mb");
+#   - "{value_mb}" divides by 100 for the stored level name ("850 mb").
+# Do not use a `values:` list here: the downloader reads a list as millibars and the ingester as
+# pascals, so a list can only ever be right for one of them. A millibar number (850) is not an
+# error anywhere, it silently selects a different level; this file once did that, and its
+# 10 mb data was stored as "1000 mb". A test fails on any non-pascal value in config/models/.
 
 model:
   id: gfs
@@ -110,27 +120,72 @@ parameters:
     levels:
       - type: isobaric
         level_code: 100
-        values:
-          [
-            1000,
-            975,
-            950,
-            925,
-            900,
-            850,
-            700,
-            500,
-            300,
-            250,
-            200,
-            100,
-            70,
-            50,
-            30,
-            20,
-            10,
-          ]
-        display_template: "{value} mb"
+        value: 100000 # 1000 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 97500 # 975 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 95000 # 950 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500 # 925 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 90000 # 900 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000 # 850 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000 # 700 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000 # 500 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000 # 300 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000 # 250 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 20000 # 200 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 10000 # 100 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 7000 # 70 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 5000 # 50 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 3000 # 30 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 2000 # 20 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 1000 # 10 mb in Pa
+        display_template: "{value_mb} mb"
     units: K
     display_units: °C
     conversion: K_to_C
@@ -173,8 +228,52 @@ parameters:
         display: "10 m above ground"
       - type: isobaric
         level_code: 100
-        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
-        display_template: "{value} mb"
+        value: 100000 # 1000 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 97500 # 975 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 95000 # 950 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500 # 925 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 90000 # 900 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000 # 850 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000 # 700 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000 # 500 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000 # 300 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000 # 250 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 20000 # 200 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 10000 # 100 mb in Pa
+        display_template: "{value_mb} mb"
     units: m/s
     valid_range: [-200, 200] # Wind components can be negative (directional)
 
@@ -193,8 +292,52 @@ parameters:
         display: "10 m above ground"
       - type: isobaric
         level_code: 100
-        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300, 250, 200, 100]
-        display_template: "{value} mb"
+        value: 100000 # 1000 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 97500 # 975 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 95000 # 950 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500 # 925 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 90000 # 900 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000 # 850 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000 # 700 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000 # 500 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000 # 300 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000 # 250 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 20000 # 200 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 10000 # 100 mb in Pa
+        display_template: "{value_mb} mb"
     units: m/s
     valid_range: [-200, 200] # Wind components can be negative (directional)
 
@@ -245,9 +388,60 @@ parameters:
     levels:
       - type: isobaric
         level_code: 100
-        values:
-          [1000, 925, 850, 700, 500, 300, 250, 200, 100, 70, 50, 30, 20, 10]
-        display_template: "{value} mb"
+        value: 100000 # 1000 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500 # 925 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000 # 850 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000 # 700 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000 # 500 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000 # 300 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 25000 # 250 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 20000 # 200 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 10000 # 100 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 7000 # 70 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 5000 # 50 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 3000 # 30 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 2000 # 20 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 1000 # 10 mb in Pa
+        display_template: "{value_mb} mb"
     units: gpm
     valid_range: [-500, 35000] # From below sea level to stratosphere
 
@@ -270,8 +464,40 @@ parameters:
         display: "2 m above ground"
       - type: isobaric
         level_code: 100
-        values: [1000, 975, 950, 925, 900, 850, 700, 500, 300]
-        display_template: "{value} mb"
+        value: 100000 # 1000 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 97500 # 975 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 95000 # 950 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 92500 # 925 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 90000 # 900 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 85000 # 850 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 70000 # 700 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 50000 # 500 mb in Pa
+        display_template: "{value_mb} mb"
+      - type: isobaric
+        level_code: 100
+        value: 30000 # 300 mb in Pa
+        display_template: "{value_mb} mb"
     units: "%"
     valid_range: [0, 100] # Percentage 0-100%
 

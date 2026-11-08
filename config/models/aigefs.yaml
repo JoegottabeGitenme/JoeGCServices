@@ -18,7 +18,7 @@ model:
   id: aigefs
   name: "AIGEFS - AI GFS Ensemble (Mean)"
   description: "NCEP AI GFS Ensemble System Ensemble Mean, 0.25° resolution"
-  enabled: true
+  enabled: false # Disabled 2026-10-29 (data diet): not downloaded, ingested or advertised; retention purges leftovers
 
 # WMS/WMTS dimension configuration
 dimensions:
@@ -58,6 +58,7 @@ schedule:
 retention:
   hours: 48 # Keep 48 hours of data (covers 2+ model runs)
   keep_latest_runs: 2 # Always keep at least 2 complete runs
+  purge_when_disabled: true # model is disabled: expire all leftovers (ignored again once enabled: true)
 
 # Precaching configuration - disabled for now
 precaching:

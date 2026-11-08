@@ -79,6 +79,60 @@ fn test_linear_transform() {
     );
 }
 
+/// GFS stores geopotential height in geopotential metres (gpm); the shipped style shows decameters
+/// (dkm), so its linear transform must be x 0.1. It once was 0.0167, calibrated to 10 mb data that
+/// the ingester had stored (mislabelled) as "1000 mb"; once real levels landed, 500 mb (5500 gpm)
+/// came out as ~92 and the whole layer rendered in the first stop's colour.
+#[test]
+fn test_geopotential_style_is_calibrated_for_gpm() {
+    let path = format!(
+        "{}/../../config/styles/geopotential.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let config = StyleConfig::from_file(&path).expect("config/styles/geopotential.json loads");
+
+    for name in ["gradient", "isolines"] {
+        let style = config.get_style(name).unwrap();
+        let t = style
+            .transform
+            .as_ref()
+            .expect("geopotential styles transform gpm to dkm");
+        assert_eq!(t.transform_type, "linear", "{name}");
+        assert_eq!(t.scale, Some(0.1), "{name}: gpm -> dkm is x 0.1");
+        assert_eq!(t.offset.unwrap_or(0.0), 0.0, "{name}");
+        assert!(
+            (apply_transform(5500.0, Some(t)) - 550.0).abs() < 0.01,
+            "{name}: a 5500 gpm 500 mb surface is 550 dkm"
+        );
+    }
+
+    // The gradient is tuned for 500 mb: heights there land on the intended stops, not on a clamp.
+    let style = config.get_style("gradient").unwrap();
+    let first = style.stops.first().unwrap().color.clone();
+    let last = style.stops.last().unwrap().color.clone();
+    let rgba = |gpm: f32| -> [u8; 4] {
+        let px = apply_style_gradient(&[gpm], 1, 1, style);
+        [px[0], px[1], px[2], px[3]]
+    };
+    let hex = |c: &str| -> [u8; 4] {
+        let v = u32::from_str_radix(c.trim_start_matches('#'), 16).unwrap();
+        [(v >> 16) as u8, (v >> 8) as u8, v as u8, 255]
+    };
+    assert_eq!(rgba(5500.0), hex("#E0F3F8"), "550 dkm is the 550 stop");
+    assert_eq!(rgba(5400.0), hex("#ABD9E9"), "540 dkm is the 540 stop");
+    assert_eq!(rgba(5800.0), hex("#FDAE61"), "580 dkm is the 580 stop");
+    assert_ne!(
+        rgba(5200.0),
+        hex(&first),
+        "a low 500 mb height is not clamped"
+    );
+    assert_ne!(
+        rgba(5900.0),
+        hex(&last),
+        "a high 500 mb height is not clamped"
+    );
+}
+
 #[test]
 fn test_linear_transform_with_offset() {
     let json = r##"{

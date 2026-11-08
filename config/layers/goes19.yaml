@@ -15,23 +15,13 @@ default_bbox:
 # GOES is observation data, not forecast
 dimension_type: observation
 
+# Data diet (2026-10-29): only C02 (red visible) and C13 (clean IR) are downloaded and
+# ingested (source.bands in config/models/goes19.yaml), so only those layers are exposed.
 layers:
   # ==========================================================================
   # Visible Bands
   # ==========================================================================
   
-  - id: goes19_CMI_C01
-    parameter: CMI_C01
-    title: "Blue Visible (0.47µm)"
-    abstract: "GOES-19 ABI Band 1 - Blue visible for aerosol detection"
-    style_file: goes_visible.json
-    units:
-      native: reflectance
-      display: "%"
-    levels:
-      - value: "visible_blue"
-        default: true
-
   - id: goes19_CMI_C02
     parameter: CMI_C02
     title: "Red Visible (0.64µm)"
@@ -42,58 +32,6 @@ layers:
       display: "%"
     levels:
       - value: "visible_red"
-        default: true
-
-  - id: goes19_CMI_C03
-    parameter: CMI_C03
-    title: "Veggie (0.86µm)"
-    abstract: "GOES-19 ABI Band 3 - Near-IR for vegetation"
-    style_file: goes_visible.json
-    units:
-      native: reflectance
-      display: "%"
-    levels:
-      - value: "veggie"
-        default: true
-
-  # ==========================================================================
-  # Water Vapor Bands
-  # ==========================================================================
-  
-  - id: goes19_CMI_C08
-    parameter: CMI_C08
-    title: "Upper-Level Water Vapor (6.2µm)"
-    abstract: "GOES-19 ABI Band 8 - Upper tropospheric water vapor"
-    style_file: goes_ir.json
-    units:
-      native: K
-      display: K
-    levels:
-      - value: "upper_vapor"
-        default: true
-
-  - id: goes19_CMI_C09
-    parameter: CMI_C09
-    title: "Mid-Level Water Vapor (6.9µm)"
-    abstract: "GOES-19 ABI Band 9 - Mid tropospheric water vapor"
-    style_file: goes_ir.json
-    units:
-      native: K
-      display: K
-    levels:
-      - value: "mid_vapor"
-        default: true
-
-  - id: goes19_CMI_C10
-    parameter: CMI_C10
-    title: "Low-Level Water Vapor (7.3µm)"
-    abstract: "GOES-19 ABI Band 10 - Lower tropospheric water vapor"
-    style_file: goes_ir.json
-    units:
-      native: K
-      display: K
-    levels:
-      - value: "low_vapor"
         default: true
 
   # ==========================================================================
@@ -110,16 +48,4 @@ layers:
       display: K
     levels:
       - value: "clean_ir"
-        default: true
-
-  - id: goes19_CMI_C14
-    parameter: CMI_C14
-    title: "Longwave IR (11.2µm)"
-    abstract: "GOES-19 ABI Band 14 - Standard IR window"
-    style_file: goes_ir.json
-    units:
-      native: K
-      display: K
-    levels:
-      - value: "ir_window"
         default: true
