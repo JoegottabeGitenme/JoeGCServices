@@ -37,7 +37,7 @@ A complete weather data ingestion, storage, and visualization system built in Ru
 
 ### ✅ Web Dashboard
 - **Interactive Map Viewer**
-  - Leaflet.js with OSM basemap
+  - Leaflet.js with OpenFreeMap (Light/Dark) and OSM basemaps
   - Layer selection and overlay
   - Real-time layer rendering
 

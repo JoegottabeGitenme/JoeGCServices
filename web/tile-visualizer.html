@@ -6,6 +6,9 @@
     <title>Tile Request Visualization - Weather WMS</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.css" integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.js" integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js" integrity="sha384-tXYNKOHx4T02jMP7YYCtBxPIv1B5gaA5mcVPBzqMp6d7VzWzxJgI2aWF/nJLrQdS" crossorigin="anonymous"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -433,11 +436,18 @@
             preferCanvas: true
         });
 
-        // Add dark tile layer
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-            subdomains: 'abcd',
-            maxZoom: 20
+        // Add dark basemap: OpenFreeMap vector tiles drawn with MapLibre GL (free, no API key).
+        // Their terms require the attribution below; the plugin is given it explicitly because
+        // Leaflet's attribution control cannot read MapLibre's own.
+        L.maplibreGL({
+            style: 'https://tiles.openfreemap.org/styles/dark',
+            maxZoom: 20,
+            attributionControl: {
+                customAttribution:
+                    '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> ' +
+                    '&copy; <a href="https://www.openmaptiles.org/" target="_blank">OpenMapTiles</a> ' +
+                    'Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>'
+            }
         }).addTo(map);
 
         // State

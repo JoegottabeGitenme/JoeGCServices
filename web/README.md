@@ -17,7 +17,7 @@ A web-based dashboard to view and test your Weather WMS server using Leaflet map
 - Query capability indicator
 
 🗺️ **Interactive Map**
-- OpenStreetMap base layer
+- Light, Dark (OpenFreeMap vector tiles via MapLibre GL) and OpenStreetMap base layers
 - WMS layer overlay
 - Support for multiple coordinate systems
 - Responsive design
@@ -100,7 +100,7 @@ The dashboard fetches and parses WMS GetCapabilities XML to extract:
 When you select a layer:
 1. Layer metadata is displayed in the sidebar
 2. The WMS layer is added to the Leaflet map
-3. The map shows the layer with OpenStreetMap as a base layer
+3. The map shows the layer over the Light base map (switch to Dark or OpenStreetMap in the layer control)
 
 ## Configuration
 
@@ -164,7 +164,7 @@ Potential features to add:
 
 - **Frontend**: HTML5, CSS3, JavaScript (ES6+)
 - **Mapping**: Leaflet.js 1.9.4
-- **Base Map**: OpenStreetMap
+- **Base Maps**: OpenFreeMap (Light/Dark, vector, via MapLibre GL 5.24.0 and maplibre-gl-leaflet 0.1.4), OpenStreetMap
 - **Server**: Python http.server or similar
 - **WMS Server**: Custom Rust-based WMS API
 
