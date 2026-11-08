@@ -688,7 +688,8 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         // (GFS 359.75..360, i.e. -0.25..0; GLDAS 179.875..180.125) is inside. Without this GFS
         // answered null for London (-0.12).
         if self.metadata.wraps_longitude() {
-            if !(lat >= grid_bbox.min_lat && lat <= grid_bbox.max_lat) {
+            // rem_euclid would fold NaN/inf into a column; the bbox check below rejects them.
+            if !lon.is_finite() || !(lat >= grid_bbox.min_lat && lat <= grid_bbox.max_lat) {
                 return None;
             }
             let (res_x, res_y) = self.metadata.resolution();

@@ -373,6 +373,18 @@ async fn test_zarr_read_point_across_the_0_360_seam() {
         .expect("-359.5 is 0.5");
     let half = processor.read_point(0.5, 0.0).await.unwrap().expect("0.5");
     assert!((west - half).abs() < 0.001);
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            processor.read_point(bad, 0.0).await.unwrap(),
+            None,
+            "lon {bad}"
+        );
+        assert_eq!(
+            processor.read_point_nearest(bad, 0.0).await.unwrap(),
+            None,
+            "lon {bad}"
+        );
+    }
 }
 
 /// A global grid in -180..180 with cell-centred columns (GLDAS: -179.875..179.875) wraps on both
