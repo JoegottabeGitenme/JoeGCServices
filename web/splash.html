@@ -7,6 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.css" integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.js" integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
     <style>
         /* FolkWeather "paper + manilla folder" theme (design project: styles/paper.css). */
         * {
@@ -349,117 +351,6 @@
             padding: 1.5rem;
         }
 
-        .examples-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1rem;
-            margin-top: 1rem;
-        }
-
-        .example-item {
-            display: block;
-            background: var(--paper-bg);
-            border: 1px solid var(--paper-card-edge);
-            border-radius: 12px;
-            overflow: hidden;
-            color: inherit;
-            text-decoration: none;
-            transition: border-color 0.2s, box-shadow 0.2s;
-        }
-
-        .example-item:hover {
-            color: inherit;
-            border-color: var(--ochre);
-            box-shadow: var(--paper-shadow-soft);
-        }
-
-        .example-img-container {
-            position: relative;
-            aspect-ratio: 16/10;
-            background: var(--paper-card-edge);
-            border-bottom: 1px solid var(--paper-card-edge);
-            overflow: hidden;
-        }
-
-        .example-img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            opacity: 0;
-            transition: opacity 0.3s;
-        }
-
-        .example-img.loaded {
-            opacity: 1;
-        }
-
-        .example-placeholder {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            background: repeating-linear-gradient(135deg, #e8dcc0 0 4px, #f3ecd9 4px 8px);
-            color: var(--ink-3);
-            font-size: 0.8rem;
-        }
-
-        .example-placeholder .spinner {
-            width: 22px;
-            height: 22px;
-            border: 2px solid var(--ink-4);
-            border-top-color: var(--ochre-deep);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 0.5rem;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .example-info {
-            padding: 0.7rem 0.95rem 0.8rem;
-        }
-
-        .example-title {
-            font-family: var(--serif);
-            font-weight: 600;
-            font-size: 0.98rem;
-            margin-bottom: 0.15rem;
-        }
-
-        .example-desc {
-            color: var(--ink-2);
-            font-size: 0.8rem;
-        }
-
-        /* EDR response examples: JSON printed on paper */
-        .edr-examples-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 1rem;
-            margin-top: 1rem;
-        }
-
-        .edr-example-item {
-            background: var(--paper-bg);
-            border: 1px solid var(--paper-card-edge);
-            border-radius: 12px;
-            overflow: hidden;
-            transition: border-color 0.2s, box-shadow 0.2s;
-            text-decoration: none;
-            color: inherit;
-            display: block;
-        }
-
-        .edr-example-item:hover {
-            color: inherit;
-            border-color: var(--ochre);
-            box-shadow: var(--paper-shadow-soft);
-        }
-
         .edr-example-header {
             padding: 0.7rem 0.95rem;
             border-bottom: 1px solid var(--paper-card-edge);
@@ -487,52 +378,6 @@
             white-space: nowrap;
         }
 
-        .edr-response-container {
-            position: relative;
-            background: var(--paper-bg);
-            max-height: 200px;
-            overflow: hidden;
-        }
-
-        .edr-response-container::after {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 40px;
-            background: linear-gradient(rgba(243, 236, 217, 0), var(--paper-bg));
-            pointer-events: none;
-        }
-
-        .edr-response {
-            padding: 0.75rem 0.95rem;
-            font-family: var(--mono);
-            font-size: 0.74rem;
-            line-height: 1.55;
-            color: var(--ink-2);
-            white-space: pre;
-            overflow-x: auto;
-        }
-
-        .edr-response .key {
-            color: var(--go);
-        }
-
-        .edr-response .string {
-            color: var(--rain);
-        }
-
-        .edr-response .number {
-            color: var(--skip);
-        }
-
-        .edr-example-info {
-            padding: 0.7rem 0.95rem 0.8rem;
-            border-top: 1px dashed var(--paper-card-edge);
-            background: var(--paper-card);
-        }
-
         .edr-example-title {
             font-weight: 700;
             font-size: 0.7rem;
@@ -540,19 +385,6 @@
             text-transform: uppercase;
             margin-bottom: 0.25rem;
             color: var(--ochre-deep);
-        }
-
-        .edr-example-desc {
-            color: var(--ink-2);
-            font-size: 0.8rem;
-        }
-
-        .edr-example-endpoint {
-            margin-top: 0.45rem;
-            font-family: var(--mono);
-            font-size: 0.7rem;
-            color: var(--ink-3);
-            word-break: break-all;
         }
 
         /* API endpoints */
@@ -1087,9 +919,7 @@
                 padding: 1rem;
             }
 
-            .cards-grid,
-            .examples-grid,
-            .edr-examples-grid {
+            .cards-grid {
                 grid-template-columns: 1fr;
             }
 
@@ -1105,6 +935,341 @@
             .endpoint-btn {
                 flex: 1;
                 text-align: center;
+            }
+        }
+
+        /* Showcase: one map, two modes */
+        .sc {
+            background: var(--paper-card);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 14px;
+            box-shadow: var(--paper-shadow-soft);
+            padding: 1.25rem 1.5rem 1.5rem;
+        }
+
+        .sc-lede {
+            color: var(--ink-2);
+            font-size: 0.95rem;
+            margin-bottom: 1rem;
+        }
+
+        .sc-tabs {
+            display: inline-flex;
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 999px;
+            background: var(--paper-bg);
+            padding: 3px;
+            margin-bottom: 0.9rem;
+        }
+
+        .sc-tab {
+            font: inherit;
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--ink-2);
+            background: transparent;
+            border: 0;
+            border-radius: 999px;
+            padding: 0.4rem 1rem;
+            cursor: pointer;
+        }
+
+        .sc-tab small {
+            font-weight: 600;
+            font-size: 0.68rem;
+            letter-spacing: 0.06em;
+            color: var(--ink-3);
+            margin-left: 0.3rem;
+        }
+
+        .sc-tab[aria-selected="true"] {
+            background: var(--ochre);
+            color: #fff;
+            box-shadow: var(--paper-shadow-flat);
+        }
+
+        .sc-tab[aria-selected="true"] small {
+            color: rgba(255, 255, 255, 0.85);
+        }
+
+        .sc-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            margin-bottom: 0.9rem;
+        }
+
+        .sc-chip {
+            font: inherit;
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--ink-2);
+            background: var(--paper-bg);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 999px;
+            padding: 0.35rem 0.85rem;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+        .sc-chip:hover {
+            border-color: var(--ochre);
+        }
+
+        .sc-chip[aria-pressed="true"] {
+            background: var(--window-soft);
+            border-color: var(--ochre-deep);
+            color: var(--ink);
+        }
+
+        .sc-body {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 280px;
+            gap: 1rem;
+            align-items: stretch;
+        }
+
+        .sc-mapwrap {
+            min-width: 0;
+        }
+
+        .sc-map {
+            position: relative;
+            height: 450px;
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 10px;
+            overflow: hidden;
+            background: repeating-linear-gradient(135deg, #e8dcc0 0 4px, #f3ecd9 4px 8px);
+        }
+
+        .sc-maploading {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--ink-3);
+            font-size: 0.82rem;
+        }
+
+        .sc-side {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+
+        .sc-readout {
+            background: var(--paper-bg);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 10px;
+            padding: 0.85rem 1rem;
+            font-size: 0.84rem;
+            color: var(--ink-2);
+            flex: 1;
+            overflow-wrap: anywhere;
+        }
+
+        .sc-readout h3 {
+            font-family: var(--serif);
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--ink);
+            margin-bottom: 0.3rem;
+        }
+
+        .sc-readout p {
+            margin-bottom: 0.4rem;
+        }
+
+        .sc-muted {
+            color: var(--ink-3);
+        }
+
+        .sc-err {
+            color: var(--skip);
+            font-weight: 600;
+        }
+
+        .sc-dl {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 0.25rem 0.8rem;
+            margin-top: 0.4rem;
+        }
+
+        .sc-dl dt {
+            color: var(--ink-3);
+        }
+
+        .sc-dl dd {
+            color: var(--ink);
+            font-weight: 600;
+        }
+
+        .sc-hint {
+            font-size: 0.78rem;
+            color: var(--ink-3);
+        }
+
+        .sc-hint button {
+            font: inherit;
+            font-size: 0.78rem;
+            color: var(--ochre-deep);
+            background: none;
+            border: 0;
+            padding: 0;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
+        .sc-ramp {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.7rem;
+            color: var(--ink-3);
+            margin-top: 0.5rem;
+        }
+
+        .sc-ramp i {
+            flex: 1;
+            height: 8px;
+            border-radius: 4px;
+            border: 1px solid var(--paper-card-edge);
+        }
+
+        .sc-request {
+            margin-top: 0.9rem;
+            min-width: 0;
+        }
+
+        .sc-reqbar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .sc-reqlabel {
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--ochre-deep);
+        }
+
+        .sc-kind {
+            display: inline-flex;
+            gap: 0.25rem;
+        }
+
+        .sc-reqactions {
+            margin-left: auto;
+            display: inline-flex;
+            gap: 0.35rem;
+        }
+
+        .sc-mini {
+            font: inherit;
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: var(--ink-2);
+            background: var(--paper-bg);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 6px;
+            padding: 0.15rem 0.55rem;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .sc-mini:hover {
+            border-color: var(--ochre);
+            color: var(--ink);
+        }
+
+        .sc-mini[aria-pressed="true"] {
+            background: var(--window-soft);
+            border-color: var(--ochre-deep);
+        }
+
+        .sc-url {
+            display: block;
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            color: var(--ink-2);
+            background: var(--paper-bg);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 8px;
+            padding: 0.5rem 0.75rem;
+            white-space: nowrap;
+            overflow-x: auto;
+        }
+
+        .sc-resp {
+            margin-top: 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        .sc-resp summary {
+            cursor: pointer;
+            color: var(--ink-2);
+            font-weight: 600;
+        }
+
+        .sc-resp pre {
+            margin-top: 0.4rem;
+            font-family: var(--mono);
+            font-size: 0.72rem;
+            line-height: 1.5;
+            color: var(--ink-2);
+            background: var(--paper-bg);
+            border: 1px solid var(--paper-card-edge);
+            border-radius: 8px;
+            padding: 0.6rem 0.8rem;
+            overflow-x: auto;
+            max-height: 340px;
+        }
+
+        .sc-pin {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--ochre);
+            border: 2px solid #fff;
+            box-shadow: 0 1px 4px rgba(61, 53, 40, 0.5);
+        }
+
+        .sc .maplibregl-ctrl-attrib {
+            font-size: 10px;
+        }
+
+        @media (max-width: 760px) {
+            .sc-body {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .sc-map {
+                height: 320px;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .sc {
+                padding: 1rem;
+            }
+
+            .sc-chips {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                padding-bottom: 0.3rem;
+                scroll-snap-type: x proximity;
+            }
+
+            .sc-chip {
+                flex: none;
+                scroll-snap-align: start;
             }
         }
 
@@ -1145,10 +1310,7 @@
             <nav class="nav-links">
                 <a href="#mcp" class="nav-link">MCP</a>
                 <a href="#services" class="nav-link">Services</a>
-                <a href="#ocean" class="nav-link">Ocean</a>
-                <a href="#trails" class="nav-link">Trails</a>
-                <a href="#examples" class="nav-link">Examples</a>
-                <a href="#edr-png-examples" class="nav-link">EDR PNG</a>
+                <a href="#showcase" class="nav-link">Showcase</a>
                 <a href="#api" class="nav-link">API</a>
             </nav>
         </div>
@@ -1417,852 +1579,45 @@
             </div>
         </section>
 
-        <!-- Ocean Data Section -->
-        <section class="section" id="ocean">
+        <!-- Showcase: one interactive map for the WMS/WMTS layers and EDR queries -->
+        <section class="section" id="showcase">
             <h2 class="section-title">
-                <span class="icon">&#127754;</span>
-                Ocean Data Services
+                <span class="icon">&#128506;</span>
+                See it working
             </h2>
-            <div class="examples-section">
-                <p class="card-description">
-                    Real-time ocean observations and wave forecasts via OGC EDR API. 
-                    Buoy data is ingested continuously; wave model data updates every 6 hours.
-                </p>
-                <div class="edr-examples-grid">
-                    <!-- GFS-Wave Forecast -->
-                    <a href="/edr/collections/gfswave-surface-latest/position?coords=POINT(-122.4 37.8)&parameter-name=HTSGW,PERPW,DIRPW" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#127754;</span>
-                            <span class="location-name">GFS-Wave Forecast</span>
-                            <span class="location-id">WAVEWATCH III</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response"><span class="key">"description"</span>: <span class="string">"Global wave forecasts, 0.25&deg;"</span>,
-<span class="key">"parameters"</span>: [
-  <span class="string">"HTSGW"</span>  - Significant wave height (m)
-  <span class="string">"PERPW"</span>  - Primary wave period (s)
-  <span class="string">"DIRPW"</span>  - Primary wave direction (deg)
-  <span class="string">"WVHGT"</span>  - Wind wave height (m)
-  <span class="string">"WIND"</span>   - Surface wind speed (m/s)
-]
-<span class="key">"update"</span>: <span class="string">"Every 6h (00z/06z/12z/18z)"</span></pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">Wave Forecasts - Global Coverage</div>
-                            <div class="edr-example-desc">Point, area, and radius queries for wave conditions worldwide</div>
-                            <div class="edr-example-endpoint">GET /edr/collections/gfswave-surface-latest/position?coords=POINT(lon lat)</div>
-                        </div>
-                    </a>
-
-                    <!-- NDBC Buoys -->
-                    <a href="/edr/collections/ndbc/locations" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#9875;</span>
-                            <span class="location-name">NDBC Buoy Stations</span>
-                            <span class="location-id">~749 stations</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response"><span class="key">"parameters"</span>: [
-  <span class="string">"wave_height_m"</span>        - Sig wave height
-  <span class="string">"dominant_wave_period_s"</span> - Peak period
-  <span class="string">"mean_wave_direction_deg"</span>- Mean direction
-  <span class="string">"water_temp_k"</span>         - Sea surface temp
-  <span class="string">"wind_speed_ms"</span>        - Wind speed
-  <span class="string">"sea_level_pressure_pa"</span> - Barometric pressure
-  <span class="string">"tide_m"</span>               - Tide level
-]</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">Marine Surface Observations</div>
-                            <div class="edr-example-desc">Real-time buoy, C-MAN, and coastal station data from NDBC</div>
-                            <div class="edr-example-endpoint">GET /edr/collections/ndbc/locations/{station_id}</div>
-                        </div>
-                    </a>
-
-                    <!-- DART Tsunami Buoys -->
-                    <a href="/edr/collections/dart/locations" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#127759;</span>
-                            <span class="location-name">DART Tsunami Buoys</span>
-                            <span class="location-id">~54 stations</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response"><span class="key">"parameters"</span>: [
-  <span class="string">"water_column_height_m"</span> - Absolute depth
-]
-<span class="key">"measurement_modes"</span>: {
-  <span class="string">"T=1"</span>: <span class="string">"Standard (15-min interval)"</span>,
-  <span class="string">"T=2"</span>: <span class="string">"Event mode (1-min interval)"</span>,
-  <span class="string">"T=3"</span>: <span class="string">"Triggered (15-sec interval)"</span>
-}
-<span class="key">"depth_range"</span>: <span class="string">"1000m - 6000m"</span></pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">Deep-Ocean Tsunami Detection</div>
-                            <div class="edr-example-desc">Water column height from DART buoys across Pacific, Atlantic, and Indian Oceans</div>
-                            <div class="edr-example-endpoint">GET /edr/collections/dart/locations/{station_id}?datetime=2026-02-06T00:00:00Z/..</div>
-                        </div>
-                    </a>
+            <div class="sc">
+                <p class="sc-lede">Pick a layer or a query and watch the live services answer. Every request is a plain URL you can copy.</p>
+                <div class="sc-tabs" role="tablist" aria-label="Showcase mode">
+                    <button type="button" role="tab" id="sc-tab-maps" class="sc-tab" aria-selected="true" aria-controls="sc-panel" data-mode="maps">Maps <small>WMS / WMTS</small></button>
+                    <button type="button" role="tab" id="sc-tab-data" class="sc-tab" aria-selected="false" aria-controls="sc-panel" tabindex="-1" data-mode="data">Data <small>EDR</small></button>
                 </div>
-            </div>
-        </section>
-
-        <!-- Trail & Land Conditions Section -->
-        <section class="section" id="trails">
-            <h2 class="section-title">
-                <span class="icon">&#128692;</span>
-                Trail &amp; Land Conditions
-            </h2>
-            <div class="examples-section">
-                <p class="card-description">
-                    OSM-sourced trail geometry (one feature per trail segment, not merged per system),
-                    the raw HRRR soil/snow ingredients, and &mdash; for the Front Range foothills (Fort Collins
-                    to Colorado Springs) so far, with more terrain coverage on the way &mdash; real terrain-downscaled soil moisture,
-                    degree of saturation and a per-trail hourly forecast series,
-                    physics validated against ground-truth data at two independent research sites. This is
-                    an advisory signal, not a rideability judgment or a closure authority.
-                    See the <a href="/edr">API docs</a> for the endpoints, or
-                    <a href="/science.html">the science behind it</a> for
-                    exactly how it works, what's validated, and how far the coverage extends today.
-                </p>
-                <div class="edr-examples-grid">
-                    <!-- Trail geometry bbox query -->
-                    <a href="/edr/collections/trails/items?bbox=-106.05,38.48,-105.90,38.60&limit=10" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#128692;</span>
-                            <span class="location-name">Trails Near Salida, CO</span>
-                            <span class="location-id">bbox query</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response"><span class="key">"type"</span>: <span class="string">"Feature"</span>,
-<span class="key">"id"</span>: <span class="number">105222702</span>,
-<span class="key">"geometry"</span>: {
-  <span class="key">"type"</span>: <span class="string">"LineString"</span>,
-  <span class="key">"coordinates"</span>: [[<span class="number">-105.981</span>, <span class="number">38.543</span>], <span class="string">...</span>]
-},
-<span class="key">"properties"</span>: {
-  <span class="key">"feature_id"</span>: <span class="number">105222702</span>,
-  <span class="key">"feature_class"</span>: <span class="string">"mtb_trail"</span>,
-  <span class="key">"name"</span>: <span class="string">"Tenderfoot Trail"</span>,
-  <span class="key">"active"</span>: <span class="string">true</span>
-}</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">Trail Geometry (OSM)</div>
-                            <div class="edr-example-desc">One feature per OSM way &mdash; segment-level, so part of a trail can show different conditions than the rest once physics lands</div>
-                            <div class="edr-example-endpoint">GET /edr/collections/trails/items?bbox=minLon,minLat,maxLon,maxLat</div>
-                        </div>
-                    </a>
-
-                    <!-- Downscaled trail conditions (WS1 Front Range coverage) -->
-                    <a href="/edr/collections/trails/items?bbox=-105.42,39.93,-105.36,39.98&conditions=latest&limit=5" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#128167;</span>
-                            <span class="location-name">Forsythe Canyon Trail</span>
-                            <span class="location-id">conditions=latest</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response"><span class="key">"type"</span>: <span class="string">"Feature"</span>,
-<span class="key">"id"</span>: <span class="number">956937928</span>,
-<span class="key">"properties"</span>: {
-  <span class="key">"name"</span>: <span class="string">"Forsythe Canyon Trail"</span>,
-  <span class="key">"feature_class"</span>: <span class="string">"mtb_trail"</span>,
-  <span class="key">"conditions"</span>: {
-    <span class="key">"valid_time"</span>: <span class="string">"2026-10-05T22:00:00Z"</span>,
-    <span class="key">"soil_moisture"</span>: <span class="number">0.184</span>,
-    <span class="key">"saturation"</span>: <span class="number">0.42</span>,
-    <span class="key">"frozen_fraction"</span>: <span class="number">0.0</span>,
-    <span class="key">"confidence"</span>: <span class="number">1.0</span>
-  }
-}</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">Downscaled Soil Moisture &amp; Saturation (Front Range)</div>
-                            <div class="edr-example-desc"><code>&amp;conditions=latest</code> merges terrain-downscaled soil moisture and a 0&ndash;1 degree of saturation into any trails query. <code>confidence</code> is the fraction of this segment actually covered by real terrain data (1.0 here); outside the Front Range there is no <code>conditions</code> block at all &mdash; the science page covers the validation behind the physics itself</div>
-                            <div class="edr-example-endpoint">GET /edr/collections/trails/items?bbox=...&amp;conditions=latest</div>
-                        </div>
-                    </a>
-
-                    <!-- Per-trail forecast series -->
-                    <a href="/edr/collections/trails/items/956937928/conditions" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#128200;</span>
-                            <span class="location-name">Forsythe Canyon Trail</span>
-                            <span class="location-id">/conditions</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response"><span class="key">"feature_id"</span>: <span class="number">956937928</span>,
-<span class="key">"conditions"</span>: [
-  { <span class="key">"valid_time"</span>: <span class="string">"2026-10-05T17:00:00Z"</span>,
-    <span class="key">"saturation"</span>: <span class="number">0.40</span>,
-    <span class="key">"frozen_fraction"</span>: <span class="number">0.0</span>, ... },
-  { <span class="key">"valid_time"</span>: <span class="string">"2026-10-05T18:00:00Z"</span>, ... },
-  ...
-]</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">Hourly Forecast Series (per trail)</div>
-                            <div class="edr-example-desc">One point per hour from a few hours ago through the end of the forecast (about a day), each from the newest model run that has it &mdash; the data behind a per-trail forecast chart</div>
-                            <div class="edr-example-endpoint">GET /edr/collections/trails/items/{feature_id}/conditions</div>
-                        </div>
-                    </a>
-
-                    <!-- Trail name search -->
-                    <a href="/edr/collections/trails/items?q=tenderfoot" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#128269;</span>
-                            <span class="location-name">Search: "tenderfoot"</span>
-                            <span class="location-id">?q=</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response"><span class="key">"numberReturned"</span>: <span class="number">3</span>,
-<span class="key">"features"</span>: [
-  { <span class="key">"name"</span>: <span class="string">"Tenderfoot Trail"</span>, <span class="key">"feature_class"</span>: <span class="string">"mtb_trail"</span> },
-  { <span class="key">"name"</span>: <span class="string">"Tenderfoot Trail"</span>, <span class="key">"feature_class"</span>: <span class="string">"mtb_trail"</span> },
-  { <span class="key">"name"</span>: <span class="string">"Tenderfoot Drive"</span>, <span class="key">"feature_class"</span>: <span class="string">"track"</span> }
-]</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">Trail Name Search</div>
-                            <div class="edr-example-desc">Ranked exact &gt; prefix &gt; substring, accent-insensitive. Add <code>&amp;class=mtb_trail</code> to filter by type</div>
-                            <div class="edr-example-endpoint">GET /edr/collections/trails/items?q=tenderfoot</div>
-                        </div>
-                    </a>
-
-                    <!-- Soil moisture & temperature -->
-                    <a href="/edr/collections/hrrr-soil/position?coords=POINT(-105.99%2038.54)&parameter-name=SOILW,TSOIL&z=4" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#128167;</span>
-                            <span class="location-name">Soil Moisture &amp; Temperature</span>
-                            <span class="location-id">hrrr-soil</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response"><span class="key">"ranges"</span>: {
-  <span class="key">"SOILW"</span>: { <span class="key">"values"</span>: [<span class="number">0.1327</span>] },
-  <span class="key">"TSOIL"</span>: { <span class="key">"values"</span>: [<span class="number">297.5</span>] }
-}
-<span class="key">"units"</span>: <span class="string">"SOILW: fraction 0-1, TSOIL: Kelvin"</span>
-<span class="key">"depths (z=cm)"</span>: <span class="string">"0, 1, 4, 10, 30"</span></pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">Soil Moisture &amp; Temperature</div>
-                            <div class="edr-example-desc">HRRR RUC land model, native SI units. TSOIL &le; 273.15K is a practical frozen-ground proxy</div>
-                            <div class="edr-example-endpoint">GET /edr/collections/hrrr-soil/position?coords=POINT(lon lat)&amp;parameter-name=SOILW,TSOIL&amp;z=4</div>
-                        </div>
-                    </a>
-
-                    <!-- Snowpack & precipitation -->
-                    <a href="/edr/collections/hrrr-snow/position?coords=POINT(-105.99%2038.54)&parameter-name=SNOD,WEASD,PRATE,CRAIN,CSNOW" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#10052;</span>
-                            <span class="location-name">Snowpack &amp; Precipitation</span>
-                            <span class="location-id">hrrr-snow</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response"><span class="key">"ranges"</span>: {
-  <span class="key">"SNOD"</span>:  { <span class="key">"values"</span>: [<span class="number">0.0</span>] },
-  <span class="key">"WEASD"</span>: { <span class="key">"values"</span>: [<span class="number">0.0</span>] },
-  <span class="key">"PRATE"</span>: { <span class="key">"values"</span>: [<span class="number">0.0</span>] },
-  <span class="key">"CRAIN"</span>: { <span class="key">"values"</span>: [<span class="number">0.0</span>] },
-  <span class="key">"CSNOW"</span>: { <span class="key">"values"</span>: [<span class="number">0.0</span>] }
-}</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">Snow Depth, SWE &amp; Precip Type</div>
-                            <div class="edr-example-desc">SNOD (m), WEASD (kg/m&sup2; = mm SWE), PRATE (kg/m&sup2;/s), plus mutually-exclusive rain/snow/ice flags &mdash; hourly, 48h forecast</div>
-                            <div class="edr-example-endpoint">GET /edr/collections/hrrr-snow/position?coords=POINT(lon lat)&amp;parameter-name=SNOD,WEASD,PRATE</div>
-                        </div>
-                    </a>
-
-                    <!-- Trailhead one-call forecast proxy -->
-                    <a href="/edr/locations/TH8116742258?collections=hrrr-soil,hrrr-snow" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#129449;</span>
-                            <span class="location-name">F Street Bridge Trailhead</span>
-                            <span class="location-id">TH8116742258</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response"><span class="key">"data"</span>: {
-  <span class="key">"hrrr-soil"</span>: {
-    <span class="key">"valid_time"</span>: <span class="string">"2026-09-22T20:00:00Z"</span>,
-    <span class="key">"parameters"</span>: {
-      <span class="key">"TSOIL"</span>: { <span class="key">"0 cm below ground"</span>: <span class="number">308.1</span> },
-      <span class="key">"SOILW"</span>: { <span class="key">"4 cm below ground"</span>: <span class="number">0.133</span> }
-    }
-  }
-}</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">Trailhead Forecast Proxy</div>
-                            <div class="edr-example-desc">Any location &mdash; trailhead, city, airport &mdash; pulls forecasts from any collection in one call. Trailheads come from the same OSM sync, discoverable via <code>/edr/locations</code></div>
-                            <div class="edr-example-endpoint">GET /edr/locations/{trailhead_id}?collections=hrrr-soil,hrrr-snow</div>
-                        </div>
-                    </a>
+                <div class="sc-chips" id="sc-chips" role="group" aria-label="Layers"></div>
+                <div class="sc-body" id="sc-panel" role="tabpanel" aria-labelledby="sc-tab-maps">
+                    <div class="sc-mapwrap">
+                        <div id="sc-map" class="sc-map"><div class="sc-maploading">Map loads as you scroll&hellip;</div></div>
+                    </div>
+                    <div class="sc-side">
+                        <div class="sc-readout" id="sc-readout" aria-live="polite"></div>
+                        <p class="sc-hint" id="sc-hint"></p>
+                    </div>
                 </div>
-            </div>
-        </section>
-
-        <!-- Examples Section -->
-        <section class="section" id="examples">
-            <h2 class="section-title">
-                <span class="icon">&#127912;</span>
-                Live Examples
-            </h2>
-            <div class="examples-section">
-                <p class="card-description">
-                    Real-time weather data rendered from our WMS service. Click any image to open the full request.
-                </p>
-                <div class="examples-grid">
-                    <!-- GFS Global Temperature -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-1">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=400&HEIGHT=200&FORMAT=image/png"
-                                 alt="GFS Global Temperature"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-1').style.display='none';"
-                                 onerror="document.getElementById('placeholder-1').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">GFS Temperature</div>
-                            <div class="example-desc">Global Forecast System - 2m temperature worldwide</div>
-                        </div>
-                    </a>
-
-                    <!-- HRRR High-Res Temperature -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=hrrr_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=21,-123,48,-61&WIDTH=800&HEIGHT=435&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-2">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=hrrr_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=21,-123,48,-61&WIDTH=400&HEIGHT=218&FORMAT=image/png"
-                                 alt="HRRR Temperature"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-2').style.display='none';"
-                                 onerror="document.getElementById('placeholder-2').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">HRRR Temperature</div>
-                            <div class="example-desc">High-Resolution Rapid Refresh - 3km CONUS</div>
-                        </div>
-                    </a>
-
-                    <!-- GOES-18 CONUS Infrared -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes18_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-175,55,-100&WIDTH=800&HEIGHT=435&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-3">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes18_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-175,55,-100&WIDTH=400&HEIGHT=218&FORMAT=image/png"
-                                 alt="GOES-18 Infrared"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-3').style.display='none';"
-                                 onerror="document.getElementById('placeholder-3').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">GOES-18 CONUS IR</div>
-                            <div class="example-desc">GOES West - Clean Longwave IR (10.3um) - Western US/Pacific</div>
-                        </div>
-                    </a>
-
-                    <!-- GOES-19 CONUS Infrared -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes19_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-105,55,-50&WIDTH=800&HEIGHT=435&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-3b">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=goes19_CMI_C13&STYLES=enhanced&CRS=EPSG:4326&BBOX=15,-105,55,-50&WIDTH=400&HEIGHT=218&FORMAT=image/png"
-                                 alt="GOES-19 Infrared"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-3b').style.display='none';"
-                                 onerror="document.getElementById('placeholder-3b').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">GOES-19 CONUS IR</div>
-                            <div class="example-desc">GOES East - Clean Longwave IR (10.3um) - Eastern US/Atlantic</div>
-                        </div>
-                    </a>
-
-                    <!-- MRMS Radar Reflectivity -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=mrms_REFL&STYLES=enhanced&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-4">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=mrms_REFL&STYLES=enhanced&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=400&HEIGHT=200&FORMAT=image/png"
-                                 alt="MRMS Radar"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-4').style.display='none';"
-                                 onerror="document.getElementById('placeholder-4').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">MRMS Radar</div>
-                            <div class="example-desc">Multi-Radar Multi-Sensor - Reflectivity composite</div>
-                        </div>
-                    </a>
-
-                    <!-- NBM Temperature -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nbm-conus_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-5">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nbm-conus_TMP&STYLES=gradient&CRS=EPSG:4326&BBOX=20,-130,55,-60&WIDTH=400&HEIGHT=200&FORMAT=image/png"
-                                 alt="NBM Temperature"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-5').style.display='none';"
-                                 onerror="document.getElementById('placeholder-5').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">NBM Temperature</div>
-                            <div class="example-desc">National Blend of Models - 2.5km blended forecasts for CONUS</div>
-                        </div>
-                    </a>
-
-                    <!-- GFS-Wave Significant Wave Height -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfswave_HTSGW&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-6">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfswave_HTSGW&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=400&HEIGHT=200&FORMAT=image/png"
-                                 alt="GFS-Wave Significant Wave Height"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-6').style.display='none';"
-                                 onerror="document.getElementById('placeholder-6').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">GFS-Wave Height</div>
-                            <div class="example-desc">WAVEWATCH III - Global significant wave height forecast</div>
-                        </div>
-                    </a>
-
-                    <!-- Sea Surface Temperature -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_SST&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-7">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_SST&STYLES=gradient&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=400&HEIGHT=200&FORMAT=image/png"
-                                 alt="Sea Surface Temperature"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-7').style.display='none';"
-                                 onerror="document.getElementById('placeholder-7').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">Sea Surface Temperature</div>
-                            <div class="example-desc">GFS - Global ocean surface temperature</div>
-                        </div>
-                    </a>
-
-                    <!-- Arctic Sea Ice Concentration -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_ICEC&STYLES=concentration&CRS=EPSG:4326&BBOX=50,-180,90,180&WIDTH=800&HEIGHT=400&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-8">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=gfs_ICEC&STYLES=concentration&CRS=EPSG:4326&BBOX=50,-180,90,180&WIDTH=400&HEIGHT=200&FORMAT=image/png"
-                                 alt="Arctic Sea Ice"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-8').style.display='none';"
-                                 onerror="document.getElementById('placeholder-8').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">Arctic Sea Ice</div>
-                            <div class="example-desc">GFS - Sea ice concentration in the Arctic</div>
-                        </div>
-                    </a>
-
-                    <!-- NLDAS Soil Moisture -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_SoilM_0_10cm&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=800&HEIGHT=388&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-9">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_SoilM_0_10cm&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=400&HEIGHT=194&FORMAT=image/png"
-                                 alt="NLDAS Soil Moisture"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-9').style.display='none';"
-                                 onerror="document.getElementById('placeholder-9').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">NLDAS Soil Moisture</div>
-                            <div class="example-desc">NASA NLDAS-2 Noah - Top 10cm soil moisture over CONUS</div>
-                        </div>
-                    </a>
-
-                    <!-- NLDAS Skin Temperature -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_AvgSurfT&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=800&HEIGHT=388&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-10">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_AvgSurfT&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=400&HEIGHT=194&FORMAT=image/png"
-                                 alt="NLDAS Skin Temperature"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-10').style.display='none';"
-                                 onerror="document.getElementById('placeholder-10').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">NLDAS Skin Temperature</div>
-                            <div class="example-desc">NASA NLDAS-2 Noah - Earth skin temperature over CONUS</div>
-                        </div>
-                    </a>
-
-                    <!-- NLDAS Vegetation (LAI) -->
-                    <a href="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_LAI&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=800&HEIGHT=388&FORMAT=image/png" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-11">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=nldas-noah_LAI&STYLES=gradient&CRS=EPSG:4326&BBOX=25.0625,-124.9375,52.9375,-67.0625&WIDTH=400&HEIGHT=194&FORMAT=image/png"
-                                 alt="NLDAS Leaf Area Index"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-11').style.display='none';"
-                                 onerror="document.getElementById('placeholder-11').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">NLDAS Vegetation</div>
-                            <div class="example-desc">NASA NLDAS-2 Noah - Leaf Area Index over CONUS</div>
-                        </div>
-                    </a>
-                </div>
-            </div>
-        </section>
-
-        <!-- EDR PNG Examples Section -->
-        <section class="section" id="edr-png-examples">
-            <h2 class="section-title">
-                <span class="icon">&#127912;</span>
-                EDR Data PNG Output
-            </h2>
-            <div class="examples-section">
-                <p class="card-description">
-                    EDR area queries can return PNG-encoded data for GPU shader consumption. 
-                    16-bit precision for scientific use, or 8-bit for smaller files. Click any image to open the full request.
-                </p>
-                <div class="examples-grid">
-                    <!-- HRRR Temperature CONUS -->
-                    <a href="/edr/collections/hrrr-height-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=800&height=400" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-edr-1">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/edr/collections/hrrr-height-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=400&height=200"
-                                 alt="HRRR Temperature PNG"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-1').style.display='none';"
-                                 onerror="document.getElementById('placeholder-edr-1').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">HRRR Temperature (8-bit PNG)</div>
-                            <div class="example-desc">Raw data texture for WebGL - CONUS coverage</div>
-                        </div>
-                    </a>
-
-                    <!-- GFS Temperature CONUS -->
-                    <a href="/edr/collections/gfs-height-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=800&height=400" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-edr-2">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/edr/collections/gfs-height-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=400&height=200"
-                                 alt="GFS Temperature PNG"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-2').style.display='none';"
-                                 onerror="document.getElementById('placeholder-edr-2').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">GFS Temperature (8-bit PNG)</div>
-                            <div class="example-desc">Global model data as GPU texture</div>
-                        </div>
-                    </a>
-
-                    <!-- HRRR Surface Pressure -->
-                    <a href="/edr/collections/hrrr-surface/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=PRES&f=png&width=800&height=400" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-edr-3">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/edr/collections/hrrr-surface/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=PRES&f=png&width=400&height=200"
-                                 alt="HRRR Pressure PNG"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-3').style.display='none';"
-                                 onerror="document.getElementById('placeholder-edr-3').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">HRRR Pressure (16-bit PNG)</div>
-                            <div class="example-desc">Full 16-bit precision for accurate values</div>
-                        </div>
-                    </a>
-
-                    <!-- GFS Global -->
-                    <a href="/edr/collections/gfs-height-agl/area?coords=POLYGON((-180%20-60,180%20-60,180%2080,-180%2080,-180%20-60))&parameter-name=TMP&f=png&depth=8&width=800&height=400" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-edr-4">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/edr/collections/gfs-height-agl/area?coords=POLYGON((-180%20-60,180%20-60,180%2080,-180%2080,-180%20-60))&parameter-name=TMP&f=png&depth=8&width=400&height=200"
-                                 alt="GFS Global Temperature PNG"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-4').style.display='none';"
-                                 onerror="document.getElementById('placeholder-edr-4').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">GFS Global Temperature</div>
-                            <div class="example-desc">Worldwide coverage in single request</div>
-                        </div>
-                    </a>
-
-                    <!-- NBM Temperature CONUS -->
-                    <a href="/edr/collections/nbm-conus-2m-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=800&height=400" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-edr-5">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/edr/collections/nbm-conus-2m-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=TMP&f=png&depth=8&width=400&height=200"
-                                 alt="NBM Temperature PNG"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-5').style.display='none';"
-                                 onerror="document.getElementById('placeholder-edr-5').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">NBM Temperature (8-bit PNG)</div>
-                            <div class="example-desc">National Blend of Models - CONUS blend</div>
-                        </div>
-                    </a>
-
-                    <!-- NBM Wind Speed -->
-                    <a href="/edr/collections/nbm-conus-10m-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=WIND&f=png&depth=8&width=800&height=400" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-edr-6">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/edr/collections/nbm-conus-10m-agl/area?coords=POLYGON((-125%2024,-66%2024,-66%2050,-125%2050,-125%2024))&parameter-name=WIND&f=png&depth=8&width=400&height=200"
-                                 alt="NBM Wind Speed PNG"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-6').style.display='none';"
-                                 onerror="document.getElementById('placeholder-edr-6').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">NBM Wind Speed (8-bit PNG)</div>
-                            <div class="example-desc">10m wind speed from National Blend</div>
-                        </div>
-                    </a>
-
-                    <!-- GOES-19 Infrared PNG -->
-                    <a href="/edr/collections/goes19-infrared/area?coords=POLYGON((-105%2020,-65%2020,-65%2050,-105%2050,-105%2020))&parameter-name=CMI_C13&f=png&depth=8&width=800&height=600" target="_blank" class="example-item">
-                        <div class="example-img-container">
-                            <div class="example-placeholder" id="placeholder-edr-7">
-                                <div class="spinner"></div>
-                                <span>Loading...</span>
-                            </div>
-                            <img class="example-img" 
-                                 data-src="/edr/collections/goes19-infrared/area?coords=POLYGON((-105%2020,-65%2020,-65%2050,-105%2050,-105%2020))&parameter-name=CMI_C13&f=png&depth=8&width=400&height=300"
-                                 alt="GOES-19 Infrared PNG"
-                                 onload="this.classList.add('loaded'); document.getElementById('placeholder-edr-7').style.display='none';"
-                                 onerror="document.getElementById('placeholder-edr-7').innerHTML='<span>Data unavailable</span>';">
-                        </div>
-                        <div class="example-info">
-                            <div class="example-title">GOES-19 Infrared (8-bit PNG)</div>
-                            <div class="example-desc">Satellite imagery as data texture</div>
-                        </div>
-                    </a>
-                </div>
-                <p class="card-description" style="margin-top: 1rem; font-size: 0.8rem;">
-                    PNG responses include <code>X-EDR-Min</code>, <code>X-EDR-Max</code>, and <code>X-EDR-Encoding</code> headers for shader decoding.
-                    See <a href="/edr/api.html">API docs</a> for GLSL examples.
-                </p>
-            </div>
-        </section>
-
-        <!-- EDR Examples Section -->
-        <section class="section" id="edr-examples">
-            <h2 class="section-title">
-                <span class="icon">&#128200;</span>
-                EDR Point Queries
-            </h2>
-            <div class="examples-section">
-                <p class="card-description">
-                    OGC API - Environmental Data Retrieval returns weather data as CoverageJSON. Click to see the full response.
-                </p>
-                <div class="edr-examples-grid">
-                    <!-- Denver Airport -->
-                    <a href="/edr/collections/hrrr-surface/locations/KDEN?parameter-name=GUST,VIS,CAPE" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#9992;</span>
-                            <span class="location-name">Denver International</span>
-                            <span class="location-id">KDEN</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response" id="edr-response-1"><span class="key">"parameters"</span>: {
-  <span class="key">"GUST"</span>: { <span class="key">"unit"</span>: <span class="string">"m/s"</span> },
-  <span class="key">"VIS"</span>: { <span class="key">"unit"</span>: <span class="string">"m"</span> },
-  <span class="key">"CAPE"</span>: { <span class="key">"unit"</span>: <span class="string">"J/kg"</span> }
-},
-<span class="key">"ranges"</span>: {
-  <span class="key">"GUST"</span>: { <span class="key">"values"</span>: [<span class="number">5.2</span>] },
-  <span class="key">"VIS"</span>: { <span class="key">"values"</span>: [<span class="number">24140.0</span>] },
-  <span class="key">"CAPE"</span>: { <span class="key">"values"</span>: [<span class="number">0.0</span>] }
-}</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">HRRR Surface Data</div>
-                            <div class="edr-example-desc">Wind gusts, visibility, and CAPE at Denver airport</div>
-                            <div class="edr-example-endpoint">/edr/collections/hrrr-surface/locations/KDEN</div>
-                        </div>
-                    </a>
-
-                    <!-- JFK Airport -->
-                    <a href="/edr/collections/hrrr-isobaric/locations/KJFK?parameter-name=TMP,RH&z=850" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#9992;</span>
-                            <span class="location-name">JFK International</span>
-                            <span class="location-id">KJFK</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response" id="edr-response-2"><span class="key">"domain"</span>: {
-  <span class="key">"axes"</span>: {
-    <span class="key">"x"</span>: { <span class="key">"values"</span>: [<span class="number">-73.7781</span>] },
-    <span class="key">"y"</span>: { <span class="key">"values"</span>: [<span class="number">40.6413</span>] },
-    <span class="key">"z"</span>: { <span class="key">"values"</span>: [<span class="number">850</span>] }
-  }
-},
-<span class="key">"ranges"</span>: {
-  <span class="key">"TMP"</span>: { <span class="key">"values"</span>: [<span class="number">271.5</span>] },
-  <span class="key">"RH"</span>: { <span class="key">"values"</span>: [<span class="number">78.2</span>] }
-}</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">HRRR 850mb Data</div>
-                            <div class="edr-example-desc">Temperature and humidity at pressure level</div>
-                            <div class="edr-example-endpoint">/edr/collections/hrrr-isobaric/locations/KJFK?z=850</div>
-                        </div>
-                    </a>
-
-                    <!-- LAX Airport -->
-                    <a href="/edr/collections/hrrr-surface/locations/KLAX?parameter-name=GUST,PRES,VIS" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#9992;</span>
-                            <span class="location-name">Los Angeles International</span>
-                            <span class="location-id">KLAX</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response" id="edr-response-3"><span class="key">"type"</span>: <span class="string">"Coverage"</span>,
-<span class="key">"domain"</span>: {
-  <span class="key">"domainType"</span>: <span class="string">"Point"</span>,
-  <span class="key">"axes"</span>: {
-    <span class="key">"x"</span>: { <span class="key">"values"</span>: [<span class="number">-118.4085</span>] },
-    <span class="key">"y"</span>: { <span class="key">"values"</span>: [<span class="number">33.9416</span>] }
-  }
-},
-<span class="key">"ranges"</span>: {
-  <span class="key">"PRES"</span>: { <span class="key">"values"</span>: [<span class="number">101325</span>] }
-}</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">HRRR Surface Data</div>
-                            <div class="edr-example-desc">Pressure, gusts, and visibility at LAX</div>
-                            <div class="edr-example-endpoint">/edr/collections/hrrr-surface/locations/KLAX</div>
-                        </div>
-                    </a>
-
-                    <!-- NDBC Buoy -->
-                    <a href="/edr/collections/ndbc/locations/46042" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#9875;</span>
-                            <span class="location-name">Monterey Bay Buoy</span>
-                            <span class="location-id">46042</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response" id="edr-response-4"><span class="key">"properties"</span>: {
-  <span class="key">"location_id"</span>: <span class="string">"46042"</span>,
-  <span class="key">"obs_time"</span>: <span class="string">"2026-02-11T04:50:00Z"</span>,
-  <span class="key">"wave_height_m"</span>: <span class="number">2.4</span>,
-  <span class="key">"dominant_wave_period_s"</span>: <span class="number">12.5</span>,
-  <span class="key">"water_temp_k"</span>: <span class="number">285.9</span>,
-  <span class="key">"wind_speed_ms"</span>: <span class="number">6.2</span>,
-  <span class="key">"sea_level_pressure_pa"</span>: <span class="number">101780</span>
-}</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">NDBC Buoy Observations</div>
-                            <div class="edr-example-desc">Waves, wind, and SST at Monterey Bay</div>
-                            <div class="edr-example-endpoint">/edr/collections/ndbc/locations/46042</div>
-                        </div>
-                    </a>
-
-                    <!-- DART Tsunami Buoy -->
-                    <a href="/edr/collections/dart/locations/21413?limit=5" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#127759;</span>
-                            <span class="location-name">SE Tokyo DART</span>
-                            <span class="location-id">21413</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response" id="edr-response-5"><span class="key">"properties"</span>: {
-  <span class="key">"location_id"</span>: <span class="string">"21413"</span>,
-  <span class="key">"name"</span>: <span class="string">"700NM ESE of Tokyo"</span>,
-  <span class="key">"obs_time"</span>: <span class="string">"2026-02-11T00:00:00Z"</span>,
-  <span class="key">"water_column_height_m"</span>: <span class="number">5780.169</span>,
-  <span class="key">"raw_text"</span>: <span class="string">"T=1 HEIGHT=5780.169"</span>
-}</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">DART Tsunami Buoy</div>
-                            <div class="edr-example-desc">Deep-ocean water column height near Japan</div>
-                            <div class="edr-example-endpoint">/edr/collections/dart/locations/21413</div>
-                        </div>
-                    </a>
-
-                    <!-- GFS-Wave -->
-                    <a href="/edr/collections/gfswave-surface-latest/position?coords=POINT(-122.4 37.8)&parameter-name=HTSGW,PERPW,DIRPW" target="_blank" class="edr-example-item">
-                        <div class="edr-example-header">
-                            <span class="location-icon">&#127754;</span>
-                            <span class="location-name">San Francisco Coast</span>
-                            <span class="location-id">GFS-Wave</span>
-                        </div>
-                        <div class="edr-response-container">
-                            <pre class="edr-response" id="edr-response-6"><span class="key">"parameters"</span>: {
-  <span class="key">"HTSGW"</span>: {
-    <span class="key">"description"</span>: <span class="string">"Sig Wave Height"</span>,
-    <span class="key">"unit"</span>: <span class="string">"m"</span>
-  },
-  <span class="key">"PERPW"</span>: {
-    <span class="key">"description"</span>: <span class="string">"Primary Wave Period"</span>,
-    <span class="key">"unit"</span>: <span class="string">"s"</span>
-  }
-},
-<span class="key">"ranges"</span>: {
-  <span class="key">"HTSGW"</span>: { <span class="key">"values"</span>: [<span class="number">2.8</span>] }
-}</pre>
-                        </div>
-                        <div class="edr-example-info">
-                            <div class="edr-example-title">GFS-Wave Forecast</div>
-                            <div class="edr-example-desc">Wave height, period, and direction off SF coast</div>
-                            <div class="edr-example-endpoint">/edr/collections/gfswave-surface-latest/position</div>
-                        </div>
-                    </a>
+                <div class="sc-request">
+                    <div class="sc-reqbar">
+                        <span class="sc-reqlabel">Request</span>
+                        <span class="sc-kind" id="sc-kind" role="group" aria-label="Request style" hidden>
+                            <button type="button" class="sc-mini" data-kind="wms" aria-pressed="true">WMS</button>
+                            <button type="button" class="sc-mini" data-kind="wmts" aria-pressed="false">WMTS</button>
+                        </span>
+                        <span class="sc-reqactions">
+                            <button type="button" class="sc-mini" id="sc-copy" hidden>Copy</button>
+                            <a class="sc-mini" id="sc-open" href="/edr" target="_blank" rel="noopener">Open</a>
+                        </span>
+                    </div>
+                    <code class="sc-url" id="sc-url" tabindex="0"></code>
+                    <details class="sc-resp" id="sc-resp" hidden>
+                        <summary>Response</summary>
+                        <pre id="sc-resp-pre"></pre>
+                    </details>
                 </div>
             </div>
         </section>
@@ -2488,13 +1843,528 @@
             });
         });
 
-        // Lazy load images
-        document.addEventListener('DOMContentLoaded', function() {
-            const images = document.querySelectorAll('.example-img[data-src]');
-            images.forEach(img => {
-                img.src = img.dataset.src;
+
+        // Showcase: one MapLibre map for WMS/WMTS layers (Maps) and EDR queries (Data)
+        (function () {
+            const root = document.getElementById('showcase');
+            if (!root) return;
+            const $ = (s) => root.querySelector(s);
+            const el = {
+                map: $('#sc-map'), chips: $('#sc-chips'), readout: $('#sc-readout'), hint: $('#sc-hint'),
+                url: $('#sc-url'), copy: $('#sc-copy'), open: $('#sc-open'), kind: $('#sc-kind'),
+                resp: $('#sc-resp'), respPre: $('#sc-resp-pre'), panel: $('#sc-panel')
+            };
+            const tabs = Array.from(root.querySelectorAll('.sc-tab'));
+            const abs = (p) => new URL(p, location.href).href;
+            const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+            const r4 = (n) => (Math.round(n * 1e4) / 1e4).toString();
+            const wrapLng = (l) => ((l + 180) % 360 + 360) % 360 - 180;
+            const fmt = (n, d) => Number(n).toFixed(d == null ? 0 : d);
+            const kToC = (k) => k - 273.15;
+            const kToF = (k) => (k - 273.15) * 9 / 5 + 32;
+            const compass = (deg) => ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'][Math.round(deg / 22.5) % 16];
+            const temp = (k) => `${fmt(kToF(k))} &deg;F <span class="sc-muted">(${fmt(kToC(k))} &deg;C)</span>`;
+            const dl = (rows) => '<dl class="sc-dl">' + rows.filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('') + '</dl>';
+            const utc = (iso) => iso ? new Date(iso).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
+
+            // ---- Layers for Maps mode (WMTS REST tiles; WMS GetMap shown for the current view) ----
+            const LAYERS = [
+                { id: 'mrms_REFL', style: 'enhanced', label: 'MRMS radar', title: 'MRMS radar reflectivity',
+                  note: 'Multi-Radar Multi-Sensor composite over the contiguous US, refreshed every couple of minutes.', bounds: [[-130, 20], [-60, 55]] },
+                { id: 'hrrr_TMP', style: 'gradient', label: 'HRRR temperature', title: 'HRRR 2 m temperature',
+                  note: 'High-Resolution Rapid Refresh, 3 km grid over the contiguous US.', bounds: [[-134.1, 21.1], [-60.9, 52.6]] },
+                { id: 'goes19_CMI_C13', style: 'enhanced', label: 'GOES-19 infrared', title: 'GOES-19 infrared (band 13)',
+                  note: 'Clean longwave window channel, cloud-top and surface temperature, GOES-East.', bounds: [[-130, 12], [-55, 52]] },
+                { id: 'gfs_TMP', style: 'gradient', label: 'GFS temperature', title: 'GFS 2 m temperature',
+                  note: 'Global Forecast System, worldwide coverage.', center: [10, 20], zoom: 1.2 },
+                { id: 'gfswave_HTSGW', style: 'gradient', label: 'Wave height', title: 'GFS-Wave significant wave height',
+                  note: 'Global ocean wave model, metres. Land is left blank.', center: [-30, 25], zoom: 1.4 },
+                { id: 'gfs_ICEC', style: 'concentration', label: 'Sea ice', title: 'GFS sea-ice concentration',
+                  note: 'Fraction of each cell covered by ice, polar regions.', bounds: [[-170, 62], [170, 84]] }
+            ];
+
+            // ---- State ----
+            let map = null, mapReady = false, mode = 'maps', layerIdx = 0, presetId = null, reqKind = 'wms';
+            let curUrl = '', marker = null, activePreset = null;
+            const slots = {};
+            const cleanups = [];
+
+            function abortAll() { Object.keys(slots).forEach((k) => { try { slots[k].abort(); } catch (e) { } delete slots[k]; }); }
+            async function getRes(slot, url, asBlob) {
+                if (slots[slot]) slots[slot].abort();
+                const ctl = slots[slot] = new AbortController();
+                let res;
+                try { res = await fetch(url, { signal: ctl.signal }); }
+                catch (e) { if (e.name === 'AbortError') throw e; throw new Error("Couldn't reach the server: network error"); }
+                if (!res.ok) throw new Error("Couldn't reach the server: " + res.status);
+                return res;
+            }
+            async function getJson(slot, url) { return (await getRes(slot, url)).json(); }
+
+            function setRequest(url, opts) {
+                curUrl = abs(url);
+                el.url.textContent = curUrl;
+                el.open.href = curUrl;
+                el.kind.hidden = !(opts && opts.kinds);
+            }
+            function setReadout(html) { el.readout.innerHTML = html; }
+            function setError(e) { if (e && e.name === 'AbortError') return; setReadout(`<p class="sc-err">${esc(e.message || e)}</p>`); }
+            function setHint(html) { el.hint.innerHTML = html; }
+
+            // Pretty JSON for the Response box: long arrays shortened, number arrays inlined, ~40 lines
+            function shorten(v) {
+                if (Array.isArray(v)) {
+                    const a = v.slice(0, 3).map(shorten);
+                    if (v.length > 3) a.push('… +' + (v.length - 3) + ' more');
+                    return a;
+                }
+                if (v && typeof v === 'object') { const o = {}; Object.keys(v).forEach((k) => { o[k] = shorten(v[k]); }); return o; }
+                return v;
+            }
+            function setResponse(obj) {
+                if (obj == null) { el.resp.hidden = true; return; }
+                let t = JSON.stringify(shorten(obj), null, 2);
+                t = t.replace(/\[\s*(-?[\d.eE+-]+(?:,\s*-?[\d.eE+-]+)*)\s*\]/g, (m, g) => '[' + g.replace(/\s+/g, ' ') + ']');
+                t = t.replace(/\[\s*(\[[^\[\]]*\](?:,\s*\[[^\[\]]*\])*)\s*(?:,\s*"… \+\d+ more")?\s*\]/g, (m) => m.replace(/\s*\n\s*/g, ' '));
+                const lines = t.split('\n');
+                if (lines.length > 40) t = lines.slice(0, 40).join('\n') + '\n… (' + (lines.length - 40) + ' more lines)';
+                el.respPre.textContent = t;
+                el.resp.hidden = false;
+            }
+
+            // ---- Map ----
+            function firstSymbol() {
+                const l = map.getStyle().layers.find((x) => x.type === 'symbol');
+                return l && l.id;
+            }
+            function setPin(lngLat) {
+                if (!marker) {
+                    const d = document.createElement('div'); d.className = 'sc-pin';
+                    marker = new maplibregl.Marker({ element: d });
+                }
+                marker.setLngLat(lngLat).addTo(map);
+            }
+            function clearPin() { if (marker) marker.remove(); }
+            function removeMapStuff(ids) {
+                ids.forEach((i) => { if (map.getLayer(i)) map.removeLayer(i); });
+                ids.forEach((i) => { if (map.getSource(i)) map.removeSource(i); });
+            }
+            function initMap() {
+                if (map) return;
+                if (!window.maplibregl) { el.map.innerHTML = '<div class="sc-maploading">The map library could not be loaded.</div>'; setReadout('<p class="sc-err">Map library unavailable (CDN blocked?)</p>'); return; }
+                el.map.innerHTML = '';
+                map = new maplibregl.Map({
+                    container: el.map,
+                    style: 'https://tiles.openfreemap.org/styles/positron',
+                    center: [-98, 38], zoom: 3, minZoom: 1, maxZoom: 16,
+                    attributionControl: false, dragRotate: false, cooperativeGestures: false
+                });
+                map.touchZoomRotate.disableRotation();
+                map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+                map.addControl(new maplibregl.AttributionControl({ compact: true }));
+                map.on('load', () => { mapReady = true; activate(); });
+                map.on('click', (e) => { const p = currentPreset(); if (mode === 'data' && p && p.click) p.click(e); });
+                let t = null;
+                map.on('moveend', () => {
+                    if (mode === 'maps') { updateMapsRequest(); return; }
+                    const p = currentPreset();
+                    if (p && p.moveend) { clearTimeout(t); t = setTimeout(() => { if (currentPreset() === p) p.moveend(); }, p.delay || 400); }
+                });
+                map.on('error', (e) => {
+                    if (mode === 'maps' && e && e.sourceId === 'wx' && !map._wxErr) {
+                        map._wxErr = true;
+                        const n = el.readout.querySelector('.sc-tilenote');
+                        if (n) { n.className = 'sc-err'; n.textContent = "Some tiles didn't load (" + ((e.error && e.error.status) || 'error') + ')'; }
+                    }
+                });
+            }
+
+            // ---- Maps mode ----
+            function wmtsTemplate(l) { return `/wmts/rest/${l.id}/${l.style}/WebMercatorQuad/{z}/{x}/{y}.png`; }
+            function mercator(lng, lat) {
+                lat = Math.max(-85.0511, Math.min(85.0511, lat));
+                const R = 6378137;
+                return [R * lng * Math.PI / 180, R * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360))];
+            }
+            function updateMapsRequest() {
+                if (mode !== 'maps') return;
+                const l = LAYERS[layerIdx];
+                if (reqKind === 'wmts' || !map) {
+                    const t = abs(wmtsTemplate(l)).replace(/%7B/g, '{').replace(/%7D/g, '}');
+                    curUrl = t; el.url.textContent = t;
+                    el.open.href = abs(wmtsTemplate(l).replace('{z}', '3').replace('{x}', '2').replace('{y}', '3'));
+                    el.kind.hidden = false;
+                    return;
+                }
+                const b = map.getBounds(), c = map.getCanvas().getBoundingClientRect();
+                const sw = mercator(Math.max(-180, b.getWest()), b.getSouth()), ne = mercator(Math.min(180, b.getEast()), b.getNorth());
+                const w = Math.round(Math.min(c.width, 1000)), h = Math.round(Math.min(c.height, 1000));
+                setRequest(`/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${l.id}&STYLES=${l.style}&CRS=EPSG:3857&BBOX=${[sw[0], sw[1], ne[0], ne[1]].map(Math.round).join(',')}&WIDTH=${w}&HEIGHT=${h}&FORMAT=image/png`, { kinds: true });
+            }
+            const narrow = () => (el.map.clientWidth < 500 ? 0.8 : 0);
+            function showLayer(animate) {
+                const l = LAYERS[layerIdx];
+                map._wxErr = false;
+                removeMapStuff(['wx']);
+                map.addSource('wx', { type: 'raster', tiles: [abs(wmtsTemplate(l)).replace(/%7B/g, '{').replace(/%7D/g, '}')], tileSize: 256, minzoom: 0, maxzoom: 8 });
+                map.addLayer({ id: 'wx', type: 'raster', source: 'wx', paint: { 'raster-opacity': 0.8, 'raster-fade-duration': 250 } }, firstSymbol());
+                setReadout(`<h3>${esc(l.title)}</h3><p>${esc(l.note)}</p><p class="sc-tilenote sc-muted">Latest available data, drawn from WMTS tiles.</p>`);
+                setHint('Drag and zoom: the tiles and the request below follow the view.');
+                const opts = { duration: animate ? 1100 : 0, padding: 20 };
+                if (l.bounds) map.fitBounds(l.bounds, opts);
+                else map.easeTo({ center: l.center, zoom: l.zoom - narrow(), duration: opts.duration });
+                updateMapsRequest();
+            }
+
+            // ---- Data mode presets ----
+            function pointPreset(cfg) {
+                return {
+                    id: cfg.id, label: cfg.label, hint: cfg.hint, delay: 0,
+                    view: cfg.view, cursor: 'crosshair',
+                    enter() {
+                        setHint(cfg.hint + ' <button type="button" id="sc-centre">Or query the map centre</button>');
+                        const b = el.hint.querySelector('#sc-centre');
+                        if (b) b.addEventListener('click', () => this.click({ lngLat: map.getCenter() }));
+                        setReadout('<p class="sc-muted">Querying…</p>');
+                        this.click({ lngLat: new maplibregl.LngLat(cfg.start[0], cfg.start[1]) });
+                    },
+                    async click(e) {
+                        const lng = wrapLng(e.lngLat.lng), lat = e.lngLat.lat;
+                        setPin([lng, lat]);
+                        const url = `/edr/collections/${cfg.coll}/position?coords=POINT(${r4(lng)}%20${r4(lat)})&parameter-name=${cfg.params}`;
+                        setRequest(url);
+                        setReadout('<p class="sc-muted">Querying…</p>');
+                        try {
+                            const d = await getJson('q', url);
+                            setResponse(d);
+                            const v = (n) => { const a = d.ranges && d.ranges[n] && d.ranges[n].values; return a && a[0] != null ? a[0] : null; };
+                            setReadout(cfg.render(v, d, lng, lat));
+                        } catch (err) { setError(err); }
+                    },
+                    leave() { clearPin(); }
+                };
+            }
+            const where = (lng, lat) => `${fmt(Math.abs(lat), 2)}&deg;${lat >= 0 ? 'N' : 'S'}, ${fmt(Math.abs(lng), 2)}&deg;${lng >= 0 ? 'E' : 'W'}`;
+            const PRESETS = [
+                pointPreset({
+                    id: 'point', label: 'Forecast at a point', coll: 'hrrr-height-agl', params: 'TMP,UGRD,VGRD',
+                    hint: 'Click the map (contiguous US) to query a point.',
+                    view: { center: [-98, 38.5], zoom: 3.6 }, start: [-105, 39.7],
+                    render(v, d, lng, lat) {
+                        const t = v('TMP'), u = v('UGRD'), w = v('VGRD');
+                        if (t == null) return `<h3>No data here</h3><p>HRRR covers the contiguous US and nearby waters.</p>${dl([['At', where(lng, lat)]])}`;
+                        const sp = Math.hypot(u, w), dir = (Math.atan2(-u, -w) * 180 / Math.PI + 360) % 360;
+                        return `<h3>HRRR at ${where(lng, lat)}</h3>` + dl([
+                            ['Temperature', temp(t)],
+                            ['Wind', `${fmt(sp * 2.23694)} mph from ${compass(dir)} <span class="sc-muted">(${fmt(dir)}&deg;)</span>`],
+                            ['Level', '2 m / 10 m above ground'],
+                            ['Time', 'latest forecast hour']
+                        ]);
+                    }
+                }),
+                pointPreset({
+                    id: 'waves', label: 'Waves', coll: 'gfswave-surface-latest', params: 'HTSGW,PERPW,DIRPW',
+                    hint: 'Click open ocean to query the wave model.',
+                    view: { center: [-135, 30], zoom: 2.6 }, start: [-140, 30],
+                    render(v, d, lng, lat) {
+                        const h = v('HTSGW'), p = v('PERPW'), dr = v('DIRPW');
+                        if (h == null) return `<h3>No wave data here</h3><p>The wave grid covers open water only. Try a spot further offshore.</p>${dl([['At', where(lng, lat)]])}`;
+                        return `<h3>Waves at ${where(lng, lat)}</h3>` + dl([
+                            ['Height', `${fmt(h, 1)} m <span class="sc-muted">(${fmt(h * 3.28084, 1)} ft)</span>`],
+                            ['Period', p == null ? '' : `${fmt(p, 1)} s`],
+                            ['Direction', dr == null ? '' : `from ${compass(dr)} <span class="sc-muted">(${fmt(dr)}&deg;)</span>`],
+                            ['Time', 'latest model run']
+                        ]);
+                    }
+                }),
+                {
+                    id: 'buoys', label: 'Buoys', hint: 'Click a buoy for its latest observation.', delay: 0,
+                    view: { center: [-125, 36], zoom: 3.4 }, cursor: 'pointer',
+                    async enter() {
+                        setHint(this.hint);
+                        setReadout('<p class="sc-muted">Loading stations…</p>');
+                        const url = '/edr/collections/ndbc/locations';
+                        setRequest(url);
+                        try {
+                            const d = await getJson('q', url);
+                            if (!live('buoys')) return;
+                            setResponse(d);
+                            removeMapStuff(['sc-buoys']);
+                            map.addSource('sc-buoys', { type: 'geojson', data: d });
+                            map.addLayer({ id: 'sc-buoys', type: 'circle', source: 'sc-buoys',
+                                paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 2, 3, 8, 6], 'circle-color': '#a37320', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.2, 'circle-opacity': 0.9 } });
+                            setReadout(`<h3>${d.features.length} NDBC stations</h3><p>Ocean buoys, C-MAN and coastal stations.</p>`);
+                            this.pick('46042', [-122.408, 36.787]);
+                        } catch (err) { setError(err); }
+                    },
+                    click(e) {
+                        if (!map.getLayer('sc-buoys')) return;
+                        const pt = [[e.point.x - 8, e.point.y - 8], [e.point.x + 8, e.point.y + 8]];
+                        const f = map.queryRenderedFeatures(pt, { layers: ['sc-buoys'] })[0];
+                        if (f) this.pick(String(f.properties.name), f.geometry.coordinates);
+                    },
+                    async pick(id, ll) {
+                        setPin(ll);
+                        const url = `/edr/collections/ndbc/locations/${encodeURIComponent(id)}`;
+                        setRequest(url);
+                        setReadout(`<h3>Buoy ${esc(id)}</h3><p class="sc-muted">Fetching latest observation…</p>`);
+                        try {
+                            const d = await getJson('obs', url);
+                            setResponse(d);
+                            const fs = (d.features || []).slice().sort((a, b) => String(b.properties.obs_time).localeCompare(String(a.properties.obs_time)));
+                            const p = fs[0] && fs[0].properties;
+                            if (!p) { setReadout(`<h3>Buoy ${esc(id)}</h3><p>No recent observations.</p>`); return; }
+                            const has = (k) => p[k] != null;
+                            setReadout(`<h3>Buoy ${esc(id)}</h3>` + dl([
+                                has('temperature_k') && ['Air', temp(p.temperature_k)],
+                                has('water_temp_k') && ['Water', temp(p.water_temp_k)],
+                                has('wind_speed_ms') && ['Wind', `${fmt(p.wind_speed_ms * 2.23694)} mph` + (has('wind_direction_deg') ? ` from ${compass(p.wind_direction_deg)}` : '') + (has('wind_gust_ms') ? ` <span class="sc-muted">(gusts ${fmt(p.wind_gust_ms * 2.23694)})</span>` : '')],
+                                has('sea_level_pressure_pa') && ['Pressure', `${fmt(p.sea_level_pressure_pa / 100, 1)} hPa`],
+                                ['Observed', utc(p.obs_time)]
+                            ]));
+                        } catch (err) { setError(err); }
+                    },
+                    leave() { clearPin(); removeMapStuff(['sc-buoys']); }
+                },
+                {
+                    id: 'trails', label: 'Trails', delay: 450, cursor: 'pointer',
+                    hint: 'Trail geometry from OSM. Soil saturation (green dry, brown wet) exists for the Front Range foothills only; elsewhere you get geometry alone.',
+                    view: { center: [-105.285, 39.99], zoom: 12.2 },
+                    lookup: {},
+                    enter() {
+                        setHint(this.hint);
+                        setReadout('<p class="sc-muted">Loading trails…</p>');
+                        removeMapStuff(['sc-trail-sel', 'sc-trails']);
+                        map.addSource('sc-trails', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        const lw = ['interpolate', ['linear'], ['zoom'], 10, 1.2, 15, 4];
+                        map.addLayer({ id: 'sc-trails', type: 'line', source: 'sc-trails', layout: { 'line-cap': 'round', 'line-join': 'round' },
+                            paint: { 'line-width': lw, 'line-color': ['case', ['==', ['typeof', ['get', 'sat']], 'number'], ['interpolate', ['linear'], ['coalesce', ['get', 'sat'], 0], 0, '#6b8a3d', 0.5, '#c8932e', 1, '#a85a2e'], '#5b7a8c'] } });
+                        map.addLayer({ id: 'sc-trail-sel', type: 'line', source: 'sc-trails', filter: ['==', ['get', 'fid'], -1],
+                            paint: { 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 15, 8], 'line-color': '#2e2818', 'line-opacity': 0.35 } }, 'sc-trails');
+                    },
+                    async moveend() {
+                        if (map.getZoom() < 11) {
+                            if (!map.getSource('sc-trails')) return;
+                            setReadout('<h3>Zoom in</h3><p>Trails appear at street scale. Zoom in on a trail area to load them.</p>');
+                            map.getSource('sc-trails').setData({ type: 'FeatureCollection', features: [] });
+                            return;
+                        }
+                        const b = map.getBounds();
+                        const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map(r4).join(',');
+                        const url = `/edr/collections/trails/items?bbox=${bbox}&conditions=latest&limit=200`;
+                        setRequest(url);
+                        try {
+                            const d = await getJson('q', url);
+                            if (!live('trails')) return;
+                            setResponse(d);
+                            this.lookup = {};
+                            d.features.forEach((f) => {
+                                const p = f.properties || {};
+                                const fid = p.feature_id != null ? p.feature_id : f.id;
+                                this.lookup[fid] = p;
+                                p.fid = fid;
+                                if (p.conditions && p.conditions.saturation != null) p.sat = p.conditions.saturation;
+                                // MapLibre flattens nested properties; keep only scalars it can use
+                                delete p.tags; delete p.conditions;
+                            });
+                            map.getSource('sc-trails').setData(d);
+                            const withC = d.features.filter((f) => f.properties.sat != null).length;
+                            const capped = d.features.length >= 200;
+                            setReadout(`<h3>${d.features.length}${capped ? '+' : ''} trail segments</h3><p>Click a trail for its name and conditions.</p>` +
+                                (withC ? '<div class="sc-ramp"><span>dry</span><i style="background:linear-gradient(90deg,#6b8a3d,#c8932e,#a85a2e)"></i><span>wet</span></div>' : '<p class="sc-muted">No soil conditions in this view (outside the Front Range foothills).</p>') +
+                                (capped ? '<p class="sc-muted">Showing the first 200 in view.</p>' : ''));
+                        } catch (err) { setError(err); }
+                    },
+                    click(e) {
+                        if (!map.getLayer('sc-trails')) return;
+                        const pt = [[e.point.x - 6, e.point.y - 6], [e.point.x + 6, e.point.y + 6]];
+                        const f = map.queryRenderedFeatures(pt, { layers: ['sc-trails'] })[0];
+                        if (!f) return;
+                        const p = f.properties;
+                        map.setFilter('sc-trail-sel', ['==', ['get', 'fid'], p.fid]);
+                        const cls = String(p.feature_class || '').replace(/_/g, ' ');
+                        const sat = p.sat != null ? Number(p.sat) : null;
+                        setReadout(`<h3>${esc(p.name || 'Unnamed ' + (cls || 'way'))}</h3>` + dl([
+                            ['Type', esc(cls || 'trail')],
+                            sat != null ? ['Saturation', `${fmt(sat * 100)}% <span class="sc-muted">(0% dry, 100% wet)</span>`] : ['Conditions', '<span class="sc-muted">none outside the Front Range</span>'],
+                            p.region ? ['Region', esc(p.region.charAt(0).toUpperCase() + p.region.slice(1))] : null
+                        ]) + '<p class="sc-muted">Advisory model output, not a rideability verdict.</p>');
+                    },
+                    leave() { removeMapStuff(['sc-trail-sel', 'sc-trails']); }
+                },
+                {
+                    id: 'area', label: 'Area image', delay: 600,
+                    hint: 'An HRRR temperature grid for the view, sent as a PNG and coloured here in the browser.',
+                    view: { center: [-100, 38.5], zoom: 4.2 },
+                    enter() { setHint(this.hint); setReadout('<p class="sc-muted">Requesting image…</p>'); },
+                    async moveend() {
+                        const b = map.getBounds();
+                        // HRRR's full extent (its Lambert grid's corners); cells outside the grid come back transparent
+                        const w = Math.max(b.getWest(), -134.1), e = Math.min(b.getEast(), -60.9), s = Math.max(b.getSouth(), 21.1), n = Math.min(b.getNorth(), 52.6);
+                        if (w >= e || s >= n) { setReadout('<h3>Pan back over the US</h3><p>HRRR covers the contiguous US.</p>'); return; }
+                        const cw = Math.min(800, Math.round(map.getCanvas().getBoundingClientRect().width));
+                        const ht = Math.max(64, Math.min(800, Math.round(cw * (n - s) / (e - w))));
+                        const poly = `POLYGON((${r4(w)}%20${r4(s)},${r4(e)}%20${r4(s)},${r4(e)}%20${r4(n)},${r4(w)}%20${r4(n)},${r4(w)}%20${r4(s)}))`;
+                        const url = `/edr/collections/hrrr-height-agl/area?coords=${poly}&parameter-name=TMP&f=png&crop=true&depth=8&width=${cw}&height=${ht}`;
+                        setRequest(url);
+                        try {
+                            const res = await getRes('q', url);
+                            const H = (k) => res.headers.get(k);
+                            const info = { parameter: H('x-edr-parameter'), units: H('x-edr-units'), min: Number(H('x-edr-min')), max: Number(H('x-edr-max')), encoding: H('x-edr-encoding'), bbox: H('x-edr-bbox'), validTime: H('x-edr-valid-time'), referenceTime: H('x-edr-reference-time') };
+                            const bm = await createImageBitmap(await res.blob());
+                            if (!live('area')) return;
+                            const bb = (info.bbox || '').split(',').map(Number);
+                            if (bb.length !== 4 || bb.some(isNaN)) throw new Error('Response had no X-EDR-BBox header');
+                            const out = colorize(bm, info, bb);
+                            if (!live('area')) return;
+                            const coords = [[bb[0], bb[3]], [bb[2], bb[3]], [bb[2], bb[1]], [bb[0], bb[1]]];
+                            const src = map.getSource('sc-area');
+                            if (src) src.updateImage({ url: out, coordinates: coords });
+                            else {
+                                map.addSource('sc-area', { type: 'image', url: out, coordinates: coords });
+                                map.addLayer({ id: 'sc-area', type: 'raster', source: 'sc-area', paint: { 'raster-opacity': 0.82, 'raster-fade-duration': 0 } }, firstSymbol());
+                            }
+                            setResponse({ status: 200, headers: { 'content-type': 'image/png', 'x-edr-parameter': info.parameter, 'x-edr-units': info.units, 'x-edr-min': info.min, 'x-edr-max': info.max, 'x-edr-encoding': info.encoding, 'x-edr-bbox': info.bbox, 'x-edr-valid-time': info.validTime, 'x-edr-reference-time': info.referenceTime } });
+                            const stops = TEMP_STOPS.map((x) => x[1]).join(',');
+                            setReadout(`<h3>HRRR 2 m temperature</h3>` + dl([
+                                ['Units', esc(info.units || '')], ['Scale', `${fmt(info.min)} to ${fmt(info.max)} ${esc(info.units || '')} (black to white)`],
+                                ['Encoding', esc(info.encoding || '')], ['Valid', utc(info.validTime)], ['Run', utc(info.referenceTime)]
+                            ]) + `<div class="sc-ramp"><span>-30&deg;C</span><i style="background:linear-gradient(90deg,${stops})"></i><span>40&deg;C</span></div>` +
+                                '<p class="sc-muted" style="margin-top:.4rem">The PNG is plain grayscale; each pixel is mapped between X-EDR-Min and X-EDR-Max, then given a colour ramp here.</p>');
+                        } catch (err) { setError(err); }
+                    },
+                    leave() { removeMapStuff(['sc-area']); }
+                }
+            ];
+
+            const TEMP_STOPS = [[-30, '#4b3f8f'], [-15, '#4f78b5'], [0, '#7fb6c4'], [10, '#b7d08a'], [20, '#e6cc5a'], [30, '#d9822b'], [40, '#a8402a']];
+            const rgbStops = TEMP_STOPS.map(([t, h]) => [t, parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]);
+            function ramp(c) {
+                if (c <= rgbStops[0][0]) return rgbStops[0].slice(1);
+                for (let i = 1; i < rgbStops.length; i++) {
+                    if (c <= rgbStops[i][0]) {
+                        const a = rgbStops[i - 1], b = rgbStops[i], f = (c - a[0]) / (b[0] - a[0]);
+                        return [a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f];
+                    }
+                }
+                return rgbStops[rgbStops.length - 1].slice(1);
+            }
+            // Grayscale (lat-linear) PNG -> coloured, Web-Mercator-spaced rows so it lines up with the basemap
+            function colorize(bm, info, bb) {
+                const sc = document.createElement('canvas'); sc.width = bm.width; sc.height = bm.height;
+                const sx = sc.getContext('2d'); sx.drawImage(bm, 0, 0);
+                const src = sx.getImageData(0, 0, bm.width, bm.height).data;
+                const my = (lat) => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+                const outH = Math.max(32, Math.min(1000, Math.round(bm.width * (my(bb[3]) - my(bb[1])) / ((bb[2] - bb[0]) * Math.PI / 180))));
+                const oc = document.createElement('canvas'); oc.width = bm.width; oc.height = outH;
+                const ox = oc.getContext('2d'); const od = ox.createImageData(bm.width, outH);
+                const yN = my(bb[3]), yS = my(bb[1]);
+                for (let j = 0; j < outH; j++) {
+                    const lat = (2 * Math.atan(Math.exp(yN + (yS - yN) * (j + 0.5) / outH)) - Math.PI / 2) * 180 / Math.PI;
+                    const sr = Math.max(0, Math.min(bm.height - 1, Math.round((bb[3] - lat) / (bb[3] - bb[1]) * (bm.height - 1))));
+                    for (let i = 0; i < bm.width; i++) {
+                        const si = (sr * bm.width + i) * 4, oi = (j * bm.width + i) * 4;
+                        if (src[si + 3] === 0) continue;
+                        const k = info.min + src[si] / 255 * (info.max - info.min);
+                        const c = ramp(kToC(k));
+                        od.data[oi] = c[0]; od.data[oi + 1] = c[1]; od.data[oi + 2] = c[2]; od.data[oi + 3] = 255;
+                    }
+                }
+                ox.putImageData(od, 0, 0);
+                return oc.toDataURL('image/png');
+            }
+
+            // ---- Wiring ----
+            function currentPreset() { return activePreset; }
+            const live = (id) => !!activePreset && activePreset.id === id;
+            function teardown() {
+                abortAll();
+                const p = activePreset; activePreset = null;
+                if (p && p.leave && map && mapReady) p.leave();
+                if (map && map.getLayer('wx')) removeMapStuff(['wx']);
+                if (map) map.getCanvas().style.cursor = '';
+                el.resp.hidden = true; el.resp.open = false;
+            }
+            function activate() {
+                if (!map || !mapReady) return;
+                teardown();
+                if (mode === 'maps') {
+                    el.kind.hidden = false;
+                    showLayer(true);
+                } else {
+                    const p = PRESETS.find((x) => x.id === presetId);
+                    el.kind.hidden = true;
+                    activePreset = p;
+                    map.getCanvas().style.cursor = p.cursor || '';
+                    map.jumpTo({ center: p.view.center, zoom: p.view.zoom - narrow() });
+                    p.enter();
+                }
+            }
+            function renderChips() {
+                el.chips.setAttribute('aria-label', mode === 'maps' ? 'Layers' : 'Queries');
+                el.chips.innerHTML = '';
+                const items = mode === 'maps' ? LAYERS.map((l, i) => [i, l.label]) : PRESETS.map((p) => [p.id, p.label]);
+                items.forEach(([key, label]) => {
+                    const b = document.createElement('button');
+                    b.type = 'button'; b.className = 'sc-chip'; b.textContent = label;
+                    const on = mode === 'maps' ? key === layerIdx : key === presetId;
+                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+                    b.addEventListener('click', () => {
+                        if (mode === 'maps') layerIdx = key; else presetId = key;
+                        el.chips.querySelectorAll('.sc-chip').forEach((c) => c.setAttribute('aria-pressed', c === b ? 'true' : 'false'));
+                        initMap(); activate();
+                    });
+                    el.chips.appendChild(b);
+                });
+            }
+            function setMode(m, focus) {
+                if (m === mode && el.chips.children.length) return;
+                if (map && mapReady) teardown();
+                mode = m;
+                if (m === 'data' && !presetId) presetId = PRESETS[0].id;
+                tabs.forEach((t) => {
+                    const on = t.dataset.mode === m;
+                    t.setAttribute('aria-selected', on ? 'true' : 'false');
+                    t.tabIndex = on ? 0 : -1;
+                    if (on) { el.panel.setAttribute('aria-labelledby', t.id); if (focus) t.focus(); }
+                });
+                renderChips();
+                if (map && mapReady) activate();
+            }
+            tabs.forEach((t, i) => {
+                t.addEventListener('click', () => setMode(t.dataset.mode));
+                t.addEventListener('keydown', (e) => {
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        setMode(tabs[(i + 1) % tabs.length].dataset.mode, true);
+                    }
+                });
             });
-        });
+            root.querySelectorAll('#sc-kind .sc-mini').forEach((b) => b.addEventListener('click', () => {
+                reqKind = b.dataset.kind;
+                root.querySelectorAll('#sc-kind .sc-mini').forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+                updateMapsRequest();
+            }));
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                el.copy.hidden = false;
+                el.copy.addEventListener('click', () => {
+                    navigator.clipboard.writeText(curUrl).then(() => { el.copy.textContent = 'Copied'; }, () => {
+                        const rng = document.createRange(); rng.selectNodeContents(el.url);
+                        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(rng);
+                        el.copy.textContent = 'Select, then copy';
+                    }).finally(() => setTimeout(() => { el.copy.textContent = 'Copy'; }, 1800));
+                });
+            }
+
+            setMode('maps');
+            setRequest(wmtsTemplate(LAYERS[0]).replace('{z}', '3').replace('{x}', '2').replace('{y}', '3'), { kinds: true });
+            const start = () => { initMap(); };
+            if ('IntersectionObserver' in window) {
+                const io = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting)) { io.disconnect(); start(); } }, { rootMargin: '300px' });
+                io.observe(el.map);
+            } else start();
+            
+        })();
     </script>
 </body>
 </html>
