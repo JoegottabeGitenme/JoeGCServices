@@ -29,6 +29,10 @@ fn end_index(offset_cells: f64, n: usize) -> usize {
     ((offset_cells + 1e-9).floor() + 1.0).clamp(0.0, n as f64) as usize
 }
 
+/// Most chunk fetches one request keeps in flight. Each occupies a blocking-pool thread while
+/// it waits on storage, and holds one decoded chunk in memory.
+const MAX_CONCURRENT_CHUNK_READS: usize = 8;
+
 /// Grid processor implementation using Zarr V3 with sharding.
 ///
 /// This processor efficiently reads grid data by:
@@ -37,7 +41,7 @@ fn end_index(offset_cells: f64, n: usize) -> usize {
 /// 3. Caching decompressed chunks for reuse across requests
 pub struct ZarrGridProcessor<S: ReadableStorageTraits> {
     /// The Zarr array.
-    array: Array<S>,
+    array: Arc<Array<S>>,
     /// Storage path (for cache key generation).
     path: String,
     /// Hash of the path for efficient cache keys.
@@ -92,7 +96,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
 
         let native = NativeGrid::for_model(&metadata.model, metadata.projection);
         Ok(Self {
-            array,
+            array: Arc::new(array),
             path: path.to_string(),
             path_hash,
             metadata,
@@ -163,7 +167,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
 
         let native = NativeGrid::for_model(&metadata.model, metadata.projection);
         Ok(Self {
-            array,
+            array: Arc::new(array),
             path: path.to_string(),
             path_hash,
             metadata,
@@ -395,10 +399,20 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
     }
 
     /// Read and decompress a single chunk (synchronous).
-    fn read_chunk_sync(&self, chunk_x: usize, chunk_y: usize) -> Result<Vec<f32>> {
-        // Cache miss - read from Zarr
-        let (chunk_w, chunk_h) = self.metadata.chunk_shape;
-        let (grid_w, grid_h) = self.metadata.shape;
+    ///
+    /// Blocks on storage I/O (the production storage is an async-to-sync adapter), so callers
+    /// on the async runtime must run it via `spawn_blocking`. An associated function so the
+    /// closure can own what it needs (`'static`).
+    fn read_chunk_sync(
+        array: &Array<S>,
+        path: &str,
+        chunk_shape: (usize, usize),
+        grid_shape: (usize, usize),
+        chunk_x: usize,
+        chunk_y: usize,
+    ) -> Result<Vec<f32>> {
+        let (chunk_w, chunk_h) = chunk_shape;
+        let (grid_w, grid_h) = grid_shape;
 
         // Calculate actual chunk bounds (may be partial at edges)
         let start_col = chunk_x * chunk_w;
@@ -409,7 +423,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         let actual_h = end_row - start_row;
 
         debug!(
-            path = %self.path,
+            path = %path,
             chunk_x = chunk_x,
             chunk_y = chunk_y,
             start_row = start_row,
@@ -426,7 +440,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         )
         .map_err(|e| {
             error!(
-                path = %self.path,
+                path = %path,
                 chunk_x = chunk_x,
                 chunk_y = chunk_y,
                 error = %e,
@@ -435,23 +449,20 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             GridProcessorError::read_failed(e.to_string())
         })?;
 
-        let data: Vec<f32> = self
-            .array
-            .retrieve_array_subset_elements(&subset)
-            .map_err(|e| {
-                error!(
-                    path = %self.path,
-                    chunk_x = chunk_x,
-                    chunk_y = chunk_y,
-                    subset = ?subset,
-                    error = %e,
-                    "Failed to retrieve chunk data from Zarr"
-                );
-                GridProcessorError::read_failed(e.to_string())
-            })?;
+        let data: Vec<f32> = array.retrieve_array_subset_elements(&subset).map_err(|e| {
+            error!(
+                path = %path,
+                chunk_x = chunk_x,
+                chunk_y = chunk_y,
+                subset = ?subset,
+                error = %e,
+                "Failed to retrieve chunk data from Zarr"
+            );
+            GridProcessorError::read_failed(e.to_string())
+        })?;
 
         debug!(
-            path = %self.path,
+            path = %path,
             chunk_x = chunk_x,
             chunk_y = chunk_y,
             data_len = data.len(),
@@ -459,6 +470,17 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
         );
 
         Ok(data)
+    }
+
+    /// Read several chunks concurrently (at most [`MAX_CONCURRENT_CHUNK_READS`] in flight),
+    /// returning them in request order. The first error is returned.
+    async fn read_chunks(&self, chunks: &[(usize, usize)]) -> Result<Vec<Vec<f32>>> {
+        use futures::stream::{StreamExt, TryStreamExt};
+        futures::stream::iter(chunks.iter().copied())
+            .map(|(cx, cy)| self.read_chunk(cx, cy))
+            .buffered(MAX_CONCURRENT_CHUNK_READS)
+            .try_collect()
+            .await
     }
 
     /// Read and decompress a single chunk with caching.
@@ -486,8 +508,17 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             "Chunk cache MISS - fetching from storage"
         );
 
-        // Cache miss - read from Zarr (blocking in spawn_blocking)
-        let data = self.read_chunk_sync(chunk_x, chunk_y)?;
+        // Cache miss - read from Zarr on the blocking pool so the network fetch neither stalls
+        // this task's siblings nor a runtime worker. No cache lock is held across the fetch.
+        let array = Arc::clone(&self.array);
+        let path = self.path.clone();
+        let chunk_shape = self.metadata.chunk_shape;
+        let grid_shape = self.metadata.shape;
+        let data = tokio::task::spawn_blocking(move || {
+            Self::read_chunk_sync(&array, &path, chunk_shape, grid_shape, chunk_x, chunk_y)
+        })
+        .await
+        .map_err(|e| GridProcessorError::read_failed(format!("chunk read task failed: {e}")))??;
 
         // Cache the result
         {
@@ -752,11 +783,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> ZarrGridProcessor<S> {
             })
             .collect();
 
-        let chunk_data =
-            futures::future::join_all(chunks.iter().map(|&(cx, cy)| self.read_chunk(cx, cy)))
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>>>()?;
+        let chunk_data = self.read_chunks(&chunks).await?;
 
         let out_width = cols.end - cols.start;
         let mut output = vec![self.metadata.fill_value; out_width * (rows.end - rows.start)];
@@ -905,18 +932,7 @@ impl<S: ReadableStorageTraits + Send + Sync + 'static> GridProcessor for ZarrGri
         // 2. Read all needed chunks in parallel
         // This significantly reduces latency when multiple chunks are needed
         // (e.g., 4 chunks @ 50ms each: sequential=200ms, parallel=50ms)
-        let chunk_futures: Vec<_> = chunks
-            .iter()
-            .map(|(cx, cy)| self.read_chunk(*cx, *cy))
-            .collect();
-
-        let chunk_results = futures::future::join_all(chunk_futures).await;
-
-        // Collect results, propagating any errors.
-        // Note: We use join_all (not try_join_all) to let all fetches complete even if one fails,
-        // avoiding wasted work. However, we still fail if ANY chunk is missing since we need
-        // all chunks to render a complete tile - partial data would produce incorrect output.
-        let chunk_data: Vec<_> = chunk_results.into_iter().collect::<Result<Vec<_>>>()?;
+        let chunk_data = self.read_chunks(&chunks).await?;
 
         // 3. Assemble chunks into contiguous region
         self.assemble_region(&effective_bbox, &chunks, &chunk_data)
