@@ -1151,15 +1151,22 @@ pub async fn cleanup_run_handler(Extension(state): Extension<Arc<AppState>>) -> 
     let cleanup_task = retention::CleanupTask::new(state.retention_context(), config);
 
     match cleanup_task.run_once().await {
-        Ok(stats) => Json(CleanupRunResponse {
-            success: true,
-            message: "Cleanup completed successfully".to_string(),
-            marked_expired: stats.marked_expired,
-            files_deleted: stats.files_deleted,
-            records_deleted: stats.records_deleted,
-            // Models skipped because their expiry marking failed count as errors too.
-            errors: stats.delete_errors + stats.mark_errors,
-        }),
+        Ok(stats) => {
+            // Exported via the recorder; these only reflect runs triggered through this
+            // endpoint on this replica (the periodic loop runs in the ingester).
+            metrics::gauge!("retention_last_run_timestamp_seconds")
+                .set(Utc::now().timestamp() as f64);
+            metrics::counter!("retention_datasets_deleted_total").increment(stats.records_deleted);
+            Json(CleanupRunResponse {
+                success: true,
+                message: "Cleanup completed successfully".to_string(),
+                marked_expired: stats.marked_expired,
+                files_deleted: stats.files_deleted,
+                records_deleted: stats.records_deleted,
+                // Models skipped because their expiry marking failed count as errors too.
+                errors: stats.delete_errors + stats.mark_errors,
+            })
+        }
         Err(e) => {
             error!(error = %e, "Manual cleanup failed");
             Json(CleanupRunResponse {

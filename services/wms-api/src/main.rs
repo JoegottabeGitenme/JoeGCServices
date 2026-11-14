@@ -91,7 +91,25 @@ async fn async_main(args: Args) -> Result<()> {
     tracing::subscriber::set_global_default(subscriber)?;
 
     // Initialize Prometheus metrics exporter
+    // Latency buckets (milliseconds) for every `*_duration_ms` histogram, and seconds for
+    // any `*_seconds` histogram; other histograms keep the default summary rendering.
+    const DURATION_MS_BUCKETS: &[f64] = &[
+        1.0, 2.5, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0,
+    ];
+    const DURATION_SECONDS_BUCKETS: &[f64] = &[
+        0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
+    ];
     let prometheus_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            metrics_exporter_prometheus::Matcher::Suffix("_duration_ms".to_string()),
+            DURATION_MS_BUCKETS,
+        )
+        .expect("valid duration_ms buckets")
+        .set_buckets_for_metric(
+            metrics_exporter_prometheus::Matcher::Suffix("_seconds".to_string()),
+            DURATION_SECONDS_BUCKETS,
+        )
+        .expect("valid seconds buckets")
         .install_recorder()
         .expect("Failed to install Prometheus recorder");
 
