@@ -133,7 +133,7 @@ test_cache_invalidation() {
     
     # Trigger config reload
     log_info "  Triggering config reload..."
-    local reload_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/api/config/reload")
+    local reload_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'X-Admin-Request: 1' "$BASE_URL/api/config/reload")
     
     if [ "$reload_status" != "200" ]; then
         log_error "Config reload failed with status $reload_status"

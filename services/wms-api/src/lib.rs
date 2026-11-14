@@ -3,6 +3,7 @@
 //! This module exposes the internal modules for testing purposes.
 
 pub mod admin;
+pub mod admin_guard;
 pub mod capabilities_cache;
 pub mod chunk_warming;
 pub mod cite;
@@ -26,5 +27,4 @@ pub mod warming;
 // - handlers::metrics - Health and metrics handlers
 // - handlers::validation - Validation handlers
 // - handlers::cache - Cache management handlers
-// - handlers::benchmarks - Benchmark handlers
 // - handlers::common - Shared utilities

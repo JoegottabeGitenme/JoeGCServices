@@ -52,10 +52,9 @@ The production deployment uses:
 | `/wms` | No | Yes | WMS/WMTS API |
 | `/wmts` | No | Yes | WMTS API |
 | `/edr` | No | Yes | EDR API |
-| `/admin` | Yes | No | Admin dashboard |
+| `/admin`, `/ops.html` | Yes | No | Map viewer and ops actions page |
 | `/grafana/` | Yes | No | Monitoring |
-| `/minio/` | Yes | No | Object storage console |
-| `/downloader/` | Yes | No | Download status |
+| `/downloader/downloads`, `/downloader/retry` | Yes | No | Failed download list and retry (used by the ops page) |
 
 ## Prerequisites
 
@@ -330,7 +329,7 @@ The deployment includes a public splash page at the root URL (`/`) that provides
 - Example EDR queries with sample responses
 - API endpoint documentation
 
-The full admin dashboard is available at `/admin` (requires authentication).
+The map viewer is at `/admin` and the ops actions page at `/ops.html` (both require authentication). Monitoring is in Grafana at `/grafana/`.
 
 ## Monitoring
 

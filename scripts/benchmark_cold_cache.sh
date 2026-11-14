@@ -192,7 +192,7 @@ reset_caches() {
             timeout 5 docker exec "$REDIS_CONTAINER" redis-cli FLUSHALL > /dev/null 2>&1 || true
         fi
         # Clear L1 cache via API
-        curl -s -X POST "$API_URL/api/cache/clear" > /dev/null 2>&1 || true
+        curl -s -X POST -H 'X-Admin-Request: 1' "$API_URL/api/cache/clear" > /dev/null 2>&1 || true
     }
     
     # Brief pause to let system settle

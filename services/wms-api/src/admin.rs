@@ -230,57 +230,6 @@ pub struct IngestionLogQuery {
 }
 
 // ============================================================================
-// Shredding Preview Types
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ShredPreviewResponse {
-    pub model_id: String,
-    pub model_name: String,
-    pub source_type: String,
-    pub parameters_to_extract: Vec<ShredParameter>,
-    pub total_extractions: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ShredParameter {
-    pub name: String,
-    pub description: String,
-    pub levels: Vec<ShredLevel>,
-    pub style: String,
-    pub units: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ShredLevel {
-    pub level_type: String,
-    pub value: Option<String>,
-    pub display: String,
-    pub storage_path_template: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ShredPreviewQuery {
-    pub model: String,
-}
-
-// ============================================================================
-// Config Update Types
-// ============================================================================
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateConfigRequest {
-    pub yaml: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct UpdateConfigResponse {
-    pub success: bool,
-    pub message: String,
-    pub validation_errors: Vec<String>,
-}
-
-// ============================================================================
 // Ingest Request/Response Types
 // ============================================================================
 
@@ -803,70 +752,6 @@ pub async fn ingestion_active_handler(
     }
 }
 
-/// GET /admin/preview-shred - Preview what parameters will be extracted for a model
-pub async fn preview_shred_handler(
-    Extension(_state): Extension<Arc<AppState>>,
-    Query(params): Query<ShredPreviewQuery>,
-) -> impl IntoResponse {
-    info!("Admin: Preview shredding for model: {}", params.model);
-
-    match build_shred_preview(&params.model).await {
-        Ok(Some(preview)) => Json(preview).into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            format!("Model '{}' not found", params.model),
-        )
-            .into_response(),
-        Err(e) => {
-            warn!("Failed to build shred preview: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to build preview: {}", e),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// PUT /admin/config/models/:id - Update model configuration
-pub async fn update_model_config_handler(
-    Extension(_state): Extension<Arc<AppState>>,
-    Path(model_id): Path<String>,
-    Json(payload): Json<UpdateConfigRequest>,
-) -> impl IntoResponse {
-    info!("Admin: Updating config for model: {}", model_id);
-
-    // Validate YAML syntax
-    let validation_errors = validate_model_yaml(&payload.yaml);
-    if !validation_errors.is_empty() {
-        return Json(UpdateConfigResponse {
-            success: false,
-            message: "Validation failed".to_string(),
-            validation_errors,
-        })
-        .into_response();
-    }
-
-    // Save the config
-    match save_model_yaml(&model_id, &payload.yaml).await {
-        Ok(()) => Json(UpdateConfigResponse {
-            success: true,
-            message: format!("Configuration for '{}' saved successfully", model_id),
-            validation_errors: vec![],
-        })
-        .into_response(),
-        Err(e) => {
-            warn!("Failed to save model config: {}", e);
-            Json(UpdateConfigResponse {
-                success: false,
-                message: format!("Failed to save: {}", e),
-                validation_errors: vec![],
-            })
-            .into_response()
-        }
-    }
-}
-
 /// POST /admin/ingest - Proxy ingestion request to ingester service
 ///
 /// This endpoint is called by the downloader service after successfully
@@ -1048,260 +933,6 @@ async fn load_model_yaml(model_id: &str) -> anyhow::Result<Option<String>> {
 
     let contents = fs::read_to_string(&config_path)?;
     Ok(Some(contents))
-}
-
-/// Save YAML content for a model
-async fn save_model_yaml(model_id: &str, yaml_content: &str) -> anyhow::Result<()> {
-    use std::fs;
-    use std::path::Path;
-
-    let config_path = Path::new("config/models").join(format!("{}.yaml", model_id));
-
-    // Create backup of existing file
-    if config_path.exists() {
-        let backup_path = Path::new("config/models").join(format!("{}.yaml.bak", model_id));
-        fs::copy(&config_path, &backup_path)?;
-    }
-
-    fs::write(&config_path, yaml_content)?;
-    Ok(())
-}
-
-/// Validate YAML content for a model configuration
-fn validate_model_yaml(yaml_content: &str) -> Vec<String> {
-    let mut errors = Vec::new();
-
-    // Check YAML syntax
-    let yaml: serde_yaml::Value = match serde_yaml::from_str(yaml_content) {
-        Ok(v) => v,
-        Err(e) => {
-            errors.push(format!("YAML syntax error: {}", e));
-            return errors;
-        }
-    };
-
-    // Check required sections
-    if yaml.get("model").is_none() {
-        errors.push("Missing required section: 'model'".to_string());
-    } else {
-        let model = yaml.get("model").unwrap();
-        if model.get("id").is_none() {
-            errors.push("Missing required field: 'model.id'".to_string());
-        }
-        if model.get("name").is_none() {
-            errors.push("Missing required field: 'model.name'".to_string());
-        }
-    }
-
-    if yaml.get("source").is_none() {
-        errors.push("Missing required section: 'source'".to_string());
-    } else {
-        let source = yaml.get("source").unwrap();
-        if source.get("type").is_none() {
-            errors.push("Missing required field: 'source.type'".to_string());
-        }
-    }
-
-    if yaml.get("grid").is_none() {
-        errors.push("Missing required section: 'grid'".to_string());
-    } else {
-        let grid = yaml.get("grid").unwrap();
-        if grid.get("projection").is_none() {
-            errors.push("Missing required field: 'grid.projection'".to_string());
-        }
-    }
-
-    if yaml.get("schedule").is_none() {
-        errors.push("Missing required section: 'schedule'".to_string());
-    }
-
-    // Check parameters array
-    if let Some(params) = yaml.get("parameters") {
-        if let Some(params_seq) = params.as_sequence() {
-            for (i, param) in params_seq.iter().enumerate() {
-                if param.get("name").is_none() {
-                    errors.push(format!(
-                        "Parameter {} missing required field: 'name'",
-                        i + 1
-                    ));
-                }
-            }
-        }
-    }
-
-    errors
-}
-
-/// Build shredding preview from model configuration
-async fn build_shred_preview(model_id: &str) -> anyhow::Result<Option<ShredPreviewResponse>> {
-    use std::fs;
-    use std::path::Path;
-
-    let config_path = Path::new("config/models").join(format!("{}.yaml", model_id));
-
-    if !config_path.exists() {
-        return Ok(None);
-    }
-
-    let contents = fs::read_to_string(&config_path)?;
-    let yaml: serde_yaml::Value = serde_yaml::from_str(&contents)?;
-
-    let model = yaml.get("model");
-    let source = yaml.get("source");
-
-    let model_name = model
-        .and_then(|m| m.get("name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or(model_id)
-        .to_string();
-
-    let source_type = source
-        .and_then(|s| s.get("type"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    let mut parameters_to_extract = Vec::new();
-    let mut total_extractions = 0;
-
-    if let Some(params) = yaml.get("parameters") {
-        if let Some(params_seq) = params.as_sequence() {
-            for param in params_seq {
-                let name = param
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-
-                let description = param
-                    .get("description")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                let style = param
-                    .get("style")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("default")
-                    .to_string();
-
-                let units = param
-                    .get("units")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                let mut levels = Vec::new();
-
-                if let Some(levels_val) = param.get("levels") {
-                    if let Some(levels_seq) = levels_val.as_sequence() {
-                        for level in levels_seq {
-                            let level_type = level
-                                .get("type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("surface")
-                                .to_string();
-
-                            // Handle single value or array of values
-                            if let Some(value) = level.get("value") {
-                                let display = level
-                                    .get("display")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(&format!("{:?}", value))
-                                    .to_string();
-
-                                let value_str = value
-                                    .as_i64()
-                                    .map(|v| v.to_string())
-                                    .or_else(|| value.as_str().map(|s| s.to_string()));
-
-                                let storage_path = format!(
-                                    "shredded/{}/{{}}/{}_{}/f{{}}.grib2",
-                                    model_id,
-                                    name,
-                                    display.replace(' ', "_")
-                                );
-
-                                levels.push(ShredLevel {
-                                    level_type: level_type.clone(),
-                                    value: value_str,
-                                    display,
-                                    storage_path_template: storage_path,
-                                });
-                                total_extractions += 1;
-                            } else if let Some(values) = level.get("values") {
-                                if let Some(values_seq) = values.as_sequence() {
-                                    let display_template = level
-                                        .get("display_template")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("{value}");
-
-                                    for val in values_seq {
-                                        if let Some(v) = val.as_i64() {
-                                            let display =
-                                                display_template.replace("{value}", &v.to_string());
-                                            let storage_path = format!(
-                                                "shredded/{}/{{}}/{}_{}/f{{}}.grib2",
-                                                model_id,
-                                                name,
-                                                display.replace(' ', "_")
-                                            );
-
-                                            levels.push(ShredLevel {
-                                                level_type: level_type.clone(),
-                                                value: Some(v.to_string()),
-                                                display,
-                                                storage_path_template: storage_path,
-                                            });
-                                            total_extractions += 1;
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Level with no specific value (e.g., surface, MSL)
-                                let display = level
-                                    .get("display")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or(&level_type)
-                                    .to_string();
-
-                                let storage_path = format!(
-                                    "shredded/{}/{{}}/{}_{}/f{{}}.grib2",
-                                    model_id,
-                                    name,
-                                    display.replace(' ', "_")
-                                );
-
-                                levels.push(ShredLevel {
-                                    level_type: level_type.clone(),
-                                    value: None,
-                                    display,
-                                    storage_path_template: storage_path,
-                                });
-                                total_extractions += 1;
-                            }
-                        }
-                    }
-                }
-
-                parameters_to_extract.push(ShredParameter {
-                    name,
-                    description,
-                    levels,
-                    style,
-                    units,
-                });
-            }
-        }
-    }
-
-    Ok(Some(ShredPreviewResponse {
-        model_id: model_id.to_string(),
-        model_name,
-        source_type,
-        parameters_to_extract,
-        total_extractions,
-    }))
 }
 
 // ============================================================================
@@ -1520,15 +1151,22 @@ pub async fn cleanup_run_handler(Extension(state): Extension<Arc<AppState>>) -> 
     let cleanup_task = retention::CleanupTask::new(state.retention_context(), config);
 
     match cleanup_task.run_once().await {
-        Ok(stats) => Json(CleanupRunResponse {
-            success: true,
-            message: "Cleanup completed successfully".to_string(),
-            marked_expired: stats.marked_expired,
-            files_deleted: stats.files_deleted,
-            records_deleted: stats.records_deleted,
-            // Models skipped because their expiry marking failed count as errors too.
-            errors: stats.delete_errors + stats.mark_errors,
-        }),
+        Ok(stats) => {
+            // Exported via the recorder; these only reflect runs triggered through this
+            // endpoint on this replica (the periodic loop runs in the ingester).
+            metrics::gauge!("retention_last_run_timestamp_seconds")
+                .set(Utc::now().timestamp() as f64);
+            metrics::counter!("retention_datasets_deleted_total").increment(stats.records_deleted);
+            Json(CleanupRunResponse {
+                success: true,
+                message: "Cleanup completed successfully".to_string(),
+                marked_expired: stats.marked_expired,
+                files_deleted: stats.files_deleted,
+                records_deleted: stats.records_deleted,
+                // Models skipped because their expiry marking failed count as errors too.
+                errors: stats.delete_errors + stats.mark_errors,
+            })
+        }
         Err(e) => {
             error!(error = %e, "Manual cleanup failed");
             Json(CleanupRunResponse {

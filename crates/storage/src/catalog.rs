@@ -449,6 +449,34 @@ impl Catalog {
             .collect())
     }
 
+    /// Per-model freshness for monitoring: available dataset count, newest reference
+    /// (run/valid) time and newest `ingested_at`, in a single aggregate query.
+    pub async fn get_model_freshness(&self) -> WmsResult<Vec<ModelFreshness>> {
+        let rows =
+            sqlx::query_as::<_, (String, i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
+                "SELECT model, COUNT(*), MAX(reference_time), MAX(ingested_at) \
+             FROM datasets WHERE status = 'available' \
+             GROUP BY model ORDER BY model",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| WmsError::DatabaseError(format!("Query failed: {}", e)))?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(model, dataset_count, latest_reference_time, latest_ingested_at)| {
+                    ModelFreshness {
+                        model,
+                        dataset_count: dataset_count.max(0) as u64,
+                        latest_reference_time,
+                        latest_ingested_at,
+                    }
+                },
+            )
+            .collect())
+    }
+
     /// Get the most recent dataset for a layer.
     pub async fn get_latest(
         &self,
@@ -2158,6 +2186,19 @@ pub struct ModelStats {
     pub last_ingest: Option<DateTime<Utc>>,
     /// List of parameter names
     pub parameters: Vec<String>,
+}
+
+/// Per-model freshness summary (see [`Catalog::get_model_freshness`]).
+#[derive(Debug, Clone)]
+pub struct ModelFreshness {
+    /// Model identifier (e.g., "gfs", "hrrr")
+    pub model: String,
+    /// Number of available datasets
+    pub dataset_count: u64,
+    /// Newest reference time (model run time / observation time)
+    pub latest_reference_time: Option<DateTime<Utc>>,
+    /// Newest time a dataset row was ingested
+    pub latest_ingested_at: Option<DateTime<Utc>>,
 }
 
 /// Internal row type for database queries.

@@ -16,7 +16,7 @@ RESULTS_JSON="${OUTPUT_DIR}/raw/auth-check.json"
 echo "[AUTH] Testing authentication enforcement..."
 
 # Protected endpoints that MUST require auth
-PROTECTED_ENDPOINTS="/admin /api/metrics /grafana/ /downloader/ /loadtest"
+PROTECTED_ENDPOINTS="/admin /api/metrics /grafana/ /downloader/ /loadtest-reports/"
 
 # Counters
 TOTAL_TESTS=0

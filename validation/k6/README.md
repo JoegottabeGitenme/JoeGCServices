@@ -66,8 +66,7 @@ docker run --rm -u "$(id -u):$(id -g)" --network shared-services \
 - Files: `/opt/weather-wms/loadtest/results/<run>/report.{md,html,json}`
 - Published (admin basic auth): `https://folkweather.com/loadtest-reports/`
   (latest nightly = `index.html`, latest probe = `probe.html`,
-  past nightlies under `history/`). Note: `/loadtest` (no suffix) is the
-  older Rust load-test dashboard proxied to wms-api.
+  past nightlies under `history/`).
 - History/regression data: `results/{nightly,probe}-history.jsonl`
 
 ## Schedule control

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ops - Weather WMS</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; overflow: auto; }
+        .ops { max-width: 960px; margin: 0 auto; padding: 1.5rem; color: #e5e7eb; }
+        .ops-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+        .ops-header h1 { font-size: 1.6rem; }
+        .ops a { color: #60a5fa; }
+        .ops-card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+        .ops-card h2 { font-size: 1.1rem; margin-bottom: 0.25rem; }
+        .ops-card p.desc { color: #9ca3af; font-size: 0.85rem; margin-bottom: 0.75rem; }
+        .ops-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
+        .ops button { background: #2563eb; color: #fff; border: 0; border-radius: 4px; padding: 0.4rem 0.9rem; cursor: pointer; font-size: 0.85rem; }
+        .ops button.danger { background: #b91c1c; }
+        .ops button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .ops pre.out { background: rgba(0, 0, 0, 0.35); border-radius: 4px; padding: 0.6rem; font-size: 0.78rem; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all; min-height: 1.2rem; }
+        .ops table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+        .ops td, .ops th { text-align: left; padding: 0.3rem 0.4rem; border-bottom: 1px solid rgba(255, 255, 255, 0.08); word-break: break-all; }
+        .ops select { background: #111827; color: #e5e7eb; border: 1px solid #374151; border-radius: 4px; padding: 0.35rem; }
+        .ops ul { padding-left: 1.2rem; line-height: 1.7; }
+    </style>
+</head>
+<body>
+<div class="ops">
+    <div class="ops-header">
+        <h1>Ops</h1>
+        <a href="index.html">Back to map</a>
+    </div>
+
+    <div class="ops-card" id="cleanup">
+        <h2>Retention cleanup</h2>
+        <p class="desc">Marks data older than each model's retention window as expired, then deletes its files and database records. Protected latest runs are kept.</p>
+        <pre class="out" data-role="status">Loading...</pre>
+        <div class="ops-actions"><button class="danger" data-act="cleanup-run">Run cleanup</button></div>
+        <pre class="out" data-role="result"></pre>
+    </div>
+
+    <div class="ops-card" id="sync">
+        <h2>Catalog and storage sync</h2>
+        <p class="desc">Finds database records with no file in storage and files in storage with no record. Running the sync deletes those orphans.</p>
+        <pre class="out" data-role="status">Loading...</pre>
+        <div class="ops-actions">
+            <button data-act="sync-preview">Preview</button>
+            <button class="danger" data-act="sync-run">Run sync</button>
+        </div>
+        <pre class="out" data-role="result"></pre>
+    </div>
+
+    <div class="ops-card" id="failed">
+        <h2>Failed downloads</h2>
+        <p class="desc">Downloads the downloader gave up on. Retry queues one again.</p>
+        <div class="ops-actions"><button data-act="failed-refresh">Refresh</button></div>
+        <div data-role="list">Loading...</div>
+        <pre class="out" data-role="result"></pre>
+    </div>
+
+    <div class="ops-card" id="caches">
+        <h2>Caches and config</h2>
+        <p class="desc">Clear tile caches, reload configuration from disk, reload only the layer definitions, or clear the tile request heatmap.</p>
+        <div class="ops-actions">
+            <button class="danger" data-act="post" data-path="/api/cache/clear" data-confirm="Clear all caches? Tiles will be re-rendered on demand.">Clear caches</button>
+            <button data-act="post" data-path="/api/config/reload">Reload config</button>
+            <button data-act="post" data-path="/api/config/reload/layers">Reload layers</button>
+            <button class="danger" data-act="post" data-path="/api/tile-heatmap/clear" data-confirm="Clear the tile request heatmap?">Clear tile heatmap</button>
+        </div>
+        <pre class="out" data-role="result"></pre>
+    </div>
+
+    <div class="ops-card" id="validation">
+        <h2>Run validation</h2>
+        <p class="desc">Runs the WMS and WMTS validation checks against this server now.</p>
+        <div class="ops-actions"><button data-act="validate">Run validation</button></div>
+        <pre class="out" data-role="result"></pre>
+    </div>
+
+    <div class="ops-card" id="models">
+        <h2>Model config (read-only)</h2>
+        <p class="desc">Shows the YAML a model is configured with. Edit it in the repository and redeploy.</p>
+        <div class="ops-actions"><select id="model-select" aria-label="Model"></select></div>
+        <pre class="out" id="model-yaml">Loading...</pre>
+    </div>
+
+    <div class="ops-card">
+        <h2>Monitoring lives in Grafana</h2>
+        <ul>
+            <li><a href="/grafana/d/data-pipeline">Data Pipeline</a>: downloads, ingestion, storage, cleanup</li>
+            <li><a href="/grafana/d/wms-api-performance">WMS / WMTS</a></li>
+            <li><a href="/grafana/d/edr-api-performance">EDR API</a></li>
+            <li><a href="/grafana/d/wms-system-stats">System</a></li>
+            <li><a href="/grafana/d/system-logs">Logs</a></li>
+            <li><a href="/grafana/d/trail-conditions-freshness">Trail conditions freshness</a></li>
+            <li><a href="/loadtest-reports/">Nightly load-test reports</a></li>
+        </ul>
+    </div>
+</div>
+<script src="ops.js"></script>
+</body>
+</html>
