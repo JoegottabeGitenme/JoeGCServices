@@ -279,25 +279,14 @@ redis-cli -h localhost
 The Weather WMS system ingests weather data from public sources (AWS S3), parses GRIB2/NetCDF files, and extracts
 individual parameters for rendering.
 
-### Quick Start: Admin Dashboard
-
-**View ingestion status and configuration:**
+### Quick Start: Ops Page
 
 ```bash
-# Start services
 docker-compose up
-
-# Open admin dashboard
-open http://localhost:8000/admin.html
+open http://localhost:8000/ops.html
 ```
 
-The dashboard provides:
-
-- Real-time ingestion status
-- Catalog summary (datasets, storage size)
-- Recent ingestion log
-- Model configuration viewer/editor
-- Parameter extraction preview
+The ops page runs actions (retention cleanup, catalog/storage sync, retry failed downloads, cache clear and config reload, validation) and shows model configs read-only. Monitoring is in Grafana (`/grafana/d/data-pipeline`).
 
 ### Ingestion Configuration
 
@@ -384,19 +373,13 @@ curl http://localhost:8080/api/admin/ingestion/status
 # Get recent ingestion log
 curl http://localhost:8080/api/admin/ingestion/log?limit=50
 
-# Preview parameter extraction for a model
-curl http://localhost:8080/api/admin/preview-shred?model=gfs
-
 # List all model configs
 curl http://localhost:8080/api/admin/config/models
 
 # Get specific model config (raw YAML)
 curl http://localhost:8080/api/admin/config/models/gfs
 
-# Update model config
-curl -X PUT http://localhost:8080/api/admin/config/models/gfs \
-  -H "Content-Type: application/json" \
-  -d '{"yaml": "model:\n  id: gfs\n..."}'
+# Model configs are read-only over the API; edit config/models/*.yaml and redeploy
 ```
 
 ### Supported Data Models

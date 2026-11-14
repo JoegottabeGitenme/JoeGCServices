@@ -230,6 +230,7 @@ Proxies ingestion request to the [Ingester Service](./ingester.md) at `http://in
 #### Clear Caches
 ```http
 POST /api/cache/clear
+X-Admin-Request: 1
 ```
 
 Clears L1 (in-memory) cache. L2 (Redis) cache remains.

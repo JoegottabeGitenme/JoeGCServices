@@ -314,7 +314,7 @@ cargo run --release -- \
 
 ```bash
 # Clear caches and stress test
-curl -X POST http://localhost:8080/api/cache/clear
+curl -X POST -H 'X-Admin-Request: 1' http://localhost:8080/api/cache/clear
 
 # Then hammer with unique requests (cache misses)
 for i in {0..1000}; do
