@@ -10,10 +10,11 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Extension, Query},
-    http::StatusCode,
-    response::{IntoResponse, Json},
-    routing::get,
+    extract::{Extension, Query, Request},
+    http::{header::HeaderName, StatusCode},
+    middleware::{from_fn, Next},
+    response::{IntoResponse, Json, Response},
+    routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -170,7 +171,10 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
         .route("/downloads", get(downloads_handler))
         .route("/schedule", get(schedule_handler))
         .route("/timeseries", get(timeseries_handler))
-        .route("/retry", get(retry_handler))
+        .route(
+            "/retry",
+            post(retry_handler).route_layer(from_fn(require_admin_header)),
+        )
         .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))
         .layer(cors)
@@ -453,7 +457,25 @@ async fn timeseries_handler(
     .into_response()
 }
 
-/// GET /retry?url=... - Retry a failed download
+/// Require `X-Admin-Request: 1` on state-changing requests (see wms-api `admin_guard`).
+///
+/// A custom header forces a CORS preflight, which a cross-site page cannot pass.
+async fn require_admin_header(req: Request, next: Next) -> Response {
+    let ok = req
+        .headers()
+        .get(HeaderName::from_static("x-admin-request"))
+        .is_some_and(|v| v.as_bytes() == b"1");
+    if !ok {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "missing X-Admin-Request header" })),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
+/// POST /retry?url=... - Retry a failed download (requires `X-Admin-Request: 1`)
 async fn retry_handler(
     Extension(state): Extension<Arc<ServerState>>,
     Query(params): Query<RetryQuery>,
@@ -588,4 +610,55 @@ pub async fn run_server(state: Arc<ServerState>, port: u16) -> anyhow::Result<()
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use tower::ServiceExt;
+
+    async fn router() -> Router {
+        let state = Arc::new(ServerState {
+            download_state: Arc::new(DownloadState::open_memory().await.unwrap()),
+            model_schedules: Vec::new(),
+            cleanup_metrics: Arc::new(CleanupMetrics::new()),
+        });
+        create_router(state)
+    }
+
+    fn req(method: &str, header: Option<&str>) -> axum::http::Request<Body> {
+        let mut b = axum::http::Request::builder()
+            .method(method)
+            .uri("/retry?url=http://x/a");
+        if let Some(h) = header {
+            b = b.header("X-Admin-Request", h);
+        }
+        b.body(Body::empty()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn retry_post_without_header_is_forbidden() {
+        let resp = router().await.oneshot(req("POST", None)).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["error"], "missing X-Admin-Request header");
+    }
+
+    #[tokio::test]
+    async fn retry_post_with_header_is_handled() {
+        let resp = router()
+            .await
+            .oneshot(req("POST", Some("1")))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn retry_get_is_not_allowed() {
+        let resp = router().await.oneshot(req("GET", Some("1"))).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
 }

@@ -3,7 +3,8 @@
 //! HTTP server implementing OGC WMS 1.1.1/1.3.0 and WMTS 1.0.0 specifications.
 
 use wms_api::{
-    admin, chunk_warming, handlers, memory_pressure, startup_validation, state, warming,
+    admin, admin_guard, chunk_warming, handlers, memory_pressure, startup_validation, state,
+    warming,
 };
 
 use anyhow::Result;
@@ -314,7 +315,10 @@ async fn async_main(args: Args) -> Result<()> {
             "/api/validation/status",
             get(handlers::validation_status_handler),
         )
-        .route("/api/validation/run", get(handlers::validation_run_handler))
+        .route(
+            "/api/validation/run",
+            post(handlers::validation_run_handler),
+        )
         // Startup validation API (test renders + cache warming)
         .route(
             "/api/validation/startup",
@@ -361,24 +365,6 @@ async fn async_main(args: Args) -> Result<()> {
             "/api/docs/openapi.json",
             get(handlers::openapi_json_handler),
         )
-        // Load test dashboard
-        .route("/loadtest", get(handlers::loadtest_dashboard_handler))
-        .route(
-            "/api/loadtest/results",
-            get(handlers::loadtest_results_handler),
-        )
-        // Benchmark comparison API (for web/benchmarks.html - load test comparisons)
-        .route("/api/benchmarks", get(handlers::benchmarks_handler))
-        // Criterion microbenchmark results API
-        .route(
-            "/api/criterion",
-            get(handlers::criterion_benchmarks_handler),
-        )
-        .route("/api/loadtest/files", get(handlers::loadtest_files_handler))
-        .route(
-            "/api/loadtest/file/:filename",
-            get(handlers::loadtest_file_handler),
-        )
         // Admin dashboard
         .route(
             "/api/admin/ingestion/status",
@@ -397,14 +383,10 @@ async fn async_main(args: Args) -> Result<()> {
             "/api/admin/ingestion/log",
             get(admin::ingestion_log_handler),
         )
-        .route(
-            "/api/admin/preview-shred",
-            get(admin::preview_shred_handler),
-        )
         .route("/api/admin/config/models", get(admin::list_models_handler))
         .route(
             "/api/admin/config/models/:id",
-            get(admin::get_model_config_handler).put(admin::update_model_config_handler),
+            get(admin::get_model_config_handler),
         )
         .route("/api/admin/config/full", get(admin::full_config_handler))
         // Ingest endpoint (called by downloader service)
@@ -434,6 +416,8 @@ async fn async_main(args: Args) -> Result<()> {
         .layer(Extension(prometheus_handle))
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
+        // CSRF guard: inside CORS so preflights are answered first and 403s carry CORS headers
+        .layer(axum::middleware::from_fn(admin_guard::require_admin_header))
         .layer(CorsLayer::permissive());
 
     // Parse listen address

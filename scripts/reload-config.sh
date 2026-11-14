@@ -107,7 +107,7 @@ reload_full() {
     echo
     
     # Reload wms-api layer configs
-    response=$(curl -s -X POST "${WMS_API_URL}/api/config/reload")
+    response=$(curl -s -X POST -H 'X-Admin-Request: 1' "${WMS_API_URL}/api/config/reload")
     
     if echo "$response" | grep -q '"success":true'; then
         print_success "WMS API layer configs reloaded and caches cleared!"
@@ -128,7 +128,7 @@ reload_layers() {
     print_info "Reloading layer configurations from config/layers/*.yaml..."
     echo
     
-    response=$(curl -s -X POST "${WMS_API_URL}/api/config/reload/layers")
+    response=$(curl -s -X POST -H 'X-Admin-Request: 1' "${WMS_API_URL}/api/config/reload/layers")
     
     if echo "$response" | grep -q '"success":true'; then
         print_success "Layer configs reloaded!"
@@ -146,7 +146,7 @@ clear_caches() {
     print_info "Clearing all in-memory caches..."
     echo
     
-    response=$(curl -s -X POST "${WMS_API_URL}/api/cache/clear")
+    response=$(curl -s -X POST -H 'X-Admin-Request: 1' "${WMS_API_URL}/api/cache/clear")
     
     if echo "$response" | grep -q '"success":true'; then
         print_success "Caches cleared!"
