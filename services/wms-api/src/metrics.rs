@@ -508,7 +508,8 @@ impl MetricsCollector {
     /// Record a WMS request
     pub fn record_wms_request(&self) {
         self.wms_requests.fetch_add(1, Ordering::Relaxed);
-        counter!("wms_requests_total").increment(1);
+        // Exported by the hand-written /metrics handler (same atomic); do not also record
+        // it through the `metrics` recorder or the exposition would repeat the name.
         // Track for rate calculation (non-blocking)
         if let Ok(mut tracker) = self.wms_rate_tracker.try_write() {
             tracker.record();
@@ -518,7 +519,6 @@ impl MetricsCollector {
     /// Record a WMTS request
     pub fn record_wmts_request(&self) {
         self.wmts_requests.fetch_add(1, Ordering::Relaxed);
-        counter!("wmts_requests_total").increment(1);
         // Track for rate calculation (non-blocking)
         if let Ok(mut tracker) = self.wmts_rate_tracker.try_write() {
             tracker.record();
@@ -576,8 +576,6 @@ impl MetricsCollector {
             0.0
         };
 
-        gauge!("tile_memory_cache_hits_total").set(hits as f64);
-        gauge!("tile_memory_cache_misses_total").set(misses as f64);
         gauge!("tile_memory_cache_hit_rate_percent").set(hit_rate);
         gauge!("tile_memory_cache_evictions_total")
             .set(stats.evictions.load(Ordering::Relaxed) as f64);
@@ -953,12 +951,6 @@ impl MetricsCollector {
             .record(forecast_hour as f64);
     }
 
-    /// Record model data age (time since reference time)
-    pub fn record_model_data_age(&self, model: WeatherModel, age_minutes: u64) {
-        gauge!("model_data_age_minutes", "model" => model.label().to_string())
-            .set(age_minutes as f64);
-    }
-
     /// Record grid resampling time (projection + interpolation)
     pub async fn record_resample(&self, duration_us: u64) {
         let mut times = self.resample_times.write().await;
@@ -993,7 +985,6 @@ impl MetricsCollector {
         gauge!("chunk_cache_hits_total").set(stats.hits as f64);
         gauge!("chunk_cache_misses_total").set(stats.misses as f64);
         gauge!("chunk_cache_evictions_total").set(stats.evictions as f64);
-        gauge!("chunk_cache_entries").set(stats.entries as f64);
         gauge!("chunk_cache_memory_bytes").set(stats.memory_bytes as f64);
         gauge!("chunk_cache_memory_mb").set(memory_mb);
         gauge!("chunk_cache_hit_rate_percent").set(hit_rate);

@@ -59,7 +59,7 @@ ${TARGET}/admin
 ${TARGET}/api/metrics
 ${TARGET}/grafana/
 ${TARGET}/downloader/
-${TARGET}/loadtest
+${TARGET}/loadtest-reports/
 EOF
 
 echo "[NUCLEI] Base targets: $(wc -l < "$BASE_TARGETS_FILE") URLs"

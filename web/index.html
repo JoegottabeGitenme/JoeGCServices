@@ -23,7 +23,7 @@
                     <div class="status-indicators">
                         <div class="status-item">
                             <span class="status-label">WMS:</span>
-                            <a href="http://localhost:8080/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0" 
+                            <a href="/wms?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0" 
                                target="_blank" 
                                class="status-badge-link"
                                title="Click to open WMS GetCapabilities">
@@ -32,14 +32,14 @@
                                     <span class="status-text">Checking...</span>
                                 </div>
                             </a>
-                            <button class="compliance-badge" id="wms-compliance-btn" title="OGC WMS 1.3.0 Compliance - Click to revalidate">
+                            <button class="compliance-badge" id="wms-compliance-btn" title="OGC WMS 1.3.0 compliance tests">
                                 <span class="status-dot"></span>
-                                <span class="compliance-text">Checking...</span>
+                                <span class="compliance-text">Compliance</span>
                             </button>
                         </div>
                         <div class="status-item">
                             <span class="status-label">WMTS:</span>
-                            <a href="http://localhost:8080/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0" 
+                            <a href="/wmts?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0" 
                                target="_blank"
                                class="status-badge-link"
                                title="Click to open WMTS GetCapabilities">
@@ -48,14 +48,14 @@
                                     <span class="status-text">Checking...</span>
                                 </div>
                             </a>
-                            <button class="compliance-badge" id="wmts-compliance-btn" title="OGC WMTS 1.0.0 Compliance - Click to revalidate">
+                            <button class="compliance-badge" id="wmts-compliance-btn" title="OGC WMTS 1.0.0 compliance tests">
                                 <span class="status-dot"></span>
-                                <span class="compliance-text">Checking...</span>
+                                <span class="compliance-text">Compliance</span>
                             </button>
                         </div>
                         <div class="status-item">
                             <span class="status-label">EDR:</span>
-                            <a href="http://localhost:8083/edr" 
+                            <a href="/edr" 
                                target="_blank"
                                class="status-badge-link"
                                title="Click to open EDR API Landing Page">
@@ -74,21 +74,10 @@
                             </a>
                         </div>
                         <div class="status-item">
-                            <span class="status-label">Downloader:</span>
-                            <a href="downloads.html"
-                               class="status-badge-link"
-                               title="Downloader health check. Click to open the Downloads dashboard">
-                                <div class="status-badge" id="downloader-status">
-                                    <span class="status-dot"></span>
-                                    <span class="status-text">Checking...</span>
-                                </div>
-                            </a>
-                        </div>
-                        <div class="status-item">
                             <span class="status-label">Ingester:</span>
-                            <a href="admin.html"
+                            <a href="/grafana/d/data-pipeline"
                                class="status-badge-link"
-                               title="Ingester reachability, checked through wms-api. Click to open the Admin dashboard">
+                               title="Ingester reachability, checked through wms-api. Click to open the Data Pipeline dashboard">
                                 <div class="status-badge" id="ingester-status">
                                     <span class="status-dot"></span>
                                     <span class="status-text">Checking...</span>
@@ -97,45 +86,37 @@
                         </div>
                     </div>
                     <div class="external-links">
-                        <a href="admin.html" class="external-link" title="Open Admin Dashboard">
+                        <a href="ops.html" class="external-link" title="Open the Ops page (cleanup, sync, retries, cache and config actions)">
                             <span class="link-icon">⚙️</span>
-                            <span class="link-text">Admin</span>
+                            <span class="link-text">Ops</span>
                         </a>
-                        <a href="downloads.html" class="external-link" title="Open Downloads Dashboard">
-                            <span class="link-icon">⬇️</span>
-                            <span class="link-text">Downloads</span>
-                        </a>
-                        <a href="/loadtest" target="_blank" class="external-link" data-local="http://localhost:8080/loadtest" title="Open Load Test Dashboard">
-                            <span class="link-icon">⚡</span>
-                            <span class="link-text">Load Tests</span>
-                        </a>
-                        <a href="benchmarks.html" class="external-link" title="View Criterion Microbenchmark Results">
-                            <span class="link-icon">📉</span>
-                            <span class="link-text">Microbenchmarks</span>
-                        </a>
-                        <a href="tile-visualizer.html" class="external-link" title="Visualize Tile Requests from Load Tests">
-                            <span class="link-icon">🗺️</span>
-                            <span class="link-text">Tile Viz</span>
-                        </a>
-                        <a href="/grafana/dashboards?tag=folkweather" target="_blank" class="external-link grafana-link" data-local="http://localhost:3000/dashboards" title="Open the FolkWeather Grafana dashboards">
+                        <a href="/grafana/dashboards?tag=folkweather" target="_blank" class="external-link grafana-link" title="Open the FolkWeather Grafana dashboards">
                             <span class="link-icon">📊</span>
                             <span class="link-text">Grafana</span>
                         </a>
-                        <a href="/grafana/d/wms-system-stats" target="_blank" class="external-link grafana-link" data-local="http://localhost:3000/d/wms-system-stats" title="Open the System dashboard (nodes, pods, CPU, memory, disk)">
-                            <span class="link-icon">🖥️</span>
-                            <span class="link-text">System</span>
-                        </a>
-                        <a href="/grafana/d/data-pipeline" target="_blank" class="external-link grafana-link prod-only-link" title="Open the Data Pipeline dashboard (downloads, ingestion, storage)">
+                        <a href="/grafana/d/data-pipeline" target="_blank" class="external-link grafana-link" title="Open the Data Pipeline dashboard (downloads, ingestion, storage, cleanup)">
                             <span class="link-icon">📦</span>
                             <span class="link-text">Data</span>
                         </a>
-                        <a href="#" target="_blank" class="external-link local-only-link" data-local="http://localhost:9090" title="Open Prometheus (local dev only)">
-                            <span class="link-icon">📈</span>
-                            <span class="link-text">Prometheus</span>
+                        <a href="/grafana/d/wms-api-performance" target="_blank" class="external-link grafana-link" title="Open the WMS / WMTS performance dashboard">
+                            <span class="link-icon">🗺️</span>
+                            <span class="link-text">WMS</span>
                         </a>
-                        <a href="#" target="_blank" class="external-link local-only-link" data-local="http://localhost:9001" title="Open MinIO Console (local dev only)">
-                            <span class="link-icon">🗄️</span>
-                            <span class="link-text">MinIO</span>
+                        <a href="/grafana/d/edr-api-performance" target="_blank" class="external-link grafana-link" title="Open the EDR API performance dashboard">
+                            <span class="link-icon">🌡️</span>
+                            <span class="link-text">EDR</span>
+                        </a>
+                        <a href="/grafana/d/wms-system-stats" target="_blank" class="external-link grafana-link" title="Open the System dashboard (nodes, pods, CPU, memory, disk)">
+                            <span class="link-icon">🖥️</span>
+                            <span class="link-text">System</span>
+                        </a>
+                        <a href="/grafana/d/system-logs" target="_blank" class="external-link grafana-link" title="Open the Logs dashboard">
+                            <span class="link-icon">📜</span>
+                            <span class="link-text">Logs</span>
+                        </a>
+                        <a href="/loadtest-reports/" target="_blank" class="external-link grafana-link" title="Open the nightly load-test reports">
+                            <span class="link-icon">⚡</span>
+                            <span class="link-text">Load tests</span>
                         </a>
                     </div>
                 </div>
@@ -145,16 +126,6 @@
         <div class="main-content">
             <!-- Data Panel (Left Sidebar) -->
             <aside class="data-panel">
-                <!-- Sync Status (at top) -->
-                <div class="data-sync-status" id="data-sync-status">
-                    <span class="sync-icon">⚠️</span>
-                    <span class="sync-text" id="sync-status-text">Checking sync...</span>
-                    <div class="sync-actions" id="sync-actions" style="display: none;">
-                        <button class="sync-btn sync-btn-preview" onclick="showSyncPreview()" title="Preview what will be synced">Preview</button>
-                        <button class="sync-btn sync-btn-run" onclick="runSyncNow()" title="Sync now">Sync</button>
-                    </div>
-                </div>
-                
                 <!-- PostgreSQL Database Section -->
                 <div class="data-section collapsed" id="postgres-section">
                     <div class="data-section-header" onclick="toggleDataSection('postgres-section')">
@@ -170,26 +141,6 @@
                     <div class="data-section-content">
                         <div class="data-tree" id="database-tree">
                             <div class="tree-loading">Loading...</div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- MinIO Storage Section -->
-                <div class="data-section collapsed" id="minio-section">
-                    <div class="data-section-header" onclick="toggleDataSection('minio-section')">
-                        <div class="data-section-title">
-                            <span class="data-section-icon">🗄️</span>
-                            <span>MinIO Storage</span>
-                        </div>
-                        <div class="data-section-meta">
-                            <span class="data-section-count" id="minio-total-objects" title="Total number of objects (files) stored in MinIO object storage buckets. Loaded when this section is opened">--</span>
-                            <span class="data-section-size" id="minio-total-size" title="Sum of actual file sizes for all objects stored in MinIO (raw weather data files)">--</span>
-                            <span class="data-section-toggle">▼</span>
-                        </div>
-                    </div>
-                    <div class="data-section-content">
-                        <div class="data-tree" id="minio-tree">
-                            <div class="tree-loading">Loading... listing the bucket can take a minute</div>
                         </div>
                     </div>
                 </div>
@@ -284,50 +235,6 @@
     <!-- MapLibre GL JS + Leaflet bridge, for the OpenFreeMap basemaps (maplibre-gl 6.x ships no UMD bundle, so 5.x) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.24.0/maplibre-gl.js" integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js" integrity="sha384-tXYNKOHx4T02jMP7YYCtBxPIv1B5gaA5mcVPBzqMp6d7VzWzxJgI2aWF/nJLrQdS" crossorigin="anonymous"></script>
-
-    <!-- Dynamic URL rewriting for production/docker-compose compatibility -->
-    <script>
-        (function() {
-            const isLocalDev = window.location.port === '8000';
-            
-            if (isLocalDev) {
-                // In docker-compose (port 8000), use localhost URLs from data-local attribute
-                document.querySelectorAll('a[data-local]').forEach(function(link) {
-                    link.href = link.dataset.local;
-                });
-                // Hide links to things the docker-compose stack does not have (the Data Pipeline dashboard)
-                document.querySelectorAll('.prod-only-link').forEach(function(link) {
-                    link.style.display = 'none';
-                });
-            } else {
-                // In production, rewrite localhost:8080 to relative, hide local-only links
-                document.querySelectorAll('a[href*="localhost:8080"]').forEach(function(link) {
-                    link.href = link.href.replace('http://localhost:8080', '');
-                });
-                // Hide links that only work in local dev
-                document.querySelectorAll('.local-only-link').forEach(function(link) {
-                    link.style.display = 'none';
-                });
-            }
-        })();
-    </script>
-
-    <!-- Sync Preview Modal -->
-    <div class="sync-modal-overlay" id="sync-modal-overlay" onclick="closeSyncModal(event)">
-        <div class="sync-modal" onclick="event.stopPropagation()">
-            <div class="sync-modal-header">
-                <span class="sync-modal-title">Sync Preview</span>
-                <button class="sync-modal-close" onclick="closeSyncModal()">&times;</button>
-            </div>
-            <div class="sync-modal-body" id="sync-modal-body">
-                <div class="tree-loading">Loading preview...</div>
-            </div>
-            <div class="sync-modal-footer">
-                <button class="sync-modal-btn sync-modal-btn-cancel" onclick="closeSyncModal()">Cancel</button>
-                <button class="sync-modal-btn sync-modal-btn-confirm" id="sync-modal-confirm" onclick="confirmSync()">Sync Now</button>
-            </div>
-        </div>
-    </div>
 
     <!-- Application JS -->
     <script src="app.js"></script>

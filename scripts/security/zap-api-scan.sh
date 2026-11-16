@@ -191,7 +191,7 @@ ${TARGET}/api/metrics
 ${TARGET}/api/config
 ${TARGET}/api/stats
 ${TARGET}/admin
-${TARGET}/loadtest
+${TARGET}/loadtest-reports/
 EOF
 
     # Note: zap-api-scan.py doesn't support direct URL lists, 

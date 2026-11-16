@@ -219,7 +219,7 @@ docker-compose logs -f ingester
 docker-compose restart wms-api
 
 # Clear caches
-curl -X POST http://localhost:8080/api/cache/clear
+curl -X POST -H 'X-Admin-Request: 1' http://localhost:8080/api/cache/clear
 
 # Check database content
 docker-compose exec postgres psql -U weatherwms -d weatherwms -c "SELECT model, parameter, COUNT(*) FROM grid_catalog GROUP BY model, parameter;"

@@ -21,7 +21,7 @@ pub async fn validation_status_handler(
     Ok(Json(status))
 }
 
-/// GET /api/validation/run - Run validation and return results
+/// POST /api/validation/run - Run validation and return results
 #[instrument(skip(_state))]
 pub async fn validation_run_handler(
     Extension(_state): Extension<Arc<AppState>>,

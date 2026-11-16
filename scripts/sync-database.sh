@@ -164,7 +164,7 @@ run_sync() {
     
     echo ""
     echo "Running sync..."
-    result=$(curl -sf -X POST "$WMS_API_URL/api/admin/sync/run" 2>/dev/null)
+    result=$(curl -sf -X POST -H 'X-Admin-Request: 1' "$WMS_API_URL/api/admin/sync/run" 2>/dev/null)
     
     if [ $? -ne 0 ]; then
         print_error "ERROR: Sync failed"
@@ -195,7 +195,7 @@ run_cleanup() {
     
     echo ""
     echo "Running cleanup to remove expired data..."
-    result=$(curl -sf -X POST "$WMS_API_URL/api/admin/cleanup/run" 2>/dev/null)
+    result=$(curl -sf -X POST -H 'X-Admin-Request: 1' "$WMS_API_URL/api/admin/cleanup/run" 2>/dev/null)
     
     if [ $? -ne 0 ]; then
         print_error "ERROR: Cleanup failed"

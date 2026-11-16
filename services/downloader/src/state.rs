@@ -546,6 +546,41 @@ impl DownloadState {
         })
     }
 
+    /// Download counts per model and status, for per-model metrics.
+    ///
+    /// Same sources as [`get_stats`](Self::get_stats): `pending`, `in_progress`, `retrying`
+    /// and `failed` come from `downloads`, `completed` from `completed_downloads`. Rows with no
+    /// model are reported as `unknown`.
+    pub async fn get_model_download_counts(&self) -> Result<Vec<ModelDownloadCount>> {
+        let active: Vec<(Option<String>, String, i64)> = sqlx::query_as(
+            "SELECT model, status, COUNT(*) FROM downloads \
+             WHERE status IN ('pending', 'in_progress', 'retrying', 'failed') \
+             GROUP BY model, status",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let completed: Vec<(Option<String>, i64)> =
+            sqlx::query_as("SELECT model, COUNT(*) FROM completed_downloads GROUP BY model")
+                .fetch_all(&self.pool)
+                .await?;
+
+        let mut out: Vec<ModelDownloadCount> = active
+            .into_iter()
+            .map(|(model, status, n)| ModelDownloadCount {
+                model: model.unwrap_or_else(|| "unknown".to_string()),
+                status,
+                count: n.max(0) as u64,
+            })
+            .collect();
+        out.extend(completed.into_iter().map(|(model, n)| ModelDownloadCount {
+            model: model.unwrap_or_else(|| "unknown".to_string()),
+            status: "completed".to_string(),
+            count: n.max(0) as u64,
+        }));
+        Ok(out)
+    }
+
     /// Get recent completed downloads for display.
     pub async fn get_recent_completed(&self, limit: usize) -> Result<Vec<CompletedDownload>> {
         let rows: Vec<(String, String, Option<String>, Option<i64>, String, bool)> =
@@ -908,6 +943,14 @@ pub struct DownloadStats {
     pub total_bytes_downloaded: u64,
 }
 
+/// Count of downloads for one (model, status) pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelDownloadCount {
+    pub model: String,
+    pub status: String,
+    pub count: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -947,6 +990,42 @@ mod tests {
             .is_already_downloaded("http://example.com/file.grib2")
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_model_download_counts() {
+        let state = DownloadState::open_memory().await.unwrap();
+        state
+            .queue_download("http://x/1", "1", "gfs")
+            .await
+            .unwrap();
+        state
+            .queue_download("http://x/2", "2", "gfs")
+            .await
+            .unwrap();
+        state
+            .queue_download("http://x/3", "3", "hrrr")
+            .await
+            .unwrap();
+        state
+            .update_status("http://x/2", DownloadStatus::Failed)
+            .await
+            .unwrap();
+
+        let mut counts = state.get_model_download_counts().await.unwrap();
+        counts.sort_by(|a, b| (&a.model, &a.status).cmp(&(&b.model, &b.status)));
+        let got: Vec<(&str, &str, u64)> = counts
+            .iter()
+            .map(|c| (c.model.as_str(), c.status.as_str(), c.count))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("gfs", "failed", 1),
+                ("gfs", "pending", 1),
+                ("hrrr", "pending", 1)
+            ]
+        );
     }
 
     #[tokio::test]

@@ -6,9 +6,12 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use metrics_exporter_prometheus::PrometheusHandle;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tracing::instrument;
+use std::time::{Duration, Instant};
+use storage::ModelFreshness;
+use tracing::{instrument, warn};
 
 use crate::state::AppState;
 
@@ -34,8 +37,11 @@ pub async fn ready_handler(Extension(state): Extension<Arc<AppState>>) -> impl I
 // ============================================================================
 
 /// GET /metrics - Prometheus metrics endpoint
-#[instrument(skip(state))]
-pub async fn metrics_handler(Extension(state): Extension<Arc<AppState>>) -> Response {
+#[instrument(skip(state, prometheus_handle))]
+pub async fn metrics_handler(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(prometheus_handle): Extension<PrometheusHandle>,
+) -> Response {
     // Get cache statistics (async calls)
     let chunk_stats = state.grid_processor_factory.cache_stats().await;
     let l1_stats = state.tile_memory_cache.stats();
@@ -120,11 +126,141 @@ pub async fn metrics_handler(Extension(state): Extension<Arc<AppState>>) -> Resp
         ));
     }
 
+    // Catalog-derived series (cached; skipped entirely when the catalog is unavailable)
+    if let Some(catalog_series) = catalog_series(&state).await {
+        output.push_str(&catalog_series);
+    }
+
+    // Everything recorded through the `metrics` crate (counter!/gauge!/histogram!). Names
+    // here must stay disjoint from the hand-written series above; a duplicate name makes
+    // Prometheus reject the whole scrape.
+    output.push_str(&prometheus_handle.render());
+
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/plain; version=0.0.4")
         .body(output.into())
         .unwrap()
+}
+
+// ----------------------------------------------------------------------------
+// Catalog-derived series (model freshness, retention backlog)
+// ----------------------------------------------------------------------------
+
+/// How long the catalog-derived exposition is reused between scrapes.
+const CATALOG_SERIES_TTL: Duration = Duration::from_secs(60);
+/// Upper bound on the catalog queries so a slow database cannot stall the scrape.
+const CATALOG_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+
+static CATALOG_SERIES_CACHE: tokio::sync::Mutex<Option<(Instant, String)>> =
+    tokio::sync::Mutex::const_new(None);
+
+/// Cached catalog-derived exposition text, or `None` if the catalog query failed
+/// (failures are not cached, so the next scrape retries).
+async fn catalog_series(state: &AppState) -> Option<String> {
+    // Holding the lock across the query makes concurrent scrapes share one query.
+    let mut cache = CATALOG_SERIES_CACHE.lock().await;
+    if let Some((at, text)) = cache.as_ref() {
+        if at.elapsed() < CATALOG_SERIES_TTL {
+            return Some(text.clone());
+        }
+    }
+
+    let freshness =
+        tokio::time::timeout(CATALOG_QUERY_TIMEOUT, state.catalog.get_model_freshness()).await;
+    let freshness = match freshness {
+        Ok(Ok(rows)) => rows,
+        Ok(Err(e)) => {
+            warn!(error = %e, "metrics: model freshness query failed; skipping catalog series");
+            return None;
+        }
+        Err(_) => {
+            warn!("metrics: model freshness query timed out; skipping catalog series");
+            return None;
+        }
+    };
+    // The expired-backlog count is best effort: omit just that series on failure.
+    let expired =
+        match tokio::time::timeout(CATALOG_QUERY_TIMEOUT, state.catalog.count_expired()).await {
+            Ok(Ok(n)) => Some(n),
+            _ => None,
+        };
+
+    let text = format_catalog_series(&freshness, expired);
+    *cache = Some((Instant::now(), text.clone()));
+    Some(text)
+}
+
+/// Escape a Prometheus label value (backslash, double quote, newline).
+fn escape_label_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Render the per-model freshness series and the retention backlog gauge.
+///
+/// Each metric name gets one HELP/TYPE header. Models with no reference/ingest time simply
+/// omit the corresponding timestamp series.
+fn format_catalog_series(rows: &[ModelFreshness], expired_datasets: Option<i64>) -> String {
+    let mut out = String::new();
+
+    out.push_str(
+        "# HELP model_latest_run_timestamp_seconds Unix time of the newest model run (reference time) with available data\n\
+         # TYPE model_latest_run_timestamp_seconds gauge\n",
+    );
+    for r in rows {
+        if let Some(t) = r.latest_reference_time {
+            out.push_str(&format!(
+                "model_latest_run_timestamp_seconds{{model=\"{}\"}} {}\n",
+                escape_label_value(&r.model),
+                t.timestamp()
+            ));
+        }
+    }
+
+    out.push_str(
+        "# HELP model_latest_ingest_timestamp_seconds Unix time the newest available dataset of the model was ingested\n\
+         # TYPE model_latest_ingest_timestamp_seconds gauge\n",
+    );
+    for r in rows {
+        if let Some(t) = r.latest_ingested_at {
+            out.push_str(&format!(
+                "model_latest_ingest_timestamp_seconds{{model=\"{}\"}} {}\n",
+                escape_label_value(&r.model),
+                t.timestamp()
+            ));
+        }
+    }
+
+    out.push_str(
+        "# HELP model_datasets Number of available datasets in the catalog per model\n\
+         # TYPE model_datasets gauge\n",
+    );
+    for r in rows {
+        out.push_str(&format!(
+            "model_datasets{{model=\"{}\"}} {}\n",
+            escape_label_value(&r.model),
+            r.dataset_count
+        ));
+    }
+
+    if let Some(n) = expired_datasets {
+        out.push_str(&format!(
+            "# HELP retention_expired_datasets Datasets marked expired and not yet deleted (retention backlog)\n\
+             # TYPE retention_expired_datasets gauge\nretention_expired_datasets {}\n",
+            n
+        ));
+    }
+
+    out
 }
 
 // ============================================================================
@@ -561,5 +697,68 @@ mod tests {
         assert_eq!(parse_kb_value("MemTotal:        8168456 kB"), 8168456);
         assert_eq!(parse_kb_value("VmRSS:     123456 kB"), 123456);
         assert_eq!(parse_kb_value("invalid"), 0);
+    }
+}
+
+#[cfg(test)]
+mod catalog_series_tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    fn row(model: &str, n: u64, run: Option<i64>, ing: Option<i64>) -> ModelFreshness {
+        ModelFreshness {
+            model: model.to_string(),
+            dataset_count: n,
+            latest_reference_time: run.map(|t| Utc.timestamp_opt(t, 0).unwrap()),
+            latest_ingested_at: ing.map(|t| Utc.timestamp_opt(t, 0).unwrap()),
+        }
+    }
+
+    #[test]
+    fn escapes_label_values() {
+        assert_eq!(escape_label_value("gfs"), "gfs");
+        assert_eq!(escape_label_value("a\"b\\c\nd"), "a\\\"b\\\\c\\nd");
+    }
+
+    #[test]
+    fn formats_freshness_series() {
+        let rows = vec![
+            row("gfs", 120, Some(1_700_000_000), Some(1_700_003_600)),
+            row("mrms", 5, None, None),
+        ];
+        let out = format_catalog_series(&rows, Some(7));
+        assert!(out.contains("model_latest_run_timestamp_seconds{model=\"gfs\"} 1700000000\n"));
+        assert!(out.contains("model_latest_ingest_timestamp_seconds{model=\"gfs\"} 1700003600\n"));
+        assert!(out.contains("model_datasets{model=\"gfs\"} 120\n"));
+        assert!(out.contains("model_datasets{model=\"mrms\"} 5\n"));
+        assert!(!out.contains("timestamp_seconds{model=\"mrms\"}"));
+        assert!(out.contains("retention_expired_datasets 7\n"));
+        // HELP/TYPE exactly once per name
+        for name in [
+            "model_latest_run_timestamp_seconds",
+            "model_latest_ingest_timestamp_seconds",
+            "model_datasets",
+            "retention_expired_datasets",
+        ] {
+            assert_eq!(
+                out.matches(&format!("# TYPE {} gauge", name)).count(),
+                1,
+                "{}",
+                name
+            );
+            assert_eq!(
+                out.matches(&format!("# HELP {} ", name)).count(),
+                1,
+                "{}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn omits_expired_when_unknown_and_escapes_model() {
+        let out = format_catalog_series(&[row("we\"ird", 1, Some(1), None)], None);
+        assert!(!out.contains("retention_expired_datasets"));
+        assert!(out.contains("model_datasets{model=\"we\\\"ird\"} 1\n"));
     }
 }

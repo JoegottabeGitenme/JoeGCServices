@@ -71,6 +71,7 @@ web/
 ├── index.html      # Main HTML page with Leaflet map
 ├── style.css       # Dashboard styling
 ├── app.js          # Application logic and WMS/WMTS integration
+├── ops.html, ops.js # Ops page: admin actions only (monitoring lives in Grafana)
 ├── server.py       # Simple Python HTTP server with CORS
 └── README.md       # This file
 ```

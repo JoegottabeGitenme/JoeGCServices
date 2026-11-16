@@ -1,7 +1,7 @@
 // WMS Dashboard Application
 // 
 // MEMORY LEAK FIXES (Jan 2026):
-// - Network pollers (service status, validation, data panel) pause while the tab is hidden
+// - Network pollers (service status, data panel) pause while the tab is hidden
 //   and never overlap: a poll is skipped while the previous run of the same poller is still pending
 // - Thorough Leaflet tile cleanup on layer removal (clearing tile.el.src, event listeners)
 // - Added keepBuffer:2 to tile layers to reduce off-screen tile caching
@@ -12,20 +12,7 @@
 const IS_LOCAL_DEV = window.location.port === '8000';
 const API_BASE = IS_LOCAL_DEV ? 'http://localhost:8080' : '';
 const EDR_URL = IS_LOCAL_DEV ? 'http://localhost:8083/edr' : '/edr';
-const DOWNLOADER_URL = IS_LOCAL_DEV ? 'http://localhost:8081' : '/downloader';
 
-// External service URLs - different for local dev vs production
-const EXTERNAL_URLS = IS_LOCAL_DEV ? {
-    minio: 'http://localhost:9001',
-    grafana: 'http://localhost:3000',
-    prometheus: 'http://localhost:9090',
-    k8sDashboard: 'http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/http:kubernetes-dashboard:/proxy/',
-} : {
-    minio: '/minio/',
-    grafana: '/grafana/',
-    prometheus: null,  // Not exposed in production
-    k8sDashboard: null,  // Not exposed in production
-};
 let map;
 let wmsLayer = null;
 let selectedLayer = null;
@@ -1190,7 +1177,6 @@ const SERVICE_CHECKS = {
     wms: { url: `${API_BASE}/wms?SERVICE=WMS&REQUEST=GetCapabilities` },
     wmts: { url: `${API_BASE}/wmts?SERVICE=WMTS&REQUEST=GetCapabilities` },
     edr: { url: EDR_URL },
-    downloader: { url: `${DOWNLOADER_URL}/health` },
     // wms-api proxies the ingester's /status and answers 200 with an "error" field when it is unreachable
     ingester: {
         url: `${API_BASE}/api/admin/ingestion/active`,
@@ -1198,7 +1184,7 @@ const SERVICE_CHECKS = {
     }
 };
 
-// Check WMS, WMTS, EDR, downloader and ingester status
+// Check WMS, WMTS, EDR and ingester status
 async function checkServiceStatus() {
     await Promise.all(Object.entries(SERVICE_CHECKS).map(async ([service, check]) => {
         try {
@@ -1946,111 +1932,13 @@ function latLngToWebMercator(lat, lng) {
 }
 
 // ============================================================================
-// Validation Status Functions
+// Compliance badges (navigate to the compliance viewer pages)
 // ============================================================================
 
-// Fetch and update validation status
-async function checkValidationStatus() {
-    try {
-        const response = await fetch(`${API_BASE}/api/validation/status`);
-        if (!response.ok) {
-            console.error('Failed to fetch validation status:', response.statusText);
-            return;
-        }
-        
-        const data = await response.json();
-        updateValidationUI(data);
-    } catch (error) {
-        console.error('Error fetching validation status:', error);
-    }
-}
-
-// Run validation manually (triggered by compliance badge click)
-async function runValidation() {
-    const wmsBtn = document.getElementById('wms-compliance-btn');
-    const wmtsBtn = document.getElementById('wmts-compliance-btn');
-    
-    // Disable buttons and show loading state
-    if (wmsBtn) {
-        wmsBtn.disabled = true;
-        wmsBtn.querySelector('.compliance-text').textContent = 'Checking...';
-    }
-    if (wmtsBtn) {
-        wmtsBtn.disabled = true;
-        wmtsBtn.querySelector('.compliance-text').textContent = 'Checking...';
-    }
-    
-    try {
-        const response = await fetch(`${API_BASE}/api/validation/run`);
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const data = await response.json();
-        updateValidationUI(data);
-    } catch (error) {
-        console.error('Error running validation:', error);
-        // Show error state
-        if (wmsBtn) {
-            wmsBtn.querySelector('.compliance-text').textContent = 'Error';
-        }
-        if (wmtsBtn) {
-            wmtsBtn.querySelector('.compliance-text').textContent = 'Error';
-        }
-    } finally {
-        // Re-enable buttons
-        if (wmsBtn) wmsBtn.disabled = false;
-        if (wmtsBtn) wmtsBtn.disabled = false;
-    }
-}
-
-// Update validation UI with results
-function updateValidationUI(data) {
-    // Update WMS compliance badge in header
-    updateComplianceBadge('wms', data.wms);
-    
-    // Update WMTS compliance badge in header
-    updateComplianceBadge('wmts', data.wmts);
-}
-
-// Update compliance badge in header
-function updateComplianceBadge(service, serviceData) {
-    const btn = document.getElementById(`${service}-compliance-btn`);
-    if (!btn) return;
-    
-    const dot = btn.querySelector('.status-dot');
-    const text = btn.querySelector('.compliance-text');
-    
-    // Remove all status classes
-    btn.classList.remove('compliant', 'non-compliant', 'partial');
-    
-    if (serviceData.status === 'compliant') {
-        btn.classList.add('compliant');
-        text.textContent = 'Compliant';
-    } else if (serviceData.status === 'non-compliant') {
-        btn.classList.add('non-compliant');
-        text.textContent = 'Non-Compliant';
-    } else if (serviceData.status === 'partial') {
-        btn.classList.add('partial');
-        text.textContent = 'Partial';
-    } else {
-        text.textContent = 'Unknown';
-    }
-    
-    // Update tooltip with check details
-    const checks = serviceData.checks || {};
-    const checkNames = Object.keys(checks);
-    const passed = checkNames.filter(c => checks[c] && checks[c].status === 'pass').length;
-    const total = checkNames.length;
-    btn.title = `OGC ${service.toUpperCase()} Compliance: ${passed}/${total} checks passed\nClick to revalidate`;
-}
-
-// Add event listener for compliance badge buttons
 document.addEventListener('DOMContentLoaded', () => {
     const wmsComplianceBtn = document.getElementById('wms-compliance-btn');
     const wmtsComplianceBtn = document.getElementById('wmts-compliance-btn');
-    
-    // Navigate to compliance viewer pages on click
+
     if (wmsComplianceBtn) {
         wmsComplianceBtn.addEventListener('click', () => {
             window.location.href = 'wms-compliance.html';
@@ -2061,9 +1949,6 @@ document.addEventListener('DOMContentLoaded', () => {
             window.location.href = 'wmts-compliance.html';
         });
     }
-    
-    // Check now, then every 5 minutes
-    startPoller('validation', checkValidationStatus, 5 * 60 * 1000);
 });
 
 // Clean up on page unload - centralized interval cleanup to prevent memory leaks
@@ -2383,57 +2268,28 @@ function stopObservationTimeRefresh() {
 // Note: stopPlayback() is defined earlier in this file (around line 289)
 // with full implementation including button state updates
 
-// Initialize the data panel (PostgreSQL + MinIO tree) once the DOM is ready
+// Initialize the data panel (PostgreSQL tree) once the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-    initDatabasePanel();
+    initDataPanel();
 });
 
 // ============================================================================
-// Data Panel Widget (PostgreSQL + MinIO Tree View)
+// Data Panel Widget (PostgreSQL tree: which models and parameters have data)
 // ============================================================================
 
-let dbTreeData = null;  // Cached PostgreSQL data
-let minioTreeData = null;  // Cached MinIO data
-let minioFetchedAt = 0;  // When the MinIO tree was last loaded (0 = never)
 let expandedNodes = new Set();  // Track expanded nodes across refreshes
 
-// The MinIO tree and the sync check both walk the whole bucket server-side and can take over
-// a minute, so the tree loads only once its section is opened and the sync check runs rarely.
 const DATABASE_REFRESH_MS = 15 * 1000;
-const MINIO_REFRESH_MS = 60 * 1000;
-const SYNC_CHECK_MS = 5 * 60 * 1000;
 
 // Initialize the data panel
 function initDataPanel() {
     startPoller('databaseTree', fetchDatabaseTree, DATABASE_REFRESH_MS);
-    startPoller('syncStatus', checkSyncStatus, SYNC_CHECK_MS);
-}
-
-// Refresh everything the panel shows (after a sync run)
-function refreshDataPanel() {
-    runOnce('databaseTree', fetchDatabaseTree);
-    runOnce('syncStatus', checkSyncStatus);
-    if (minioFetchedAt) runOnce('minioTree', fetchMinioTree);
-}
-
-// Alias for backward compatibility
-function initDatabasePanel() {
-    initDataPanel();
 }
 
 // Toggle section collapse
 function toggleDataSection(sectionId) {
     const section = document.getElementById(sectionId);
-    if (!section) return;
-    section.classList.toggle('collapsed');
-
-    if (sectionId === 'minio-section') {
-        if (section.classList.contains('collapsed')) {
-            stopPoller('minioTree');
-        } else {
-            startPoller('minioTree', fetchMinioTree, MINIO_REFRESH_MS, Date.now() - minioFetchedAt >= MINIO_REFRESH_MS);
-        }
-    }
+    if (section) section.classList.toggle('collapsed');
 }
 
 // ============================================================================
@@ -2446,7 +2302,6 @@ async function fetchDatabaseTree() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
         const data = await response.json();
-        dbTreeData = data;
         renderDatabaseTree(data);
         updateDbSummary(data);
     } catch (error) {
@@ -2594,356 +2449,6 @@ function renderDatasetNode(dataset) {
             </div>
         </div>
     `;
-}
-
-// ============================================================================
-// MinIO Tree
-// ============================================================================
-
-async function fetchMinioTree() {
-    try {
-        const response = await fetch(`${API_BASE}/api/admin/storage/tree`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        const data = await response.json();
-        minioTreeData = data;
-        minioFetchedAt = Date.now();
-        renderMinioTree(data);
-        updateMinioSummary(data);
-    } catch (error) {
-        console.error('Error fetching MinIO tree:', error);
-        const treeEl = document.getElementById('minio-tree');
-        if (treeEl) {
-            treeEl.innerHTML = '<div class="tree-loading">Error loading storage</div>';
-        }
-    }
-}
-
-function updateMinioSummary(data) {
-    const countEl = document.getElementById('minio-total-objects');
-    const sizeEl = document.getElementById('minio-total-size');
-    
-    if (countEl) countEl.textContent = (data.total_objects || 0).toLocaleString();
-    if (sizeEl) sizeEl.textContent = formatBytes(data.total_size || 0);
-}
-
-function renderMinioTree(data) {
-    const treeEl = document.getElementById('minio-tree');
-    if (!treeEl) return;
-    
-    // API returns 'nodes' not 'tree'
-    const nodes = data.nodes || data.tree || [];
-    if (nodes.length === 0) {
-        treeEl.innerHTML = '<div class="tree-empty">No files in storage</div>';
-        return;
-    }
-    
-    treeEl.innerHTML = nodes.map(node => renderMinioNode(node, 0)).join('');
-}
-
-function renderMinioNode(node, level) {
-    const nodeId = `minio-${node.path.replace(/[^a-zA-Z0-9]/g, '-')}`;
-    const isExpanded = expandedNodes.has(nodeId);
-    const isFolder = node.node_type === 'directory';
-    
-    if (isFolder) {
-        const childCount = countMinioChildren(node);
-        const totalSize = sumMinioSize(node);
-        
-        return `
-            <div class="tree-node ${isExpanded ? 'expanded' : ''}" id="${nodeId}">
-                <div class="tree-node-row" data-level="${level}" onclick="toggleMinioNode('${nodeId}')">
-                    <span class="tree-node-expander ${isExpanded ? 'expanded' : ''}">▶</span>
-                    <span class="tree-node-icon folder"></span>
-                    <span class="tree-node-name">${node.name}</span>
-                    <div class="tree-node-meta">
-                        <span class="tree-node-count">${childCount}</span>
-                        <span class="tree-node-size">${formatBytes(totalSize)}</span>
-                    </div>
-                </div>
-                <div class="tree-node-children">
-                    ${(node.children || []).map(child => renderMinioNode(child, level + 1)).join('')}
-                </div>
-            </div>
-        `;
-    } else {
-        // File node
-        const ext = node.name.split('.').pop().toLowerCase();
-        let iconClass = 'file-other';
-        if (ext === 'grib2' || ext === 'grb2') iconClass = 'file-grib';
-        else if (ext === 'nc') iconClass = 'file-nc';
-        
-        return `
-            <div class="tree-node" id="${nodeId}">
-                <div class="tree-node-row" data-level="${level}">
-                    <span class="tree-node-expander empty"></span>
-                    <span class="tree-node-icon ${iconClass}"></span>
-                    <span class="tree-node-name" title="${node.path}">${node.name}</span>
-                    <div class="tree-node-meta">
-                        <span class="tree-node-size">${formatBytes(node.size || 0)}</span>
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-}
-
-function toggleMinioNode(nodeId) {
-    const node = document.getElementById(nodeId);
-    if (!node) return;
-    
-    const isExpanded = node.classList.contains('expanded');
-    if (isExpanded) {
-        node.classList.remove('expanded');
-        expandedNodes.delete(nodeId);
-        node.querySelector('.tree-node-expander').classList.remove('expanded');
-    } else {
-        node.classList.add('expanded');
-        expandedNodes.add(nodeId);
-        node.querySelector('.tree-node-expander').classList.add('expanded');
-    }
-}
-
-function countMinioChildren(node) {
-    if (!node.children) return 0;
-    return node.children.reduce((acc, child) => {
-        if (child.node_type === 'directory') {
-            return acc + countMinioChildren(child);
-        }
-        return acc + 1;
-    }, 0);
-}
-
-function sumMinioSize(node) {
-    if (node.node_type === 'file') return node.size || 0;
-    if (!node.children) return 0;
-    return node.children.reduce((acc, child) => acc + sumMinioSize(child), 0);
-}
-
-// ============================================================================
-// Sync Status
-// ============================================================================
-
-async function checkSyncStatus() {
-    const statusEl = document.getElementById('data-sync-status');
-    const textEl = document.getElementById('sync-status-text');
-    const actionsEl = document.getElementById('sync-actions');
-    if (!statusEl || !textEl) return;
-    
-    try {
-        const response = await fetch(`${API_BASE}/api/admin/sync/status`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        const data = await response.json();
-        
-        statusEl.className = 'data-sync-status';
-        const orphanDb = data.orphan_db_records || 0;
-        const orphanMinio = data.orphan_minio_objects || 0;
-        
-        if (orphanDb === 0 && orphanMinio === 0) {
-            statusEl.classList.add('synced');
-            textEl.textContent = 'DB and storage in sync';
-            if (actionsEl) actionsEl.style.display = 'none';
-        } else {
-            statusEl.classList.add('warning');
-            const issues = [];
-            if (orphanDb > 0) issues.push(`${orphanDb} orphan DB`);
-            if (orphanMinio > 0) issues.push(`${orphanMinio} orphan files`);
-            textEl.textContent = issues.join(', ');
-            // Show sync buttons when there are orphans
-            if (actionsEl) actionsEl.style.display = 'flex';
-        }
-    } catch (error) {
-        console.error('Error checking sync status:', error);
-        statusEl.className = 'data-sync-status error';
-        textEl.textContent = 'Could not check sync';
-        if (actionsEl) actionsEl.style.display = 'none';
-    }
-}
-
-// ============================================================================
-// Sync Preview and Run
-// ============================================================================
-
-let currentSyncPreview = null;
-
-async function showSyncPreview() {
-    const overlay = document.getElementById('sync-modal-overlay');
-    const body = document.getElementById('sync-modal-body');
-    const confirmBtn = document.getElementById('sync-modal-confirm');
-    
-    if (!overlay || !body) return;
-    
-    // Show modal with loading state
-    overlay.classList.add('visible');
-    body.innerHTML = '<div class="tree-loading">Loading preview...</div>';
-    if (confirmBtn) confirmBtn.disabled = true;
-    
-    try {
-        const response = await fetch(`${API_BASE}/api/admin/sync/preview`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        const data = await response.json();
-        currentSyncPreview = data;
-        
-        renderSyncPreview(data);
-        if (confirmBtn) {
-            confirmBtn.disabled = (data.orphan_db_paths.length === 0 && data.orphan_minio_paths.length === 0);
-        }
-    } catch (error) {
-        console.error('Error fetching sync preview:', error);
-        body.innerHTML = `<div class="sync-result error">Failed to load preview: ${error.message}</div>`;
-    }
-}
-
-function renderSyncPreview(data) {
-    const body = document.getElementById('sync-modal-body');
-    if (!body) return;
-    
-    const orphanDbCount = data.orphan_db_paths?.length || 0;
-    const orphanMinioCount = data.orphan_minio_paths?.length || 0;
-    
-    let html = '';
-    
-    // Summary
-    html += `<div style="margin-bottom: 16px; font-size: 11px; color: #9ca3af;">
-        Checked ${data.db_records_checked || 0} DB records and ${data.minio_objects_checked || 0} MinIO objects.
-    </div>`;
-    
-    // Orphan DB records section
-    html += `<div class="sync-modal-section">
-        <div class="sync-modal-section-title">
-            Orphan DB Records (missing from MinIO)
-            <span class="sync-modal-section-count">${orphanDbCount}</span>
-        </div>
-        <div class="sync-modal-list">`;
-    
-    if (orphanDbCount === 0) {
-        html += '<div class="sync-modal-empty">No orphan database records</div>';
-    } else {
-        // Show up to 50 paths
-        const dbPathsToShow = data.orphan_db_paths.slice(0, 50);
-        html += dbPathsToShow.map(path => `<div class="sync-modal-list-item">${escapeHtml(path)}</div>`).join('');
-        if (orphanDbCount > 50) {
-            html += `<div class="sync-modal-list-item" style="color: #6b7280; font-style: italic;">... and ${orphanDbCount - 50} more</div>`;
-        }
-    }
-    html += '</div></div>';
-    
-    // Orphan MinIO objects section
-    html += `<div class="sync-modal-section">
-        <div class="sync-modal-section-title">
-            Orphan MinIO Files (missing from DB)
-            <span class="sync-modal-section-count">${orphanMinioCount}</span>
-        </div>
-        <div class="sync-modal-list">`;
-    
-    if (orphanMinioCount === 0) {
-        html += '<div class="sync-modal-empty">No orphan MinIO files</div>';
-    } else {
-        const minioPathsToShow = data.orphan_minio_paths.slice(0, 50);
-        html += minioPathsToShow.map(path => `<div class="sync-modal-list-item">${escapeHtml(path)}</div>`).join('');
-        if (orphanMinioCount > 50) {
-            html += `<div class="sync-modal-list-item" style="color: #6b7280; font-style: italic;">... and ${orphanMinioCount - 50} more</div>`;
-        }
-    }
-    html += '</div></div>';
-    
-    // Warning message
-    if (orphanDbCount > 0 || orphanMinioCount > 0) {
-        html += `<div style="margin-top: 16px; padding: 10px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 4px; font-size: 11px; color: #f59e0b;">
-            <strong>Warning:</strong> Clicking "Sync Now" will delete ${orphanDbCount} orphan DB records and ${orphanMinioCount} orphan MinIO files. This action cannot be undone.
-        </div>`;
-    }
-    
-    body.innerHTML = html;
-}
-
-function closeSyncModal(event) {
-    // If called from overlay click, only close if clicking directly on overlay
-    if (event && event.target !== event.currentTarget) return;
-    
-    const overlay = document.getElementById('sync-modal-overlay');
-    if (overlay) {
-        overlay.classList.remove('visible');
-    }
-    currentSyncPreview = null;
-}
-
-async function confirmSync() {
-    const body = document.getElementById('sync-modal-body');
-    const confirmBtn = document.getElementById('sync-modal-confirm');
-    
-    if (confirmBtn) confirmBtn.disabled = true;
-    
-    try {
-        const response = await fetch(`${API_BASE}/api/admin/sync/run`, {
-            method: 'POST'
-        });
-        
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        const result = await response.json();
-        
-        // Show success message
-        if (body) {
-            body.innerHTML = `<div class="sync-result success">
-                <strong>Sync completed successfully!</strong><br>
-                Deleted ${result.orphan_db_deleted || 0} orphan DB records and ${result.orphan_minio_deleted || 0} orphan MinIO files.
-            </div>`;
-        }
-        
-        // Refresh data panels after a short delay
-        setTimeout(() => {
-            closeSyncModal();
-            refreshDataPanel();
-        }, 2000);
-        
-    } catch (error) {
-        console.error('Error running sync:', error);
-        if (body) {
-            body.innerHTML += `<div class="sync-result error">Sync failed: ${error.message}</div>`;
-        }
-        if (confirmBtn) confirmBtn.disabled = false;
-    }
-}
-
-// Quick sync without preview modal
-async function runSyncNow() {
-    if (!confirm('Are you sure you want to sync now? This will delete orphan records.')) {
-        return;
-    }
-    
-    const textEl = document.getElementById('sync-status-text');
-    if (textEl) textEl.textContent = 'Syncing...';
-    
-    try {
-        const response = await fetch(`${API_BASE}/api/admin/sync/run`, {
-            method: 'POST'
-        });
-        
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
-        const result = await response.json();
-        
-        if (textEl) {
-            textEl.textContent = `Synced! Deleted ${result.orphan_db_deleted || 0} DB, ${result.orphan_minio_deleted || 0} files`;
-        }
-        
-        // Refresh everything
-        setTimeout(refreshDataPanel, 1500);
-        
-    } catch (error) {
-        console.error('Error running sync:', error);
-        if (textEl) textEl.textContent = `Sync failed: ${error.message}`;
-    }
-}
-
-// Helper to escape HTML
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 // Format database time for display

@@ -131,10 +131,6 @@ pub async fn render_weather_data(
     // Record model-specific request
     let render_start = Instant::now();
     let weather_model = crate::metrics::WeatherModel::from_model(model);
-    if let Some(wm) = weather_model {
-        metrics.record_model_request(wm, parameter);
-    }
-
     // Get dataset based on time specification
     let entry = {
         if let Some(obs_time) = observation_time {
@@ -206,6 +202,12 @@ pub async fn render_weather_data(
             }
         }
     };
+
+    // Record the model-specific request only once the catalog lookup succeeded, so the
+    // `parameter` label is always a catalog parameter (never raw request input).
+    if let Some(wm) = weather_model {
+        metrics.record_model_request(wm, parameter);
+    }
 
     // Load grid data from Zarr storage with efficient chunked reads
     info!(

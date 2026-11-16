@@ -7,12 +7,10 @@
 //! - `metrics`: Health checks, Prometheus metrics, and monitoring
 //! - `validation`: WMS/WMTS validation handlers
 //! - `cache`: Cache management and config reload handlers
-//! - `benchmarks`: Load test results and benchmark handlers
 //! - `docs`: API documentation (Swagger UI, OpenAPI spec)
 //! - `common`: Shared utilities (exceptions, coordinate conversion, XML helpers)
 
 pub mod api;
-pub mod benchmarks;
 pub mod cache;
 pub mod common;
 pub mod docs;
@@ -50,11 +48,6 @@ pub use validation::{
 pub use cache::{
     cache_clear_handler, cache_list_handler, config_handler, config_reload_handler,
     config_reload_layers_handler,
-};
-
-pub use benchmarks::{
-    benchmarks_handler, criterion_benchmarks_handler, loadtest_dashboard_handler,
-    loadtest_file_handler, loadtest_files_handler, loadtest_results_handler,
 };
 
 pub use docs::{openapi_json_handler, openapi_yaml_handler, swagger_ui_handler};

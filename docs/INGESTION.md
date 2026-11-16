@@ -8,7 +8,7 @@ The Weather WMS ingestion system downloads weather data from public sources (AWS
 - **YAML-based configuration** - All models, parameters, and schedules defined in `config/` directory
 - **Parameter shredding** - Extracts individual parameters from multi-parameter files
 - **Multiple data sources** - GFS, HRRR, GOES-16/18, MRMS
-- **Admin dashboard** - Web UI for monitoring and configuration at http://localhost:8000/admin.html
+- **Ops page and Grafana** - Actions at http://localhost:8000/ops.html, monitoring in Grafana (`/grafana/d/data-pipeline`)
 
 ---
 
@@ -343,82 +343,11 @@ INSERT INTO datasets (
 
 ---
 
-## Admin Dashboard
+## Monitoring and Ops
 
-### Overview
+Monitoring is in Grafana: the Data Pipeline dashboard at `/grafana/d/data-pipeline` (plus WMS / WMTS, EDR API, System and Logs). Actions live on `web/ops.html` (retention cleanup, catalog/storage sync, retry failed downloads, clear caches and reload config, run validation, read-only model config viewer).
 
-The admin dashboard provides a web UI for monitoring ingestion and editing configurations.
-
-**URL**: http://localhost:8000/admin.html
-
-### Features
-
-#### 1. System Status
-
-Displays:
-- Service status (Online/Offline)
-- CPU cores
-- Worker threads
-- System uptime
-
-#### 2. Catalog Summary
-
-Shows:
-- Total datasets ingested
-- Number of active models
-- Total storage size
-- Latest ingest timestamp
-
-#### 3. Ingestion Log
-
-Real-time log of recent ingestion activity:
-```
-12:45:32  gfs    TMP    2 m above ground    shredded/gfs/.../f006.grib2
-12:45:30  mrms   REFL   surface             shredded/mrms/.../latest.grib2
-```
-
-#### 4. Model Configuration
-
-List all models with:
-- Model ID, name, type
-- Source type (AWS S3, HTTP, etc.)
-- Projection
-- Parameter count
-
-Click a model to view/edit its YAML configuration.
-
-#### 5. Config Editor
-
-**View Tab**: Display raw YAML
-**Edit Tab**: Edit YAML with syntax validation
-**Shred Preview Tab**: Preview what parameters will be extracted
-
-**Actions**:
-- **Validate**: Check YAML syntax and required fields
-- **Save**: Write changes to `config/models/{id}.yaml`
-- **Reset**: Discard changes
-
-#### 6. Shred Preview
-
-Shows what parameters will be extracted from a model's files:
-
-```
-GFS - Global Forecast System
-Source: aws_s3_grib2
-
-Parameters to Extract:
-  TMP (Temperature)
-    - 2 m above ground → shredded/gfs/{run}/TMP_2m/f{fhr}.grib2
-  UGRD (U-Component of Wind)
-    - 10 m above ground → shredded/gfs/{run}/UGRD_10m/f{fhr}.grib2
-  VGRD (V-Component of Wind)
-    - 10 m above ground → shredded/gfs/{run}/VGRD_10m/f{fhr}.grib2
-  PRMSL (Pressure Reduced to MSL)
-    - mean sea level → shredded/gfs/{run}/PRMSL_msl/f{fhr}.grib2
-
-Total Extractions: 4
-```
-
+Model configs are changed by editing `config/models/*.yaml` in the repository and redeploying (in dev, `POST /api/config/reload`).
 ---
 
 ## API Reference
@@ -494,39 +423,6 @@ Get recent ingestion activity.
 }
 ```
 
-#### `GET /api/admin/preview-shred?model={id}`
-
-Preview what parameters will be extracted for a model.
-
-**Query Parameters**:
-- `model` (required): Model ID (e.g., "gfs", "hrrr")
-
-**Response**:
-```json
-{
-  "model_id": "gfs",
-  "model_name": "GFS - Global Forecast System",
-  "source_type": "aws_s3_grib2",
-  "parameters_to_extract": [
-    {
-      "name": "TMP",
-      "description": "Temperature",
-      "levels": [
-        {
-          "level_type": "height_above_ground",
-          "value": "2",
-          "display": "2 m above ground",
-          "storage_path_template": "shredded/gfs/{run}/TMP_2m/f{fhr}.grib2"
-        }
-      ],
-      "style": "temperature",
-      "units": "K"
-    }
-  ],
-  "total_extractions": 4
-}
-```
-
 #### `GET /api/admin/config/models`
 
 List all model configurations.
@@ -559,25 +455,9 @@ Get raw YAML configuration for a model.
 }
 ```
 
-#### `PUT /api/admin/config/models/:id`
+The model config endpoints are read-only. Edit `config/models/*.yaml` in the repository and redeploy.
 
-Update model configuration.
-
-**Request Body**:
-```json
-{
-  "yaml": "model:\n  id: gfs\n  name: \"GFS - Global Forecast System\"\n..."
-}
-```
-
-**Response**:
-```json
-{
-  "success": true,
-  "message": "Configuration for 'gfs' saved successfully",
-  "validation_errors": []
-}
-```
+State-changing requests under `/api/` (POST) must send the header `X-Admin-Request: 1`, otherwise the API answers 403.
 
 ---
 
@@ -585,10 +465,8 @@ Update model configuration.
 
 ### Add a New Parameter to a Model
 
-1. Open admin dashboard: http://localhost:8000/admin.html
-2. Click on the model (e.g., "GFS")
-3. Switch to "Edit" tab
-4. Add parameter to the `parameters:` list:
+1. Edit `config/models/<model>.yaml` (e.g. `gfs.yaml`)
+2. Add the parameter to the `parameters:` list:
    ```yaml
    - name: RH
      description: "Relative Humidity"
@@ -599,10 +477,8 @@ Update model configuration.
      style: atmospheric
      units: "%"
    ```
-5. Click **Validate** to check syntax
-6. Click **Save** to write changes
-7. Switch to "Shred Preview" tab to verify
-8. Restart ingester: `docker-compose restart ingester`
+3. Run validation from `web/ops.html` or check the ingester logs for config errors
+4. Redeploy (dev: restart the ingester and `POST /api/config/reload`)
 
 ### Change Forecast Hours
 
@@ -637,7 +513,7 @@ This will extract TMP at 8 pressure levels.
 ### Monitor Ingestion
 
 1. **Check logs**: `docker-compose logs -f ingester`
-2. **View admin dashboard**: http://localhost:8000/admin.html
+2. **View Grafana**: `/grafana/d/data-pipeline`
 3. **Query catalog**:
    ```sql
    SELECT model, parameter, COUNT(*) as count
@@ -672,10 +548,10 @@ This will extract TMP at 8 pressure levels.
 
 1. **Check model config** includes the parameter in `parameters:` list
 2. **Check parameter tables** have the GRIB2 codes defined
-3. **Use shred preview** to see if parameter is found in source files
+3. **Check ingester logs** to see if the parameter is found in source files
 4. **Check GRIB2 discipline/category/number** matches parameter tables
 
-### Admin dashboard not loading
+### Ops page not loading
 
 1. **Check WMS API is running**:
    ```bash
@@ -686,7 +562,7 @@ This will extract TMP at 8 pressure levels.
 2. **Check web server**:
    ```bash
    docker-compose ps web
-   curl http://localhost:8000/admin.html
+   curl http://localhost:8000/ops.html
    ```
 
 ### Configuration changes not applied
@@ -710,9 +586,8 @@ This will extract TMP at 8 pressure levels.
 | Rendering styles | `config/styles/*.json` | Rendering style definitions |
 | Ingester source | `services/ingester/src/` | Ingestion service code |
 | Config loader | `services/ingester/src/config_loader.rs` | YAML config parser (720 lines) |
-| Admin API | `services/wms-api/src/admin.rs` | Admin dashboard API (900 lines) |
-| Admin UI | `web/admin.html` | Admin dashboard HTML |
-| Admin JS | `web/admin.js` | Admin dashboard JavaScript (550 lines) |
+| Admin API | `services/wms-api/src/admin.rs` | Ops actions API |
+| Ops UI | `web/ops.html`, `web/ops.js` | Ops actions page |
 
 ---
 

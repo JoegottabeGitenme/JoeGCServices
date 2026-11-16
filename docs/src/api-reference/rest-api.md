@@ -82,6 +82,7 @@ Response:
 ### Clear Cache
 ```http
 POST /api/cache/clear
+X-Admin-Request: 1
 ```
 
 Clears L1 (in-memory) cache.

@@ -306,7 +306,7 @@ curl http://localhost:8080/api/config | jq '.l1_cache_enabled'
 ENABLE_L1_CACHE=true
 
 # Clear and rebuild cache
-curl -X POST http://localhost:8080/api/cache/clear
+curl -X POST -H 'X-Admin-Request: 1' http://localhost:8080/api/cache/clear
 ./scripts/reset_test_state.sh
 
 # Test cache

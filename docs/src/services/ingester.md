@@ -634,13 +634,9 @@ FROM datasets
 GROUP BY model;
 ```
 
-### Admin Dashboard
+### Monitoring
 
-The web dashboard at `http://localhost:8000/admin.html` shows:
-- Active ingestions in progress (via wms-api proxy to ingester)
-- Recent ingestion history
-- Parameter counts per model
-- Storage tree visualization
+Ingestion monitoring is in Grafana (`/grafana/d/data-pipeline`). Actions such as retrying failed downloads are on `http://localhost:8000/ops.html`.
 
 ## Code Structure
 

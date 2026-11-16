@@ -122,8 +122,8 @@ Result categories:
 The header shows an Online/Offline badge for each service, checked every 30 seconds:
 - **WMS**, **WMTS**: GetCapabilities request
 - **EDR**: landing page request
-- **Downloader**: `/downloader/health` (click to open the Downloads dashboard)
-- **Ingester**: reachability as seen by wms-api, through `/api/admin/ingestion/active` (click to open the Admin dashboard)
+- **Downloader**: `/downloader/health`
+- **Ingester**: reachability as seen by wms-api, through `/api/admin/ingestion/active`
 
 ### OGC Compliance Badges (Main Dashboard)
 
@@ -136,11 +136,9 @@ Header badges show quick OGC compliance status:
 ### External Links
 
 Quick access to related tools:
-- Admin Dashboard
-- Downloads Dashboard
-- Load Tests
-- Microbenchmarks
-- Tile Visualizer
+- Ops page (`ops.html`)
+- Grafana dashboards (`/grafana/`)
+- Nightly load test reports (`/loadtest-reports/`)
 - EDR Compliance
 - EDR Coverage
 - Grafana (FolkWeather dashboard list, `tag=folkweather`)
@@ -230,12 +228,10 @@ web/
 ├── index.html           # Main dashboard page
 ├── app.js               # Application logic
 ├── style.css            # Styling
-├── admin.html           # Admin dashboard
-├── admin.js             # Admin logic
-├── downloads.html       # Downloads dashboard
-├── downloads.js         # Downloads logic
-├── benchmarks.html      # Benchmark viewer
-├── tile-visualizer.html # Tile request visualizer
+├── ops.html             # Ops actions page
+├── ops.js               # Ops page logic
+├── science.html         # Science page
+├── splash.html          # Splash page
 ├── wms-compliance.html  # WMS 1.3.0 compliance tests
 ├── wms-compliance.js    # WMS test implementation
 ├── wms-compliance.css   # WMS test styling

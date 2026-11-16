@@ -60,7 +60,7 @@ fi
 # 1. Clear L1 in-memory caches via API
 log_info "Step 1/4: Clearing L1 in-memory caches..."
 # Use timeout command as extra safeguard against curl hangs, plus connect-timeout for fast fail
-L1_RESPONSE=$(timeout 10 curl -s --connect-timeout 2 --max-time 5 -X POST "http://localhost:8080/api/cache/clear" 2>/dev/null || echo "")
+L1_RESPONSE=$(timeout 10 curl -s --connect-timeout 2 --max-time 5 -X POST -H 'X-Admin-Request: 1' "http://localhost:8080/api/cache/clear" 2>/dev/null || echo "")
 if echo "$L1_RESPONSE" | grep -q '"success":true'; then
     L1_CLEARED=$(echo "$L1_RESPONSE" | grep -o '"l1_tile_cache":[0-9]*' | cut -d: -f2)
     CHUNK_CLEARED=$(echo "$L1_RESPONSE" | grep -o '"chunk_cache":[0-9]*' | cut -d: -f2)
