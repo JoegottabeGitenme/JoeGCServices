@@ -7,6 +7,17 @@ use std::time::Duration;
 
 use wms_common::{BoundingBox, CrsCode, WmsError, WmsResult};
 
+/// `redis_url` with any `user:password@` part replaced, for logging. The URL
+/// carries the Redis password (`redis://:<password>@host:port`).
+fn redact_credentials(url: &str) -> String {
+    match (url.find("://"), url.rfind('@')) {
+        (Some(scheme_end), Some(at)) if at > scheme_end => {
+            format!("{}://<redacted>@{}", &url[..scheme_end], &url[at + 1..])
+        }
+        _ => url.to_string(),
+    }
+}
+
 /// Redis tile cache client.
 ///
 /// # Degraded mode
@@ -44,7 +55,7 @@ impl TileCache {
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    url = redis_url,
+                    url = %redact_credentials(redis_url),
                     "Invalid Redis URL - continuing with L2 tile cache DISABLED"
                 );
                 return Ok(Self {
@@ -62,7 +73,7 @@ impl TileCache {
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    url = redis_url,
+                    url = %redact_credentials(redis_url),
                     "Redis unreachable - continuing with L2 tile cache DISABLED \
                      (service still serves from L1 + object storage, and background \
                      retention keeps running)"
@@ -292,6 +303,22 @@ pub struct CacheStats {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn redact_credentials_hides_the_password() {
+        assert_eq!(
+            redact_credentials("redis://:s3cret@redis:6379"),
+            "redis://<redacted>@redis:6379"
+        );
+        assert_eq!(
+            redact_credentials("redis://user:p@ss@redis:6379/0"),
+            "redis://<redacted>@redis:6379/0"
+        );
+        assert_eq!(
+            redact_credentials("redis://redis:6379"),
+            "redis://redis:6379"
+        );
+    }
+
     use super::*;
 
     /// A Redis outage must not prevent startup: connect() returns a disabled
